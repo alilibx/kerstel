@@ -209,6 +209,96 @@
 
         .requirements a:hover { color: #aaa; }
 
+        .version-badge {
+            display: inline-block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #4ade80;
+            background: rgba(74, 222, 128, 0.08);
+            border: 1px solid rgba(74, 222, 128, 0.15);
+            border-radius: 20px;
+            padding: 4px 14px;
+            margin-bottom: 24px;
+            letter-spacing: 0.3px;
+        }
+
+        .changelog {
+            max-width: 580px;
+            margin: 64px auto 0;
+            padding: 0 24px;
+        }
+
+        .changelog h2 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .changelog-entry {
+            background: #111;
+            border: 1px solid #1a1a1a;
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin-bottom: 12px;
+        }
+
+        .changelog-entry-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .changelog-version {
+            font-size: 15px;
+            font-weight: 700;
+            color: #fff;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        }
+
+        .changelog-tag {
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .changelog-tag.latest {
+            color: #4ade80;
+            background: rgba(74, 222, 128, 0.1);
+        }
+
+        .changelog-tag.initial {
+            color: #888;
+            background: rgba(136, 136, 136, 0.1);
+        }
+
+        .changelog-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .changelog-list li {
+            font-size: 13px;
+            color: #999;
+            line-height: 1.7;
+            padding-left: 16px;
+            position: relative;
+        }
+
+        .changelog-list li::before {
+            content: '·';
+            position: absolute;
+            left: 4px;
+            color: #444;
+            font-weight: 700;
+        }
+
         footer {
             margin-top: auto;
             padding: 48px 24px;
@@ -225,6 +315,7 @@
     <div class="hero">
         <div class="logo">K</div>
         <h1>Kerstel</h1>
+        <span class="version-badge">v1.3.1</span>
         <p class="subtitle">
             System metrics, port management, and AI usage tracking — all from your menu bar.
             The Mac toolbar for developers.
@@ -326,6 +417,69 @@
             <a href="https://developer.apple.com/xcode/resources/">Xcode Command Line Tools</a>).
             Launches from Spotlight after install.
         </p>
+    </div>
+
+    <div class="changelog">
+        <h2>Changelog</h2>
+
+        <div class="changelog-entry">
+            <div class="changelog-entry-header">
+                <span class="changelog-version">v1.3.1</span>
+                <span class="changelog-tag latest">Latest</span>
+            </div>
+            <ul class="changelog-list">
+                <li>Fix Claude: read credentials from macOS Keychain, add required API header, parse session/weekly utilization</li>
+                <li>Fix Codex: parse nested token structure, use correct ChatGPT usage API endpoint</li>
+                <li>Fix Cursor: add token fallback patterns, use usage-summary endpoint</li>
+                <li>Fix popover overlapping Mac notch on notched MacBooks</li>
+            </ul>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-entry-header">
+                <span class="changelog-version">v1.3.0</span>
+            </div>
+            <ul class="changelog-list">
+                <li>App bundle in ~/Applications with Spotlight support</li>
+                <li>AI usage tracking with periodic refresh for Claude, Cursor, and Codex</li>
+                <li>Improved install script and CLI launch commands</li>
+            </ul>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-entry-header">
+                <span class="changelog-version">v1.2.0</span>
+            </div>
+            <ul class="changelog-list">
+                <li>Polished README with ASCII logo and badges</li>
+                <li>Shorter install URL: alilibx.github.io/kerstel/install.sh</li>
+                <li>Landing page with license and release links</li>
+            </ul>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-entry-header">
+                <span class="changelog-version">v1.1.0</span>
+            </div>
+            <ul class="changelog-list">
+                <li>kerstel CLI: open, stop, restart, status, update, version, uninstall</li>
+                <li>Redesigned installer with ASCII header and preflight checks</li>
+                <li>One-command updates with <code style="color:#4ade80">kerstel update</code></li>
+            </ul>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-entry-header">
+                <span class="changelog-version">v1.0.0</span>
+                <span class="changelog-tag initial">Initial</span>
+            </div>
+            <ul class="changelog-list">
+                <li>Menu bar system monitor: CPU, memory, disk, GPU, battery</li>
+                <li>Port management with kill controls</li>
+                <li>Top processes by CPU/memory</li>
+                <li>System cleanup: purge memory, clear caches, flush DNS</li>
+            </ul>
+        </div>
     </div>
 
     <footer>
