@@ -193,7 +193,7 @@
     <div class="install-box">
         <div class="install-label">Install</div>
         <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
-        <code class="install-cmd">curl -fsSL https://raw.githubusercontent.com/alilibx/kerstel/main/install.sh | bash</code>
+        <code class="install-cmd">curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash</code>
     </div>
 
     <div class="features">
@@ -260,11 +260,15 @@
 
     <footer>
         <a href="https://github.com/alilibx/kerstel">GitHub</a>
+        &nbsp;&middot;&nbsp;
+        <a href="https://github.com/alilibx/kerstel/releases">Releases</a>
+        &nbsp;&middot;&nbsp;
+        <a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">MIT License</a>
     </footer>
 
     <script>
         function copyCmd(btn) {
-            const cmd = 'curl -fsSL https://raw.githubusercontent.com/alilibx/kerstel/main/install.sh | bash';
+            const cmd = 'curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash';
             navigator.clipboard.writeText(cmd);
             btn.textContent = 'Copied!';
             btn.classList.add('copied');
