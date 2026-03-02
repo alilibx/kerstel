@@ -1,13 +1,6 @@
 <div align="center">
 
-```
-██╗  ██╗███████╗██████╗ ███████╗████████╗███████╗██╗
-██║ ██╔╝██╔════╝██╔══██╗██╔════╝╚══██╔══╝██╔════╝██║
-█████╔╝ █████╗  ██████╔╝███████╗   ██║   █████╗  ██║
-██╔═██╗ ██╔══╝  ██╔══██╗╚════██║   ██║   ██╔══╝  ██║
-██║  ██╗███████╗██║  ██║███████║   ██║   ███████╗███████╗
-╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝╚══════╝
-```
+<img src="docs/logo-dark.png" alt="Kerstel" width="200">
 
 **The Mac toolbar for developers**
 
@@ -27,7 +20,7 @@ System metrics, port management, and AI usage tracking — all from your menu ba
 ## Install
 
 ```bash
-curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash
+curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
 Clones the repo, builds a release binary, creates a `.app` bundle in `~/Applications`, and sets up a launch agent to start on login. The **K** icon appears in your menu bar immediately — and Kerstel shows up in Spotlight.
@@ -191,6 +184,6 @@ Please keep PRs focused — one feature or fix per PR.
 
 Built with Swift on macOS.
 
-**[alilibx.github.io/kerstel](https://alilibx.github.io/kerstel)**
+**[kerstel.dev](https://kerstel.dev)**
 
 </div>

@@ -7,8 +7,8 @@
     <meta name="description" content="Open-source macOS menu bar app. System metrics, port management, and AI usage tracking for Claude, Cursor, and Codex.">
     <meta property="og:title" content="Kerstel — The Mac Toolbar for Developers">
     <meta property="og:description" content="System metrics, port management, and AI usage tracking — all from your menu bar.">
-    <meta property="og:image" content="https://alilibx.github.io/kerstel/logo-white.png">
-    <meta property="og:url" content="https://alilibx.github.io/kerstel">
+    <meta property="og:image" content="https://kerstel.dev/logo-white.png">
+    <meta property="og:url" content="https://kerstel.dev">
     <meta name="twitter:card" content="summary">
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -565,7 +565,7 @@
     <div class="install">
         <div class="install-box">
             <span class="install-prompt">$</span>
-            <code class="install-cmd">curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash</code>
+            <code class="install-cmd">curl -fsSL https://kerstel.dev/install.sh | bash</code>
             <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
         </div>
     </div>
@@ -729,7 +729,7 @@
             </div>
             <ul class="changelog-list">
                 <li>Polished README with ASCII logo and badges</li>
-                <li>Shorter install URL: alilibx.github.io/kerstel/install.sh</li>
+                <li>Shorter install URL: kerstel.dev/install.sh</li>
                 <li>Landing page with license and release links</li>
             </ul>
         </div>
@@ -787,7 +787,7 @@
 
     <script>
         function copyCmd(btn) {
-            const cmd = 'curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash';
+            const cmd = 'curl -fsSL https://kerstel.dev/install.sh | bash';
             navigator.clipboard.writeText(cmd);
             btn.textContent = 'Copied!';
             btn.classList.add('copied');

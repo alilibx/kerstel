@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Kerstel installer
-# Usage: curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash
+# Usage: curl -fsSL https://kerstel.dev/install.sh | bash
 
 REPO="https://github.com/alilibx/kerstel.git"
 INSTALL_DIR="$HOME/.kerstel"
