@@ -77,9 +77,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         popover = NSPopover()
         popover.behavior = .transient
-        let hostingController = NSHostingController(rootView: rootView)
-        hostingController.view.setFrameSize(NSSize(width: 360, height: 420))
-        popover.contentViewController = hostingController
+        popover.contentSize = NSSize(width: 360, height: 480)
+        popover.contentViewController = NSHostingController(rootView: rootView)
 
         // Initial collection
         collector.collectAll(into: metrics)

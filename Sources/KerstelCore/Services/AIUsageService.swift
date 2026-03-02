@@ -75,24 +75,25 @@ final class AIUsageService {
             return .notInstalled
         }
 
-        // Look for credentials
-        let credentialsPath = "\(NSHomeDirectory())/.claude/.credentials.json"
-        let credentialsJSON = shell.run("cat '\(credentialsPath)' 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
+        // Read credentials from macOS Keychain
+        let keychainJSON = shell.run("security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if credentialsJSON.isEmpty {
+        if keychainJSON.isEmpty {
             return .notAuthenticated
         }
 
-        // Parse credentials to get OAuth token
-        guard let credData = credentialsJSON.data(using: .utf8),
+        // Parse credentials to get OAuth token and subscription type
+        guard let credData = keychainJSON.data(using: .utf8),
               let creds = try? JSONSerialization.jsonObject(with: credData) as? [String: Any],
-              let token = creds["claudeAiOauth"] as? [String: Any],
-              let accessToken = token["accessToken"] as? String else {
+              let oauthInfo = creds["claudeAiOauth"] as? [String: Any],
+              let accessToken = oauthInfo["accessToken"] as? String else {
             return .notAuthenticated
         }
 
-        // Call usage API
-        let curlCmd = "curl -s -H 'Authorization: Bearer \(accessToken)' 'https://api.anthropic.com/api/oauth/usage' 2>/dev/null"
+        let subscriptionType = oauthInfo["subscriptionType"] as? String
+
+        // Call usage API with required anthropic-beta header
+        let curlCmd = "curl -s -H 'Authorization: Bearer \(accessToken)' -H 'anthropic-beta: oauth-2025-04-20' 'https://api.anthropic.com/api/oauth/usage' 2>/dev/null"
         let response = shell.run(curlCmd).trimmingCharacters(in: .whitespacesAndNewlines)
 
         if response.isEmpty {
@@ -110,22 +111,31 @@ final class AIUsageService {
             return .error(message)
         }
 
-        // Parse usage data
-        let planName = json["planName"] as? String ?? "Claude"
-        let dailyLimit = json["dailyLimit"] as? Double ?? 0
-        let dailyUsage = json["dailyUsage"] as? Double ?? 0
-        let resetTime = json["resetTime"] as? String ?? ""
+        // Parse usage windows from real API response
+        let fiveHour = json["five_hour"] as? [String: Any]
+        let sevenDay = json["seven_day"] as? [String: Any]
 
-        let usagePercent = dailyLimit > 0 ? (dailyUsage / dailyLimit) * 100 : 0
+        let resetsAt = fiveHour?["resets_at"] as? String ?? ""
+
+        let sessionPercent = fiveHour?["utilization"] as? Double ?? 0
+        let weeklyPercent = sevenDay?["utilization"] as? Double ?? 0
+
+        // Derive plan name from subscription type
+        let planName: String
+        switch subscriptionType {
+        case "claude_pro_2025": planName = "Max"
+        case "claude_pro": planName = "Pro"
+        default: planName = subscriptionType?.replacingOccurrences(of: "claude_", with: "").capitalized ?? "Claude"
+        }
 
         return .loaded(AIUsageData(
             provider: .claude,
             planName: planName,
-            usagePercent: min(usagePercent, 100),
-            usageDescription: String(format: "%.0f / %.0f requests", dailyUsage, dailyLimit),
-            quotaUsed: String(format: "%.0f", dailyUsage),
-            quotaTotal: String(format: "%.0f", dailyLimit),
-            resetDate: formatResetTime(resetTime),
+            usagePercent: min(sessionPercent, 100),
+            usageDescription: String(format: "Session: %.0f%% · Weekly: %.0f%%", sessionPercent, weeklyPercent),
+            quotaUsed: String(format: "%.0f%%", sessionPercent),
+            quotaTotal: "100%",
+            resetDate: formatResetTime(resetsAt),
             lastUpdated: Date()
         ))
     }
@@ -152,16 +162,18 @@ final class AIUsageService {
             return .notAuthenticated
         }
 
-        // Try different known key patterns for auth token
+        // Try multiple known key patterns for auth token
         let token = storage["cursorAuth/accessToken"] as? String
             ?? storage["cursorAuth/cachedAccessToken"] as? String
+            ?? storage["cursorAuth/refreshToken"] as? String
+            ?? storage["accessToken"] as? String
 
         guard let sessionToken = token, !sessionToken.isEmpty else {
             return .notAuthenticated
         }
 
-        // Call Cursor usage API
-        let curlCmd = "curl -s -H 'Cookie: WorkosCursorSessionToken=\(sessionToken)' 'https://www.cursor.com/api/usage' 2>/dev/null"
+        // Call Cursor usage-summary API with both cookie and bearer auth
+        let curlCmd = "curl -s -H 'Cookie: WorkosCursorSessionToken=\(sessionToken)' -H 'Authorization: Bearer \(sessionToken)' 'https://www.cursor.com/api/usage-summary' 2>/dev/null"
         let response = shell.run(curlCmd).trimmingCharacters(in: .whitespacesAndNewlines)
 
         if response.isEmpty {
@@ -173,27 +185,30 @@ final class AIUsageService {
             return .error("Invalid response")
         }
 
-        // Parse Cursor usage (format varies by plan)
+        // Parse usage-summary response
         let planName = json["planName"] as? String ?? json["plan"] as? String ?? "Cursor"
 
-        // Cursor reports usage in different formats
+        // usage-summary may report premium requests usage
         let premiumUsage = json["numRequestsTotal"] as? Double
+            ?? json["premiumRequests"] as? Double
             ?? json["gpt-4"] as? Double ?? 0
         let premiumLimit = json["maxRequestUsage"] as? Double
+            ?? json["premiumRequestsLimit"] as? Double
             ?? json["gpt-4-max"] as? Double ?? 500
 
         let usagePercent = premiumLimit > 0 ? (premiumUsage / premiumLimit) * 100 : 0
 
-        let startOfMonth = json["startOfMonth"] as? String ?? ""
+        let startOfMonth = json["startOfMonth"] as? String
+            ?? json["resetDate"] as? String ?? ""
 
         return .loaded(AIUsageData(
             provider: .cursor,
             planName: planName,
             usagePercent: min(usagePercent, 100),
-            usageDescription: String(format: "%.0f / %.0f requests", premiumUsage, premiumLimit),
+            usageDescription: String(format: "%.0f / %.0f premium requests", premiumUsage, premiumLimit),
             quotaUsed: String(format: "%.0f", premiumUsage),
             quotaTotal: String(format: "%.0f", premiumLimit),
-            resetDate: startOfMonth.isEmpty ? "monthly" : "resets \(startOfMonth)",
+            resetDate: startOfMonth.isEmpty ? "monthly" : formatResetTime(startOfMonth),
             lastUpdated: Date()
         ))
     }
@@ -207,7 +222,7 @@ final class AIUsageService {
             return .notInstalled
         }
 
-        // Read auth token
+        // Read auth token from nested tokens structure
         let authPath = "\(NSHomeDirectory())/.codex/auth.json"
         let authJSON = shell.run("cat '\(authPath)' 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -216,13 +231,25 @@ final class AIUsageService {
         }
 
         guard let authData = authJSON.data(using: .utf8),
-              let auth = try? JSONSerialization.jsonObject(with: authData) as? [String: Any],
-              let accessToken = auth["access_token"] as? String ?? auth["token"] as? String else {
+              let auth = try? JSONSerialization.jsonObject(with: authData) as? [String: Any] else {
             return .notAuthenticated
         }
 
-        // Call OpenAI usage API
-        let curlCmd = "curl -s -H 'Authorization: Bearer \(accessToken)' 'https://api.openai.com/v1/usage' 2>/dev/null"
+        // Tokens are nested under "tokens" key
+        let tokens = auth["tokens"] as? [String: Any]
+        guard let accessToken = tokens?["access_token"] as? String
+                ?? auth["access_token"] as? String
+                ?? auth["token"] as? String else {
+            return .notAuthenticated
+        }
+        let accountId = tokens?["account_id"] as? String ?? auth["account_id"] as? String ?? ""
+
+        // Call ChatGPT usage API
+        var curlCmd = "curl -s -H 'Authorization: Bearer \(accessToken)'"
+        if !accountId.isEmpty {
+            curlCmd += " -H 'ChatGPT-Account-Id: \(accountId)'"
+        }
+        curlCmd += " 'https://chatgpt.com/backend-api/wham/usage' 2>/dev/null"
         let response = shell.run(curlCmd).trimmingCharacters(in: .whitespacesAndNewlines)
 
         if response.isEmpty {
@@ -239,22 +266,26 @@ final class AIUsageService {
             return .error(message)
         }
 
-        let planName = json["plan"] as? String ?? "Codex"
-        let used = json["usage"] as? Double ?? json["requests"] as? Double ?? 0
-        let limit = json["limit"] as? Double ?? json["max_requests"] as? Double ?? 0
+        // Parse rate_limit windows from real API response
+        let rateLimit = json["rate_limit"] as? [String: Any]
+        let primaryWindow = rateLimit?["primary_window"] as? [String: Any]
+        let secondaryWindow = rateLimit?["secondary_window"] as? [String: Any]
 
-        let usagePercent = limit > 0 ? (used / limit) * 100 : 0
+        let sessionPercent = primaryWindow?["used_percent"] as? Double ?? 0
+        let weeklyPercent = secondaryWindow?["used_percent"] as? Double ?? 0
+        let resetsAt = primaryWindow?["resets_at"] as? String ?? ""
+
+        let planType = json["plan_type"] as? String ?? "Codex"
+        let planName = planType.capitalized
 
         return .loaded(AIUsageData(
             provider: .codex,
             planName: planName,
-            usagePercent: min(usagePercent, 100),
-            usageDescription: limit > 0
-                ? String(format: "%.0f / %.0f requests", used, limit)
-                : String(format: "%.0f requests", used),
-            quotaUsed: String(format: "%.0f", used),
-            quotaTotal: limit > 0 ? String(format: "%.0f", limit) : "unlimited",
-            resetDate: "monthly",
+            usagePercent: min(sessionPercent, 100),
+            usageDescription: String(format: "Session: %.0f%% · Weekly: %.0f%%", sessionPercent, weeklyPercent),
+            quotaUsed: String(format: "%.0f%%", sessionPercent),
+            quotaTotal: "100%",
+            resetDate: formatResetTime(resetsAt),
             lastUpdated: Date()
         ))
     }

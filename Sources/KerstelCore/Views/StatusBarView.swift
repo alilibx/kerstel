@@ -15,10 +15,8 @@ struct StatusBarView: View {
 
     private var popoverHeight: CGFloat {
         switch selectedTab {
-        case .overview: return 420
-        case .system: return showDetails ? 620 : 420
-        case .ports: return 420
-        case .ai: return 480
+        case .system where showDetails: return 620
+        default: return 480
         }
     }
 
