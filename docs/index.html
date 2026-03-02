@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kerstel — macOS Menu Bar System Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .hero {
+            text-align: center;
+            padding: 80px 24px 48px;
+            max-width: 640px;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            font-weight: 800;
+            color: #fff;
+            margin: 0 auto 32px;
+            letter-spacing: -2px;
+        }
+
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            letter-spacing: -1.5px;
+            color: #fff;
+            margin-bottom: 16px;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            color: #888;
+            line-height: 1.6;
+            margin-bottom: 48px;
+        }
+
+        .install-box {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 12px;
+            padding: 20px 24px;
+            max-width: 580px;
+            margin: 0 auto 16px;
+            position: relative;
+        }
+
+        .install-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #555;
+            margin-bottom: 12px;
+        }
+
+        .install-cmd {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 14px;
+            color: #4ade80;
+            word-break: break-all;
+            line-height: 1.6;
+            user-select: all;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: #222;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+
+        .copy-btn:hover { background: #333; color: #fff; }
+        .copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            max-width: 580px;
+            margin: 48px auto 0;
+            padding: 0 24px;
+        }
+
+        .feature {
+            background: #111;
+            border: 1px solid #1a1a1a;
+            border-radius: 10px;
+            padding: 16px;
+            text-align: left;
+        }
+
+        .feature-icon { font-size: 20px; margin-bottom: 8px; }
+        .feature-name { font-size: 13px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
+        .feature-desc { font-size: 11px; color: #666; line-height: 1.4; }
+
+        .requirements {
+            max-width: 580px;
+            margin: 48px auto 0;
+            padding: 0 24px;
+            text-align: center;
+        }
+
+        .requirements p {
+            font-size: 12px;
+            color: #444;
+            line-height: 1.8;
+        }
+
+        .requirements a {
+            color: #666;
+            text-decoration: none;
+            border-bottom: 1px solid #333;
+        }
+
+        .requirements a:hover { color: #aaa; }
+
+        footer {
+            margin-top: auto;
+            padding: 48px 24px;
+            text-align: center;
+            font-size: 12px;
+            color: #333;
+        }
+
+        footer a { color: #444; text-decoration: none; }
+        footer a:hover { color: #888; }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <div class="logo">K</div>
+        <h1>Kerstel</h1>
+        <p class="subtitle">
+            A lightweight macOS menu bar app that shows your system vitals at a glance
+            — memory, CPU, disk, GPU, battery, running processes, and listening ports.
+        </p>
+    </div>
+
+    <div class="install-box">
+        <div class="install-label">Install</div>
+        <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
+        <code class="install-cmd">curl -fsSL https://raw.githubusercontent.com/alilibx/kerstel/main/install.sh | bash</code>
+    </div>
+
+    <div class="features">
+        <div class="feature">
+            <div class="feature-icon">🧠</div>
+            <div class="feature-name">Memory</div>
+            <div class="feature-desc">Active, wired, compressed, cached breakdown</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">⚡</div>
+            <div class="feature-name">CPU</div>
+            <div class="feature-desc">Usage percentages and load averages</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">💾</div>
+            <div class="feature-name">Disk</div>
+            <div class="feature-desc">Storage used, free, and capacity</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">🎮</div>
+            <div class="feature-name">GPU</div>
+            <div class="feature-desc">Chip name, cores, Metal version</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">🔋</div>
+            <div class="feature-name">Battery</div>
+            <div class="feature-desc">Charge level, power source, time left</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">🌐</div>
+            <div class="feature-name">Ports</div>
+            <div class="feature-desc">Listening TCP ports with kill controls</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">📊</div>
+            <div class="feature-name">Processes</div>
+            <div class="feature-desc">Top 5 by CPU or memory, kill any</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">🧹</div>
+            <div class="feature-name">Cleanup</div>
+            <div class="feature-desc">Purge memory, clear caches, flush DNS</div>
+        </div>
+    </div>
+
+    <div class="requirements">
+        <p>
+            Requires macOS 14 (Sonoma) or later and Swift (included with
+            <a href="https://developer.apple.com/xcode/resources/">Xcode Command Line Tools</a>).
+        </p>
+    </div>
+
+    <footer>
+        <a href="https://github.com/alilibx/kerstel">GitHub</a>
+    </footer>
+
+    <script>
+        function copyCmd(btn) {
+            const cmd = 'curl -fsSL https://raw.githubusercontent.com/alilibx/kerstel/main/install.sh | bash';
+            navigator.clipboard.writeText(cmd);
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = 'Copy';
+                btn.classList.remove('copied');
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
