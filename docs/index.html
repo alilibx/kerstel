@@ -120,6 +120,33 @@
         .feature-name { font-size: 13px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
         .feature-desc { font-size: 11px; color: #666; line-height: 1.4; }
 
+        .cli-section {
+            max-width: 580px;
+            margin: 48px auto 0;
+            padding: 0 24px;
+        }
+
+        .cli-section h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .cli-commands {
+            background: #111;
+            border: 1px solid #1a1a1a;
+            border-radius: 10px;
+            padding: 20px 24px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 2;
+        }
+
+        .cli-commands .cmd { color: #4ade80; }
+        .cli-commands .comment { color: #555; }
+
         .requirements {
             max-width: 580px;
             margin: 48px auto 0;
@@ -209,6 +236,18 @@
             <div class="feature-icon">🧹</div>
             <div class="feature-name">Cleanup</div>
             <div class="feature-desc">Purge memory, clear caches, flush DNS</div>
+        </div>
+    </div>
+
+    <div class="cli-section">
+        <h2>CLI</h2>
+        <div class="cli-commands">
+            <span class="cmd">kerstel open</span> <span class="comment"># launch the app</span><br>
+            <span class="cmd">kerstel stop</span> <span class="comment"># stop the app</span><br>
+            <span class="cmd">kerstel restart</span> <span class="comment"># restart</span><br>
+            <span class="cmd">kerstel update</span> <span class="comment"># pull latest &amp; rebuild</span><br>
+            <span class="cmd">kerstel version</span> <span class="comment"># show version</span><br>
+            <span class="cmd">kerstel uninstall</span> <span class="comment"># remove everything</span>
         </div>
     </div>
 

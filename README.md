@@ -10,9 +10,26 @@ Lives in your menu bar as a **K** icon. Click it to see everything — memory, C
 curl -fsSL https://raw.githubusercontent.com/alilibx/kerstel/main/install.sh | bash
 ```
 
-This clones the repo to `~/.kerstel`, builds a release binary, and sets up a launch agent so it starts on login. The **K** icon appears in your menu bar immediately.
+This clones the repo, builds a release binary, installs the `kerstel` CLI, and sets up a launch agent so it starts on login. The **K** icon appears in your menu bar immediately.
 
 Requires **macOS 14 (Sonoma)** or later and **Swift** (ships with [Xcode Command Line Tools](https://developer.apple.com/xcode/resources/)).
+
+## CLI
+
+The installer adds a `kerstel` command to your PATH:
+
+```bash
+kerstel open        # Launch the menu bar app
+kerstel stop        # Stop the app
+kerstel restart     # Restart the app
+kerstel status      # Check if it's running
+kerstel update      # Pull latest version and rebuild
+kerstel version     # Show installed version
+kerstel uninstall   # Remove everything
+kerstel help        # Show all commands
+```
+
+Closed the app and need it back? Just run `kerstel open`.
 
 ## Features
 
@@ -52,21 +69,18 @@ swift test
 >   -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks
 > ```
 
-## Update
+## Uninstall
 
 ```bash
-cd ~/.kerstel && git pull && swift build -c release
+kerstel uninstall
+sudo rm /usr/local/bin/kerstel
 ```
 
-The launch agent will pick up the new binary next time it starts, or you can relaunch manually.
-
-## Uninstall
+Or if the CLI isn't available:
 
 ```bash
 ~/.kerstel/uninstall.sh
 ```
-
-Stops the app, removes the launch agent, and deletes `~/.kerstel`.
 
 ## Project structure
 
