@@ -4,247 +4,390 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kerstel — The Mac Toolbar for Developers</title>
+    <meta name="description" content="Open-source macOS menu bar app. System metrics, port management, and AI usage tracking for Claude, Cursor, and Codex.">
+    <meta property="og:title" content="Kerstel — The Mac Toolbar for Developers">
+    <meta property="og:description" content="System metrics, port management, and AI usage tracking — all from your menu bar.">
+    <meta property="og:image" content="https://alilibx.github.io/kerstel/logo-white.png">
+    <meta property="og:url" content="https://alilibx.github.io/kerstel">
+    <meta name="twitter:card" content="summary">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-            background: #0a0a0a;
-            color: #e5e5e5;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+        :root {
+            --bg: #08080a;
+            --surface: #111113;
+            --surface-border: #1c1c1f;
+            --surface-hover: #19191c;
+            --text: #ececef;
+            --text-secondary: #8b8b8e;
+            --text-tertiary: #55555a;
+            --accent: #4ade80;
+            --accent-dim: rgba(74, 222, 128, 0.1);
+            --accent-border: rgba(74, 222, 128, 0.2);
+            --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+            --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif;
+            --content-width: 620px;
         }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .container {
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ── Hero ──────────────────────────────────── */
 
         .hero {
             text-align: center;
-            padding: 80px 24px 48px;
-            max-width: 640px;
+            padding: 72px 24px 0;
+            max-width: var(--content-width);
+            margin: 0 auto;
         }
 
-        .logo {
-            width: 80px;
-            height: 80px;
-            background: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 20px;
+        .hero-logo {
+            width: 88px;
+            height: 88px;
+            margin: 0 auto 28px;
+            animation: fadeIn 0.6s ease;
+        }
+
+        .hero-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .hero h1 {
+            font-size: 52px;
+            font-weight: 700;
+            letter-spacing: -2px;
+            color: #fff;
+            margin-bottom: 12px;
+            line-height: 1;
+            animation: fadeIn 0.6s ease 0.1s both;
+        }
+
+        .hero-meta {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 40px;
-            font-weight: 800;
-            color: #fff;
-            margin: 0 auto 32px;
-            letter-spacing: -2px;
+            gap: 12px;
+            margin-bottom: 20px;
+            animation: fadeIn 0.6s ease 0.2s both;
         }
 
-        h1 {
-            font-size: 48px;
-            font-weight: 700;
-            letter-spacing: -1.5px;
-            color: #fff;
-            margin-bottom: 16px;
+        .version-badge {
+            font-size: 12px;
+            font-weight: 500;
+            font-family: var(--mono);
+            color: var(--accent);
+            background: var(--accent-dim);
+            border: 1px solid var(--accent-border);
+            border-radius: 20px;
+            padding: 3px 12px;
+            letter-spacing: 0.2px;
         }
 
-        .subtitle {
+        .platform-badge {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-tertiary);
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--surface-border);
+            border-radius: 20px;
+            padding: 3px 12px;
+        }
+
+        .hero-subtitle {
             font-size: 18px;
-            color: #888;
+            color: var(--text-secondary);
             line-height: 1.6;
-            margin-bottom: 48px;
+            max-width: 480px;
+            margin: 0 auto 40px;
+            animation: fadeIn 0.6s ease 0.3s both;
+        }
+
+        /* ── Install ───────────────────────────────── */
+
+        .install {
+            max-width: var(--content-width);
+            margin: 0 auto 64px;
+            padding: 0 24px;
+            animation: fadeIn 0.6s ease 0.4s both;
         }
 
         .install-box {
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 12px;
-            padding: 20px 24px;
-            max-width: 580px;
-            margin: 0 auto 16px;
-            position: relative;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            transition: border-color 0.2s;
         }
 
-        .install-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: #555;
-            margin-bottom: 12px;
+        .install-box:hover {
+            border-color: #2a2a2e;
+        }
+
+        .install-prompt {
+            color: var(--text-tertiary);
+            font-family: var(--mono);
+            font-size: 14px;
+            user-select: none;
+            flex-shrink: 0;
         }
 
         .install-cmd {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 14px;
-            color: #4ade80;
-            word-break: break-all;
-            line-height: 1.6;
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--accent);
+            flex: 1;
+            overflow-x: auto;
+            white-space: nowrap;
             user-select: all;
+            scrollbar-width: none;
         }
+
+        .install-cmd::-webkit-scrollbar { display: none; }
 
         .copy-btn {
-            position: absolute;
-            top: 16px;
-            right: 16px;
-            background: #222;
-            border: 1px solid #333;
-            color: #888;
-            padding: 6px 12px;
-            border-radius: 6px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--surface-border);
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 12px;
-            font-family: inherit;
+            font-family: var(--sans);
+            font-weight: 500;
             transition: all 0.15s;
+            flex-shrink: 0;
         }
 
-        .copy-btn:hover { background: #333; color: #fff; }
-        .copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+        .copy-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        .copy-btn.copied { color: var(--accent); border-color: var(--accent-border); }
 
-        .features {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
-            max-width: 580px;
-            margin: 48px auto 0;
-            padding: 0 24px;
+        /* ── Section headings ──────────────────────── */
+
+        .section {
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 0 24px 64px;
         }
 
-        .feature {
-            background: #111;
-            border: 1px solid #1a1a1a;
-            border-radius: 10px;
-            padding: 16px;
-            text-align: left;
+        .section-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 12px;
         }
 
-        .feature-icon { font-size: 20px; margin-bottom: 8px; }
-        .feature-name { font-size: 13px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
-        .feature-desc { font-size: 11px; color: #666; line-height: 1.4; }
-
-        .section-heading {
-            max-width: 580px;
-            margin: 48px auto 0;
-            padding: 0 24px;
-            text-align: center;
+        .section-label span {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-tertiary);
         }
 
-        .section-heading h2 {
-            font-size: 24px;
+        .section-label::before,
+        .section-label::after {
+            content: '';
+            height: 1px;
+            width: 32px;
+            background: var(--surface-border);
+        }
+
+        .section h2 {
+            font-size: 28px;
             font-weight: 700;
             color: #fff;
+            text-align: center;
+            letter-spacing: -0.5px;
             margin-bottom: 8px;
         }
 
-        .section-heading p {
-            font-size: 14px;
-            color: #666;
+        .section-desc {
+            font-size: 15px;
+            color: var(--text-secondary);
+            text-align: center;
             line-height: 1.6;
+            max-width: 440px;
+            margin: 0 auto 32px;
         }
 
-        .ai-providers {
+        /* ── Features ──────────────────────────────── */
+
+        .features-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            max-width: 580px;
-            margin: 24px auto 0;
-            padding: 0 24px;
+            gap: 10px;
         }
 
-        .ai-provider {
-            background: #111;
-            border: 1px solid #1a1a1a;
-            border-radius: 10px;
-            padding: 20px 16px;
-            text-align: center;
+        .feature {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 18px;
+            transition: border-color 0.2s, background 0.2s;
         }
 
-        .ai-provider-icon { font-size: 28px; margin-bottom: 10px; }
-        .ai-provider-name { font-size: 14px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
-        .ai-provider-desc { font-size: 11px; color: #555; line-height: 1.4; }
-
-        .cli-section {
-            max-width: 580px;
-            margin: 48px auto 0;
-            padding: 0 24px;
+        .feature:hover {
+            border-color: #2a2a2e;
+            background: var(--surface-hover);
         }
 
-        .cli-section h2 {
-            font-size: 16px;
+        .feature-icon {
+            font-size: 22px;
+            margin-bottom: 10px;
+            line-height: 1;
+        }
+
+        .feature-name {
+            font-size: 13px;
             font-weight: 600;
-            color: #fff;
-            margin-bottom: 16px;
-            text-align: center;
+            color: var(--text);
+            margin-bottom: 4px;
         }
 
-        .cli-commands {
-            background: #111;
-            border: 1px solid #1a1a1a;
+        .feature-desc {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            line-height: 1.5;
+        }
+
+        /* ── AI providers ──────────────────────────── */
+
+        .ai-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .ai-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 24px 18px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ai-card:hover {
+            border-color: #2a2a2e;
+            background: var(--surface-hover);
+        }
+
+        .ai-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+        }
+
+        .ai-card.claude::before { background: linear-gradient(90deg, transparent, #d97706, transparent); }
+        .ai-card.cursor::before { background: linear-gradient(90deg, transparent, #3b82f6, transparent); }
+        .ai-card.codex::before { background: linear-gradient(90deg, transparent, #22c55e, transparent); }
+
+        .ai-icon {
+            width: 36px;
+            height: 36px;
             border-radius: 10px;
-            padding: 20px 24px;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0 auto 12px;
+        }
+
+        .ai-card.claude .ai-icon { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+        .ai-card.cursor .ai-icon { background: rgba(59, 130, 246, 0.12); color: #3b82f6; }
+        .ai-card.codex .ai-icon { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
+
+        .ai-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .ai-desc {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            line-height: 1.5;
+        }
+
+        /* ── CLI ───────────────────────────────────── */
+
+        .cli-box {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .cli-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--surface-border);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .cli-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .cli-dot.red { background: #ff5f57; }
+        .cli-dot.yellow { background: #febc2e; }
+        .cli-dot.green { background: #28c840; }
+
+        .cli-body {
+            padding: 18px 20px;
+            font-family: var(--mono);
             font-size: 13px;
             line-height: 2;
         }
 
-        .cli-commands .cmd { color: #4ade80; }
-        .cli-commands .comment { color: #555; }
+        .cli-body .cmd { color: var(--accent); }
+        .cli-body .flag { color: #a78bfa; }
+        .cli-body .comment { color: var(--text-tertiary); }
 
-        .requirements {
-            max-width: 580px;
-            margin: 48px auto 0;
-            padding: 0 24px;
-            text-align: center;
-        }
-
-        .requirements p {
-            font-size: 12px;
-            color: #444;
-            line-height: 1.8;
-        }
-
-        .requirements a {
-            color: #666;
-            text-decoration: none;
-            border-bottom: 1px solid #333;
-        }
-
-        .requirements a:hover { color: #aaa; }
-
-        .version-badge {
-            display: inline-block;
-            font-size: 12px;
-            font-weight: 500;
-            color: #4ade80;
-            background: rgba(74, 222, 128, 0.08);
-            border: 1px solid rgba(74, 222, 128, 0.15);
-            border-radius: 20px;
-            padding: 4px 14px;
-            margin-bottom: 24px;
-            letter-spacing: 0.3px;
-        }
-
-        .changelog {
-            max-width: 580px;
-            margin: 64px auto 0;
-            padding: 0 24px;
-        }
-
-        .changelog h2 {
-            font-size: 24px;
-            font-weight: 700;
-            color: #fff;
-            margin-bottom: 24px;
-            text-align: center;
-        }
+        /* ── Changelog ─────────────────────────────── */
 
         .changelog-entry {
-            background: #111;
-            border: 1px solid #1a1a1a;
-            border-radius: 10px;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
             padding: 20px 24px;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
+            transition: border-color 0.2s;
         }
 
-        .changelog-entry-header {
+        .changelog-entry:hover { border-color: #2a2a2e; }
+
+        .changelog-header {
             display: flex;
             align-items: center;
             gap: 10px;
@@ -252,15 +395,15 @@
         }
 
         .changelog-version {
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 700;
             color: #fff;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: var(--mono);
         }
 
         .changelog-tag {
-            font-size: 10px;
-            font-weight: 500;
+            font-size: 9px;
+            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.8px;
             padding: 2px 8px;
@@ -268,162 +411,296 @@
         }
 
         .changelog-tag.latest {
-            color: #4ade80;
-            background: rgba(74, 222, 128, 0.1);
+            color: var(--accent);
+            background: var(--accent-dim);
         }
 
         .changelog-tag.initial {
-            color: #888;
-            background: rgba(136, 136, 136, 0.1);
+            color: var(--text-tertiary);
+            background: rgba(255,255,255,0.04);
         }
 
         .changelog-list {
             list-style: none;
-            padding: 0;
-            margin: 0;
         }
 
         .changelog-list li {
             font-size: 13px;
-            color: #999;
+            color: var(--text-secondary);
             line-height: 1.7;
-            padding-left: 16px;
+            padding-left: 18px;
             position: relative;
         }
 
         .changelog-list li::before {
-            content: '·';
+            content: '';
             position: absolute;
             left: 4px;
-            color: #444;
-            font-weight: 700;
+            top: 10px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--surface-border);
         }
+
+        /* ── Footer ────────────────────────────────── */
 
         footer {
-            margin-top: auto;
-            padding: 48px 24px;
-            text-align: center;
-            font-size: 12px;
-            color: #333;
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 0 24px 48px;
         }
 
-        footer a { color: #444; text-decoration: none; }
-        footer a:hover { color: #888; }
+        .footer-inner {
+            border-top: 1px solid var(--surface-border);
+            padding-top: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .footer-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .footer-logo {
+            width: 20px;
+            height: 20px;
+            opacity: 0.3;
+        }
+
+        .footer-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .footer-text {
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .footer-links a {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        .footer-links a:hover { color: var(--text-secondary); }
+
+        /* ── Requirements ──────────────────────────── */
+
+        .requirements {
+            text-align: center;
+            padding-bottom: 48px;
+        }
+
+        .requirements p {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            line-height: 1.8;
+        }
+
+        .requirements a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-bottom: 1px solid var(--surface-border);
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .requirements a:hover {
+            color: var(--text);
+            border-color: var(--text-tertiary);
+        }
+
+        /* ── Animations ────────────────────────────── */
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── Mobile ────────────────────────────────── */
+
+        @media (max-width: 560px) {
+            .hero h1 { font-size: 36px; }
+            .hero-subtitle { font-size: 16px; }
+            .features-grid { grid-template-columns: repeat(2, 1fr); }
+            .ai-grid { grid-template-columns: 1fr; }
+            .install-box { flex-wrap: wrap; }
+            .install-cmd { font-size: 11px; }
+            .footer-inner { flex-direction: column; gap: 16px; }
+            .section h2 { font-size: 22px; }
+        }
     </style>
 </head>
 <body>
+
+    <!-- ── Hero ──────────────────────────────────── -->
+
     <div class="hero">
-        <div class="logo">K</div>
+        <div class="hero-logo">
+            <img src="icon-light.png" alt="Kerstel">
+        </div>
         <h1>Kerstel</h1>
-        <span class="version-badge">v1.3.1</span>
-        <p class="subtitle">
-            System metrics, port management, and AI usage tracking — all from your menu bar.
-            The Mac toolbar for developers.
+        <div class="hero-meta">
+            <span class="version-badge">v1.3.1</span>
+            <span class="platform-badge">macOS 14+</span>
+        </div>
+        <p class="hero-subtitle">
+            System metrics, port management, and AI usage tracking — all from your menu bar. Open source.
         </p>
     </div>
 
-    <div class="install-box">
-        <div class="install-label">Install</div>
-        <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
-        <code class="install-cmd">curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash</code>
-    </div>
+    <!-- ── Install ───────────────────────────────── -->
 
-    <div class="features">
-        <div class="feature">
-            <div class="feature-icon">🧠</div>
-            <div class="feature-name">Memory</div>
-            <div class="feature-desc">Active, wired, compressed, cached breakdown</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">⚡</div>
-            <div class="feature-name">CPU</div>
-            <div class="feature-desc">Usage percentages and load averages</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">💾</div>
-            <div class="feature-name">Disk</div>
-            <div class="feature-desc">Storage used, free, and capacity</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">🎮</div>
-            <div class="feature-name">GPU</div>
-            <div class="feature-desc">Chip name, cores, Metal version</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">🔋</div>
-            <div class="feature-name">Battery</div>
-            <div class="feature-desc">Charge level, power source, time left</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">🌐</div>
-            <div class="feature-name">Ports</div>
-            <div class="feature-desc">Listening TCP ports with kill controls</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">📊</div>
-            <div class="feature-name">Processes</div>
-            <div class="feature-desc">Top 5 by CPU or memory, kill any</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">🧹</div>
-            <div class="feature-name">Cleanup</div>
-            <div class="feature-desc">Purge memory, clear caches, flush DNS</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">🤖</div>
-            <div class="feature-name">AI Usage</div>
-            <div class="feature-desc">Claude, Cursor & Codex quota tracking</div>
+    <div class="install">
+        <div class="install-box">
+            <span class="install-prompt">$</span>
+            <code class="install-cmd">curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash</code>
+            <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
         </div>
     </div>
 
-    <div class="section-heading">
-        <h2>AI Usage Tracking</h2>
-        <p>Know where you stand with your AI coding tools. Kerstel reads local credentials and shows your usage at a glance.</p>
+    <!-- ── Features ──────────────────────────────── -->
+
+    <div class="section">
+        <div class="section-label"><span>Features</span></div>
+        <h2>Everything you keep checking</h2>
+        <p class="section-desc">One click from your toolbar. No windows to manage, no dock icon.</p>
+
+        <div class="features-grid">
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 12h4M9 15h5"/></svg>
+                </div>
+                <div class="feature-name">CPU</div>
+                <div class="feature-desc">Usage, load averages, per-core breakdown</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"><path d="M6 19v-8a6 6 0 1 1 12 0v8"/><path d="M6 19h12"/></svg>
+                </div>
+                <div class="feature-name">Memory</div>
+                <div class="feature-desc">Active, wired, compressed, cached</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>
+                </div>
+                <div class="feature-name">Disk</div>
+                <div class="feature-desc">Storage used, free, and total capacity</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h.01M10 12h.01"/></svg>
+                </div>
+                <div class="feature-name">GPU</div>
+                <div class="feature-desc">Chip, cores, Metal version</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"><rect x="6" y="7" width="12" height="10" rx="1"/><path d="M18 10h1M5 10H4"/><path d="M10 7V5M14 7V5"/></svg>
+                </div>
+                <div class="feature-name">Battery</div>
+                <div class="feature-desc">Charge, source, time remaining</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                </div>
+                <div class="feature-name">Ports</div>
+                <div class="feature-desc">Listening TCP ports with kill controls</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-6"/></svg>
+                </div>
+                <div class="feature-name">Processes</div>
+                <div class="feature-desc">Top 5 by CPU or memory, kill any</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M6 6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/><path d="M10 11v4M14 11v4"/></svg>
+                </div>
+                <div class="feature-name">Cleanup</div>
+                <div class="feature-desc">Purge memory, clear caches, flush DNS</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-2 5-3.5 6.5L12 19l-3.5-3.5C7 14 5 12 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2"/></svg>
+                </div>
+                <div class="feature-name">AI Usage</div>
+                <div class="feature-desc">Claude, Cursor &amp; Codex tracking</div>
+            </div>
+        </div>
     </div>
 
-    <div class="ai-providers">
-        <div class="ai-provider">
-            <div class="ai-provider-icon">✦</div>
-            <div class="ai-provider-name">Claude</div>
-            <div class="ai-provider-desc">Plan, usage %, reset date</div>
-        </div>
-        <div class="ai-provider">
-            <div class="ai-provider-icon">⌁</div>
-            <div class="ai-provider-name">Cursor</div>
-            <div class="ai-provider-desc">Premium requests used</div>
-        </div>
-        <div class="ai-provider">
-            <div class="ai-provider-icon">⌘</div>
-            <div class="ai-provider-name">Codex</div>
-            <div class="ai-provider-desc">Request quota tracking</div>
+    <!-- ── AI Tracking ───────────────────────────── -->
+
+    <div class="section">
+        <div class="section-label"><span>AI Tracking</span></div>
+        <h2>Know where you stand</h2>
+        <p class="section-desc">Reads local credentials and shows your AI coding tool usage at a glance.</p>
+
+        <div class="ai-grid">
+            <div class="ai-card claude">
+                <div class="ai-icon">C</div>
+                <div class="ai-name">Claude</div>
+                <div class="ai-desc">Session &amp; weekly utilization, plan type, reset countdown</div>
+            </div>
+            <div class="ai-card cursor">
+                <div class="ai-icon">&gt;_</div>
+                <div class="ai-name">Cursor</div>
+                <div class="ai-desc">Premium requests used out of monthly quota</div>
+            </div>
+            <div class="ai-card codex">
+                <div class="ai-icon">ox</div>
+                <div class="ai-name">Codex</div>
+                <div class="ai-desc">Session &amp; weekly rate limit usage tracking</div>
+            </div>
         </div>
     </div>
 
-    <div class="cli-section">
-        <h2>CLI</h2>
-        <div class="cli-commands">
-            <span class="cmd">kerstel open</span> <span class="comment"># launch the app</span><br>
-            <span class="cmd">kerstel stop</span> <span class="comment"># stop the app</span><br>
-            <span class="cmd">kerstel restart</span> <span class="comment"># restart</span><br>
-            <span class="cmd">kerstel update</span> <span class="comment"># pull latest &amp; rebuild</span><br>
-            <span class="cmd">kerstel version</span> <span class="comment"># show version</span><br>
-            <span class="cmd">kerstel uninstall</span> <span class="comment"># remove everything</span>
+    <!-- ── CLI ────────────────────────────────────── -->
+
+    <div class="section">
+        <div class="section-label"><span>CLI</span></div>
+        <h2>Full control from the terminal</h2>
+        <p class="section-desc">Manage Kerstel without leaving your workflow.</p>
+
+        <div class="cli-box">
+            <div class="cli-header">
+                <div class="cli-dot red"></div>
+                <div class="cli-dot yellow"></div>
+                <div class="cli-dot green"></div>
+            </div>
+            <div class="cli-body">
+                <span class="cmd">kerstel open</span> <span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# launch the app</span><br>
+                <span class="cmd">kerstel stop</span> <span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# stop the app</span><br>
+                <span class="cmd">kerstel restart</span> <span class="comment">&nbsp;&nbsp;&nbsp;# restart</span><br>
+                <span class="cmd">kerstel update</span> <span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;# pull latest &amp; rebuild</span><br>
+                <span class="cmd">kerstel version</span> <span class="comment">&nbsp;&nbsp;&nbsp;# show version</span><br>
+                <span class="cmd">kerstel uninstall</span> <span class="comment">&nbsp;# remove everything</span>
+            </div>
         </div>
     </div>
 
-    <div class="requirements">
-        <p>
-            Requires macOS 14 (Sonoma) or later and Swift (included with
-            <a href="https://developer.apple.com/xcode/resources/">Xcode Command Line Tools</a>).
-            Launches from Spotlight after install.
-        </p>
-    </div>
+    <!-- ── Changelog ──────────────────────────────── -->
 
-    <div class="changelog">
-        <h2>Changelog</h2>
+    <div class="section">
+        <div class="section-label"><span>Changelog</span></div>
 
         <div class="changelog-entry">
-            <div class="changelog-entry-header">
+            <div class="changelog-header">
                 <span class="changelog-version">v1.3.1</span>
                 <span class="changelog-tag latest">Latest</span>
             </div>
@@ -436,7 +713,7 @@
         </div>
 
         <div class="changelog-entry">
-            <div class="changelog-entry-header">
+            <div class="changelog-header">
                 <span class="changelog-version">v1.3.0</span>
             </div>
             <ul class="changelog-list">
@@ -447,7 +724,7 @@
         </div>
 
         <div class="changelog-entry">
-            <div class="changelog-entry-header">
+            <div class="changelog-header">
                 <span class="changelog-version">v1.2.0</span>
             </div>
             <ul class="changelog-list">
@@ -458,18 +735,18 @@
         </div>
 
         <div class="changelog-entry">
-            <div class="changelog-entry-header">
+            <div class="changelog-header">
                 <span class="changelog-version">v1.1.0</span>
             </div>
             <ul class="changelog-list">
                 <li>kerstel CLI: open, stop, restart, status, update, version, uninstall</li>
                 <li>Redesigned installer with ASCII header and preflight checks</li>
-                <li>One-command updates with <code style="color:#4ade80">kerstel update</code></li>
+                <li>One-command updates with <code style="color:var(--accent);font-family:var(--mono);font-size:12px">kerstel update</code></li>
             </ul>
         </div>
 
         <div class="changelog-entry">
-            <div class="changelog-entry-header">
+            <div class="changelog-header">
                 <span class="changelog-version">v1.0.0</span>
                 <span class="changelog-tag initial">Initial</span>
             </div>
@@ -482,12 +759,30 @@
         </div>
     </div>
 
+    <!-- ── Requirements ───────────────────────────── -->
+
+    <div class="container requirements">
+        <p>
+            Requires macOS 14 (Sonoma) or later and Swift (included with
+            <a href="https://developer.apple.com/xcode/resources/">Xcode Command Line Tools</a>).
+            Launches from Spotlight after install.
+        </p>
+    </div>
+
+    <!-- ── Footer ─────────────────────────────────── -->
+
     <footer>
-        <a href="https://github.com/alilibx/kerstel">GitHub</a>
-        &nbsp;&middot;&nbsp;
-        <a href="https://github.com/alilibx/kerstel/releases">Releases</a>
-        &nbsp;&middot;&nbsp;
-        <a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">MIT License</a>
+        <div class="footer-inner">
+            <div class="footer-left">
+                <div class="footer-logo"><img src="icon-light.png" alt=""></div>
+                <span class="footer-text">Kerstel &middot; MIT License</span>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/alilibx/kerstel">GitHub</a>
+                <a href="https://github.com/alilibx/kerstel/releases">Releases</a>
+                <a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+            </div>
+        </div>
     </footer>
 
     <script>
