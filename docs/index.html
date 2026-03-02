@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kerstel — macOS Menu Bar System Monitor</title>
+    <title>Kerstel — The Mac Toolbar for Developers</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -120,6 +120,47 @@
         .feature-name { font-size: 13px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
         .feature-desc { font-size: 11px; color: #666; line-height: 1.4; }
 
+        .section-heading {
+            max-width: 580px;
+            margin: 48px auto 0;
+            padding: 0 24px;
+            text-align: center;
+        }
+
+        .section-heading h2 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .section-heading p {
+            font-size: 14px;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .ai-providers {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            max-width: 580px;
+            margin: 24px auto 0;
+            padding: 0 24px;
+        }
+
+        .ai-provider {
+            background: #111;
+            border: 1px solid #1a1a1a;
+            border-radius: 10px;
+            padding: 20px 16px;
+            text-align: center;
+        }
+
+        .ai-provider-icon { font-size: 28px; margin-bottom: 10px; }
+        .ai-provider-name { font-size: 14px; font-weight: 600; color: #ccc; margin-bottom: 4px; }
+        .ai-provider-desc { font-size: 11px; color: #555; line-height: 1.4; }
+
         .cli-section {
             max-width: 580px;
             margin: 48px auto 0;
@@ -185,8 +226,8 @@
         <div class="logo">K</div>
         <h1>Kerstel</h1>
         <p class="subtitle">
-            A lightweight macOS menu bar app that shows your system vitals at a glance
-            — memory, CPU, disk, GPU, battery, running processes, and listening ports.
+            System metrics, port management, and AI usage tracking — all from your menu bar.
+            The Mac toolbar for developers.
         </p>
     </div>
 
@@ -237,6 +278,34 @@
             <div class="feature-name">Cleanup</div>
             <div class="feature-desc">Purge memory, clear caches, flush DNS</div>
         </div>
+        <div class="feature">
+            <div class="feature-icon">🤖</div>
+            <div class="feature-name">AI Usage</div>
+            <div class="feature-desc">Claude, Cursor & Codex quota tracking</div>
+        </div>
+    </div>
+
+    <div class="section-heading">
+        <h2>AI Usage Tracking</h2>
+        <p>Know where you stand with your AI coding tools. Kerstel reads local credentials and shows your usage at a glance.</p>
+    </div>
+
+    <div class="ai-providers">
+        <div class="ai-provider">
+            <div class="ai-provider-icon">✦</div>
+            <div class="ai-provider-name">Claude</div>
+            <div class="ai-provider-desc">Plan, usage %, reset date</div>
+        </div>
+        <div class="ai-provider">
+            <div class="ai-provider-icon">⌁</div>
+            <div class="ai-provider-name">Cursor</div>
+            <div class="ai-provider-desc">Premium requests used</div>
+        </div>
+        <div class="ai-provider">
+            <div class="ai-provider-icon">⌘</div>
+            <div class="ai-provider-name">Codex</div>
+            <div class="ai-provider-desc">Request quota tracking</div>
+        </div>
     </div>
 
     <div class="cli-section">
@@ -255,6 +324,7 @@
         <p>
             Requires macOS 14 (Sonoma) or later and Swift (included with
             <a href="https://developer.apple.com/xcode/resources/">Xcode Command Line Tools</a>).
+            Launches from Spotlight after install.
         </p>
     </div>
 

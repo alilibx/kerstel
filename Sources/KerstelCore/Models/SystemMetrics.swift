@@ -1,5 +1,27 @@
 import Foundation
 
+enum AppTab: Int, CaseIterable {
+    case overview, system, ports, ai
+
+    var icon: String {
+        switch self {
+        case .overview: return "square.grid.2x2"
+        case .system: return "cpu"
+        case .ports: return "network"
+        case .ai: return "brain"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .system: return "System"
+        case .ports: return "Ports"
+        case .ai: return "AI"
+        }
+    }
+}
+
 struct MemoryMetrics {
     var total: Double = 0        // GB
     var used: Double = 0         // GB

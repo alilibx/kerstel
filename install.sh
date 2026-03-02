@@ -6,6 +6,8 @@ set -euo pipefail
 
 REPO="https://github.com/alilibx/kerstel.git"
 INSTALL_DIR="$HOME/.kerstel"
+APP_DIR="$HOME/Applications"
+APP_BUNDLE="$APP_DIR/Kerstel.app"
 PLIST_LABEL="com.alilibx.kerstel"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 CLI_PATH="/usr/local/bin/kerstel"
@@ -54,7 +56,7 @@ echo ""
 echo -e "  ${WHITE}┌─────────────────────────────────────┐${NC}"
 echo -e "  ${WHITE}│${NC}                                     ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}    ${BOLD}${WHITE}K E R S T E L${NC}                    ${WHITE}│${NC}"
-echo -e "  ${WHITE}│${NC}    ${DIM}macOS system monitor${NC}              ${WHITE}│${NC}"
+echo -e "  ${WHITE}│${NC}    ${DIM}The Mac toolbar for developers${NC}    ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}                                     ${WHITE}│${NC}"
 echo -e "  ${WHITE}└─────────────────────────────────────┘${NC}"
 
@@ -117,6 +119,71 @@ fi
 VERSION=$(git -C "$INSTALL_DIR" describe --tags 2>/dev/null || git -C "$INSTALL_DIR" rev-parse --short HEAD)
 ok "Built ${DIM}${VERSION}${NC}"
 
+# --- App Bundle ---
+
+step "Assembling app bundle"
+
+# Stop existing instance
+pkill -f "Kerstel.app/Contents/MacOS/Kerstel" 2>/dev/null || true
+pkill -f "\.kerstel/.build/release/Kerstel" 2>/dev/null || true
+
+mkdir -p "$APP_DIR"
+rm -rf "$APP_BUNDLE"
+mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/Resources"
+
+# Copy binary
+cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/Kerstel"
+
+# Copy Info.plist (inject version)
+if [[ -f "$INSTALL_DIR/Resources/Info.plist" ]]; then
+    sed "s/1\.3\.0/$VERSION/g" "$INSTALL_DIR/Resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"
+else
+    cat > "$APP_BUNDLE/Contents/Info.plist" << INFOPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.alilibx.kerstel</string>
+    <key>CFBundleName</key>
+    <string>Kerstel</string>
+    <key>CFBundleDisplayName</key>
+    <string>Kerstel</string>
+    <key>CFBundleExecutable</key>
+    <string>Kerstel</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+INFOPLIST
+fi
+
+# Copy icon
+if [[ -f "$INSTALL_DIR/Resources/AppIcon.icns" ]]; then
+    cp "$INSTALL_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+fi
+
+# Ad-hoc code sign
+codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
+
+# Register with Launch Services so Spotlight indexes it
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" 2>/dev/null || true
+
+ok "Installed ${DIM}${APP_BUNDLE}${NC}"
+
 # --- Install CLI ---
 
 step "Installing CLI"
@@ -129,6 +196,8 @@ sudo tee "$CLI_PATH" >/dev/null << 'CLISCRIPT'
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.kerstel"
+APP_BUNDLE="$HOME/Applications/Kerstel.app"
+APP_BINARY="$APP_BUNDLE/Contents/MacOS/Kerstel"
 BINARY="$INSTALL_DIR/.build/release/Kerstel"
 PLIST_LABEL="com.alilibx.kerstel"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
@@ -161,18 +230,51 @@ spin() {
     return $exit_code
 }
 
+# Resolve which binary to use (prefer app bundle)
+resolve_binary() {
+    if [[ -x "$APP_BINARY" ]]; then
+        echo "$APP_BINARY"
+    elif [[ -x "$BINARY" ]]; then
+        echo "$BINARY"
+    else
+        echo ""
+    fi
+}
+
+# Match running process by either binary path
+is_running() {
+    pgrep -f "Kerstel.app/Contents/MacOS/Kerstel" >/dev/null 2>&1 || \
+    pgrep -f "\.kerstel/.build/release/Kerstel" >/dev/null 2>&1
+}
+
+get_pid() {
+    pgrep -f "Kerstel.app/Contents/MacOS/Kerstel" 2>/dev/null | head -1 || \
+    pgrep -f "\.kerstel/.build/release/Kerstel" 2>/dev/null | head -1
+}
+
 cmd_open() {
-    if pgrep -f "$BINARY" >/dev/null 2>&1; then
+    if is_running; then
         echo -e " ${PASS}  Kerstel is already running"
         return
     fi
-    nohup "$BINARY" &>/dev/null &
-    disown
+    if [[ -d "$APP_BUNDLE" ]]; then
+        open "$APP_BUNDLE"
+    else
+        local bin
+        bin=$(resolve_binary)
+        if [[ -z "$bin" ]]; then
+            echo -e " ${FAIL}  Kerstel is not installed"
+            return 1
+        fi
+        nohup "$bin" &>/dev/null &
+        disown
+    fi
     echo -e " ${PASS}  Kerstel started — look for ${BOLD}K${NC} in the menu bar"
 }
 
 cmd_stop() {
-    if pkill -f "$BINARY" 2>/dev/null; then
+    if pkill -f "Kerstel.app/Contents/MacOS/Kerstel" 2>/dev/null || \
+       pkill -f "\.kerstel/.build/release/Kerstel" 2>/dev/null; then
         echo -e " ${PASS}  Kerstel stopped"
     else
         echo -e " ${DIM}  Kerstel is not running${NC}"
@@ -186,9 +288,9 @@ cmd_restart() {
 }
 
 cmd_status() {
-    if pgrep -f "$BINARY" >/dev/null 2>&1; then
+    if is_running; then
         local pid
-        pid=$(pgrep -f "$BINARY" | head -1)
+        pid=$(get_pid)
         echo -e " ${PASS}  Kerstel is running ${DIM}(PID ${pid})${NC}"
     else
         echo -e " ${DIM}  Kerstel is not running${NC}"
@@ -240,17 +342,25 @@ cmd_update() {
 
     local new_ver
     new_ver=$(git -C "$INSTALL_DIR" describe --tags 2>/dev/null || git -C "$INSTALL_DIR" rev-parse --short HEAD)
+
+    # Reassemble app bundle
+    if [[ -d "$APP_BUNDLE" ]]; then
+        cp "$INSTALL_DIR/.build/release/Kerstel" "$APP_BUNDLE/Contents/MacOS/Kerstel"
+        if [[ -f "$INSTALL_DIR/Resources/AppIcon.icns" ]]; then
+            cp "$INSTALL_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+        fi
+        codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
+    fi
+
     echo -e " ${PASS}  Updated to ${BOLD}${new_ver}${NC}"
 
     # Restart if running
-    if pgrep -f "$BINARY" >/dev/null 2>&1; then
+    if is_running; then
         echo ""
         echo -e " ${ARROW}  ${BOLD}Restarting${NC}"
-        pkill -f "$BINARY" 2>/dev/null || true
+        cmd_stop
         sleep 0.5
-        nohup "$BINARY" &>/dev/null &
-        disown
-        echo -e " ${PASS}  Kerstel restarted"
+        cmd_open
     fi
     echo ""
 }
@@ -260,13 +370,17 @@ cmd_uninstall() {
     echo -e " ${ARROW}  ${BOLD}Uninstalling Kerstel${NC}"
 
     # Stop
-    pkill -f "$BINARY" 2>/dev/null || true
+    pkill -f "Kerstel.app/Contents/MacOS/Kerstel" 2>/dev/null || true
+    pkill -f "\.kerstel/.build/release/Kerstel" 2>/dev/null || true
 
     # Remove launch agent
     if [[ -f "$PLIST_PATH" ]]; then
         launchctl unload "$PLIST_PATH" 2>/dev/null || true
         rm -f "$PLIST_PATH"
     fi
+
+    # Remove app bundle
+    rm -rf "$APP_BUNDLE"
 
     # Remove install dir
     rm -rf "$INSTALL_DIR"
@@ -279,7 +393,7 @@ cmd_uninstall() {
 
 cmd_help() {
     echo ""
-    echo -e "  ${BOLD}${WHITE}kerstel${NC} — macOS menu bar system monitor"
+    echo -e "  ${BOLD}${WHITE}kerstel${NC} — the Mac toolbar for developers"
     echo ""
     echo -e "  ${BOLD}Usage:${NC} kerstel <command>"
     echo ""
@@ -323,7 +437,6 @@ step "Setting up auto-start"
 if launchctl list "$PLIST_LABEL" &>/dev/null; then
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
 fi
-pkill -f "$BINARY" 2>/dev/null || true
 
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST_PATH" << PLIST
@@ -335,7 +448,7 @@ cat > "$PLIST_PATH" << PLIST
     <string>${PLIST_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${BINARY}</string>
+        <string>${APP_BUNDLE}/Contents/MacOS/Kerstel</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -351,8 +464,8 @@ ok "Starts on login"
 # --- Launch ---
 
 sleep 0.5
-nohup "$BINARY" &>/dev/null &
-disown
+open "$APP_BUNDLE" 2>/dev/null || nohup "$APP_BUNDLE/Contents/MacOS/Kerstel" &>/dev/null &
+disown 2>/dev/null || true
 
 # --- Done ---
 
@@ -362,6 +475,7 @@ echo -e "  ${WHITE}│${NC}                                     ${WHITE}│${NC}
 echo -e "  ${WHITE}│${NC}  ${GREEN}${BOLD}\xE2\x9C\x94  Kerstel installed${NC}               ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}                                     ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}  Look for the ${BOLD}K${NC} in your menu bar    ${WHITE}│${NC}"
+echo -e "  ${WHITE}│${NC}  or search ${BOLD}Kerstel${NC} in Spotlight     ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}                                     ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}  ${DIM}kerstel open${NC}       ${DIM}launch app${NC}       ${WHITE}│${NC}"
 echo -e "  ${WHITE}│${NC}  ${DIM}kerstel update${NC}     ${DIM}get latest${NC}       ${WHITE}│${NC}"

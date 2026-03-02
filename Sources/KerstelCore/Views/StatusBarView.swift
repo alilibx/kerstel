@@ -2,14 +2,25 @@ import SwiftUI
 
 struct StatusBarView: View {
     let metrics: LiveMetrics
+    let aiUsage: AIUsageState
     let onKillProcess: (Int) -> Void
     let onCleanup: () -> Void
     let onRefreshPorts: () -> Void
     let onKillPort: (Int) -> Void
+    let onRefreshAI: () -> Void
     let onQuit: () -> Void
 
-    @State private var selectedTab = 0
+    @State private var selectedTab: AppTab = .overview
     @State private var showDetails = false
+
+    private var popoverHeight: CGFloat {
+        switch selectedTab {
+        case .overview: return 420
+        case .system: return showDetails ? 620 : 420
+        case .ports: return 420
+        case .ai: return 480
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,42 +29,45 @@ struct StatusBarView: View {
                 Text("Kerstel")
                     .font(.system(size: 13, weight: .bold))
                 Spacer()
-                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { showDetails.toggle() } }) {
-                    Text(showDetails ? "Simple" : "Details")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.blue)
+                if selectedTab == .system {
+                    Button(action: { withAnimation(.easeInOut(duration: 0.2)) { showDetails.toggle() } }) {
+                        Text(showDetails ? "Simple" : "Details")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            // Tab picker
-            Picker("", selection: $selectedTab) {
-                Text("Monitor").tag(0)
-                Text("Ports").tag(1)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 8)
-            .onChange(of: selectedTab) { _, newValue in
-                if newValue == 1 { onRefreshPorts() }
-            }
+            // Tab bar
+            TabBarView(selectedTab: $selectedTab)
+                .padding(.bottom, 6)
+                .onChange(of: selectedTab) { _, newValue in
+                    if newValue == .ports { onRefreshPorts() }
+                    if newValue == .ai { onRefreshAI() }
+                }
 
             Divider()
 
-            // Content
+            // Dynamic content
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if selectedTab == 0 {
+                    switch selectedTab {
+                    case .overview:
+                        OverviewView(metrics: metrics, aiUsage: aiUsage)
+                    case .system:
                         monitorContent
-                    } else {
+                    case .ports:
                         PortsView(
                             ports: metrics.openPorts,
                             onRefresh: onRefreshPorts,
                             onKill: onKillPort
                         )
+                    case .ai:
+                        AIUsageView(aiUsage: aiUsage, onRefresh: onRefreshAI)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -73,8 +87,9 @@ struct StatusBarView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
         }
-        .frame(width: 360, height: showDetails ? 620 : 420)
+        .frame(width: 360, height: popoverHeight)
         .animation(.easeInOut(duration: 0.2), value: showDetails)
+        .animation(.easeInOut(duration: 0.2), value: selectedTab)
     }
 
     @ViewBuilder

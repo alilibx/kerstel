@@ -9,16 +9,16 @@
 ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝╚══════╝
 ```
 
-**macOS menu bar system monitor**
+**The Mac toolbar for developers**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)](https://www.apple.com/macos/sonoma/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![GitHub release](https://img.shields.io/github/v/release/alilibx/kerstel)](https://github.com/alilibx/kerstel/releases)
 
-A lightweight native app that lives in your menu bar and shows your system vitals at a glance. No Electron. No web views. No telemetry. Just Swift reading system commands and showing you the numbers.
+System metrics, port management, and AI usage tracking — all from your menu bar. No Electron. No web views. No telemetry. Just Swift.
 
-[Install](#install) · [Features](#features) · [CLI](#cli) · [Build from source](#build-from-source) · [Contributing](#contributing)
+[Install](#install) · [Features](#features) · [AI Usage](#ai-usage) · [CLI](#cli) · [Build from source](#build-from-source) · [Contributing](#contributing)
 
 </div>
 
@@ -30,7 +30,7 @@ A lightweight native app that lives in your menu bar and shows your system vital
 curl -fsSL https://alilibx.github.io/kerstel/install.sh | bash
 ```
 
-Clones the repo, builds a release binary, installs the `kerstel` CLI to your PATH, and sets up a launch agent to start on login. The **K** icon appears in your menu bar immediately.
+Clones the repo, builds a release binary, creates a `.app` bundle in `~/Applications`, and sets up a launch agent to start on login. The **K** icon appears in your menu bar immediately — and Kerstel shows up in Spotlight.
 
 > **Requirements:** macOS 14 (Sonoma) or later · Swift (ships with [Xcode Command Line Tools](https://developer.apple.com/xcode/resources/))
 
@@ -46,25 +46,36 @@ Clones the repo, builds a release binary, installs the `kerstel` CLI to your PAT
 | 📊 | **Processes** | Top 5 by CPU or memory — name, PID, usage. Kill with one click |
 | 🌐 | **Ports** | Listening TCP ports — port, process name, full path, PID. Kill with one click |
 | 🧹 | **Cleanup** | Purge memory, clear user caches, flush DNS (requests admin) |
+| 🤖 | **AI Usage** | Track Claude, Cursor, and Codex quotas — plan, usage %, reset date |
 
-Refreshes every 4 seconds. GPU info is cached (it doesn't change).
+Four tabs: **Overview** (dashboard), **System** (detailed metrics), **Ports**, and **AI Usage**. System metrics refresh every 4 seconds. AI usage refreshes every 60 seconds.
+
+## AI Usage
+
+Kerstel tracks your AI coding tool quotas so you always know where you stand:
+
+- **Claude** — reads `~/.claude/.credentials.json`, calls the Anthropic usage API
+- **Cursor** — reads Cursor's session from Application Support, calls the Cursor usage API
+- **Codex** — reads `~/.codex/auth.json`, calls the OpenAI usage API
+
+Each provider shows: plan name, usage percentage with a color-coded progress bar, request counts, and reset date. Providers that aren't installed or authenticated are shown with a dimmed status.
 
 ## CLI
 
 The installer adds a `kerstel` command to your PATH:
 
 ```bash
-kerstel open          # 🚀  Launch the menu bar app
-kerstel stop          # 🛑  Stop the app
-kerstel restart       # 🔄  Restart the app
-kerstel status        # 📡  Check if it's running
-kerstel update        # ⬆️   Pull latest version, rebuild, restart
-kerstel version       # 🏷️   Show installed version
-kerstel uninstall     # 🗑️   Remove everything
-kerstel help          # 📖  Show all commands
+kerstel open          # Launch the menu bar app
+kerstel stop          # Stop the app
+kerstel restart       # Restart the app
+kerstel status        # Check if it's running
+kerstel update        # Pull latest version, rebuild, restart
+kerstel version       # Show installed version
+kerstel uninstall     # Remove everything
+kerstel help          # Show all commands
 ```
 
-> Closed the app by accident? Just run `kerstel open`.
+> Closed the app by accident? Just run `kerstel open` or search "Kerstel" in Spotlight.
 
 ## Build from source
 
@@ -76,8 +87,6 @@ swift build -c release
 ```
 
 ## Run tests
-
-28 tests covering metrics parsing, port parsing, and model logic.
 
 ```bash
 swift test
@@ -104,11 +113,39 @@ Sources/
 ├── KerstelCore/              # Library — all app logic
 │   ├── AppDelegate.swift     # Menu bar setup, popover, timers
 │   ├── IconGenerator.swift   # Draws the "K" icon
-│   ├── Models/               # Data structs (metrics, ports, cleanup)
-│   ├── Services/             # Shell execution, metrics, ports, cleanup
-│   └── Views/                # SwiftUI views for each section
+│   ├── Models/
+│   │   ├── SystemMetrics.swift   # System data structs, AppTab enum
+│   │   └── AIUsageModels.swift   # AI provider models and state
+│   ├── Services/
+│   │   ├── ShellExecutor.swift   # Shell command abstraction
+│   │   ├── MetricsCollector.swift
+│   │   ├── PortManager.swift
+│   │   ├── CleanupService.swift
+│   │   ├── ProcessManager.swift
+│   │   └── AIUsageService.swift  # Claude, Cursor, Codex API client
+│   └── Views/
+│       ├── StatusBarView.swift   # Root view with 4-tab navigation
+│       ├── OverviewView.swift    # Dashboard with metric cards
+│       ├── AIUsageView.swift     # AI provider usage list
+│       ├── CPUView.swift
+│       ├── MemoryView.swift
+│       ├── DiskView.swift
+│       ├── GPUInfoView.swift
+│       ├── BatteryView.swift
+│       ├── ProcessListView.swift
+│       ├── PortsView.swift
+│       ├── CleanupView.swift
+│       └── Components/
+│           ├── TabBarView.swift      # 4-tab icon bar
+│           ├── OverviewCard.swift    # Dashboard metric card
+│           ├── AIProviderCard.swift  # AI provider status card
+│           ├── MetricProgressBar.swift
+│           └── SectionHeader.swift
+Resources/
+├── Info.plist                # App bundle metadata
+└── AppIcon.icns              # App icon for Spotlight/Finder
 Tests/
-└── KerstelTests/             # 28 tests with mock shell fixtures
+└── KerstelTests/             # Tests with mock shell fixtures
 ```
 
 ## Update
