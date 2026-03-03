@@ -55,7 +55,7 @@ struct StatusBarView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     switch selectedTab {
                     case .overview:
-                        OverviewView(metrics: metrics, aiUsage: aiUsage)
+                        OverviewView(metrics: metrics, aiUsage: aiUsage, onSelectTab: { selectedTab = $0 })
                     case .system:
                         monitorContent
                     case .ports:

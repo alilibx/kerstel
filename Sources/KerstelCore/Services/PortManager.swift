@@ -7,6 +7,37 @@ final class PortManager {
         self.shell = shell
     }
 
+    // MARK: - Dev Port Filtering
+
+    static let devProcessNames: Set<String> = [
+        "node", "python", "python3", "ruby", "java", "go", "cargo", "rustc",
+        "php", "deno", "bun", "dotnet", "nginx", "httpd", "mongod", "mysqld",
+        "postgres", "redis-server", "docker-proxy", "vite", "webpack",
+        "esbuild", "uvicorn", "gunicorn", "next-server", "tsx", "npx",
+        "rails", "flask", "django", "caddy", "traefik"
+    ]
+
+    static let devPortRanges: [ClosedRange<Int>] = [
+        80...80, 443...443, 1433...1433,
+        3000...3999, 4000...4999, 5000...5999,
+        5432...5432, 6379...6379,
+        8000...8999, 9000...9999,
+        27017...27017
+    ]
+
+    static func isDevPort(_ port: PortInfo) -> Bool {
+        let name = port.processName.lowercased()
+        if devProcessNames.contains(name) { return true }
+        for range in devPortRanges {
+            if range.contains(port.port) { return true }
+        }
+        return false
+    }
+
+    static func filterDevPorts(_ ports: [PortInfo]) -> [PortInfo] {
+        ports.filter { isDevPort($0) }
+    }
+
     func collectPorts() -> [PortInfo] {
         let raw = shell.run("lsof -iTCP -sTCP:LISTEN -P -n")
         var ports = parsePorts(raw)
