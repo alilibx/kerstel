@@ -11,6 +11,7 @@ let package = Package(
         .target(
             name: "KerstelCore",
             path: "Sources/KerstelCore",
+            resources: [.copy("Resources/")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

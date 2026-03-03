@@ -14,6 +14,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let aiUsage = AIUsageState()
     private let aiUsageService = AIUsageService()
     private var eventMonitor: Any?
+    private var isAnimating = false
 
     public override init() {
         super.init()
@@ -90,13 +91,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.collector.collectAll(into: self.metrics)
+            self.pulseIcon()
         }
 
         // Refresh AI usage every 60 seconds
         aiRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.aiUsageService.refreshAll(into: self.aiUsage)
+            self.pulseIcon()
         }
+    }
+
+    private func pulseIcon() {
+        guard !isAnimating, let button = statusItem.button else { return }
+        isAnimating = true
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            button.animator().alphaValue = 0.4
+        }, completionHandler: {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.15
+                button.animator().alphaValue = 1.0
+            }, completionHandler: {
+                self.isAnimating = false
+            })
+        })
     }
 
     @objc private func togglePopover() {
