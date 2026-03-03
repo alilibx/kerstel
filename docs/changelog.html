@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Changelog — Kerstel</title>
+    <meta name="description" content="Release history and changelog for Kerstel, the macOS menu bar app for developers.">
+    <meta property="og:title" content="Changelog — Kerstel">
+    <meta property="og:description" content="Release history for Kerstel.">
+    <meta property="og:image" content="https://kerstel.dev/logo-white.png">
+    <meta property="og:url" content="https://kerstel.dev/changelog">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #202124;
+            --surface: #292a2d;
+            --surface-border: #35363a;
+            --surface-hover: #313236;
+            --text: #ececef;
+            --text-secondary: #8b8b8e;
+            --text-tertiary: #55555a;
+            --accent: #4ade80;
+            --accent-dim: rgba(74, 222, 128, 0.1);
+            --accent-border: rgba(74, 222, 128, 0.2);
+            --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+            --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif;
+            --content-width: 620px;
+        }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ── Header ───────────────────────────────── */
+
+        .page-header {
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 48px 24px 0;
+            animation: fadeIn 0.6s ease;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.15s;
+            margin-bottom: 32px;
+        }
+
+        .back-link:hover { color: var(--text-secondary); }
+
+        .back-link svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .page-title {
+            font-size: 36px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -1px;
+            margin-bottom: 8px;
+        }
+
+        .page-desc {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 40px;
+        }
+
+        /* ── Timeline ─────────────────────────────── */
+
+        .timeline {
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 0 24px 64px;
+        }
+
+        .release {
+            position: relative;
+            padding-left: 28px;
+            padding-bottom: 32px;
+        }
+
+        .release:last-child { padding-bottom: 0; }
+
+        /* Vertical line */
+        .release::before {
+            content: '';
+            position: absolute;
+            left: 5px;
+            top: 8px;
+            bottom: 0;
+            width: 1px;
+            background: var(--surface-border);
+        }
+
+        .release:last-child::before { display: none; }
+
+        /* Dot */
+        .release::after {
+            content: '';
+            position: absolute;
+            left: 1px;
+            top: 8px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--surface-border);
+            border: 2px solid var(--bg);
+        }
+
+        .release.latest::after {
+            background: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
+        }
+
+        .release-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            transition: border-color 0.2s;
+        }
+
+        .release-card:hover { border-color: #2a2a2e; }
+
+        .release-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+        }
+
+        .release-version {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            font-family: var(--mono);
+        }
+
+        .release-tag {
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .release-tag.latest {
+            color: var(--accent);
+            background: var(--accent-dim);
+        }
+
+        .release-tag.initial {
+            color: var(--text-tertiary);
+            background: rgba(255,255,255,0.04);
+        }
+
+        .release-date {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-bottom: 14px;
+        }
+
+        .release-list {
+            list-style: none;
+        }
+
+        .release-list li {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.8;
+            padding-left: 18px;
+            position: relative;
+        }
+
+        .release-list li::before {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 10px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--surface-border);
+        }
+
+        .release-empty {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            font-style: italic;
+        }
+
+        /* ── Loading / Error ──────────────────────── */
+
+        .loading-skeleton {
+            padding-left: 28px;
+            padding-bottom: 32px;
+        }
+
+        .skel-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 20px 24px;
+        }
+
+        .skel-line {
+            height: 12px;
+            border-radius: 6px;
+            background: linear-gradient(90deg, var(--surface-border) 25%, rgba(255,255,255,0.06) 50%, var(--surface-border) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            margin-bottom: 10px;
+        }
+
+        .skel-line:first-child { width: 30%; height: 16px; margin-bottom: 14px; }
+        .skel-line:nth-child(2) { width: 90%; }
+        .skel-line:nth-child(3) { width: 75%; }
+        .skel-line:last-child { width: 60%; margin-bottom: 0; }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .changelog-error {
+            text-align: center;
+            padding: 48px 24px;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+        }
+
+        .changelog-error p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .changelog-error a {
+            font-size: 13px;
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid var(--accent-border);
+            transition: border-color 0.15s;
+        }
+
+        .changelog-error a:hover { border-color: var(--accent); }
+
+        /* ── Footer ───────────────────────────────── */
+
+        footer {
+            max-width: var(--content-width);
+            margin: 0 auto;
+            padding: 0 24px 48px;
+        }
+
+        .footer-inner {
+            border-top: 1px solid var(--surface-border);
+            padding-top: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .footer-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .footer-logo {
+            width: 20px;
+            height: 20px;
+            opacity: 0.3;
+        }
+
+        .footer-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .footer-text {
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .footer-links a {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        .footer-links a:hover { color: var(--text-secondary); }
+
+        /* ── Animations ───────────────────────────── */
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── Mobile ───────────────────────────────── */
+
+        @media (max-width: 560px) {
+            .page-title { font-size: 28px; }
+            .footer-inner { flex-direction: column; gap: 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="page-header">
+        <a href="/" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+            Kerstel
+        </a>
+        <h1 class="page-title">Changelog</h1>
+        <p class="page-desc">All releases and what changed in each version.</p>
+    </div>
+
+    <div class="timeline">
+        <div id="changelog-loading">
+            <div class="loading-skeleton"><div class="skel-card"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div></div>
+            <div class="loading-skeleton"><div class="skel-card"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div></div>
+            <div class="loading-skeleton"><div class="skel-card"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div></div>
+        </div>
+        <div id="changelog"></div>
+    </div>
+
+    <footer>
+        <div class="footer-inner">
+            <div class="footer-left">
+                <div class="footer-logo"><img src="icon-light.png" alt=""></div>
+                <span class="footer-text">Kerstel &middot; MIT License</span>
+            </div>
+            <div class="footer-links">
+                <a href="/">Home</a>
+                <a href="https://github.com/alilibx/kerstel">GitHub</a>
+                <a href="https://github.com/alilibx/kerstel/releases">Releases</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        (function loadChangelog() {
+            var container = document.getElementById('changelog');
+            var loading = document.getElementById('changelog-loading');
+
+            fetch('https://api.github.com/repos/alilibx/kerstel/releases')
+                .then(function(res) {
+                    if (!res.ok) throw new Error(res.status);
+                    return res.json();
+                })
+                .then(function(releases) {
+                    if (!releases.length) throw new Error('empty');
+
+                    var html = '';
+                    releases.forEach(function(release, i) {
+                        var version = release.tag_name || release.name;
+                        var body = release.body || '';
+                        var date = release.published_at ? formatDate(release.published_at) : '';
+
+                        // Strip everything after --- (install boilerplate)
+                        var hrIdx = body.indexOf('\n---');
+                        if (hrIdx !== -1) body = body.substring(0, hrIdx);
+
+                        // Strip code blocks
+                        body = body.replace(/```[\s\S]*?```/g, '');
+
+                        var items = parseBody(body);
+
+                        // Tags
+                        var tag = '';
+                        if (i === 0) {
+                            tag = '<span class="release-tag latest">Latest</span>';
+                        } else if (i === releases.length - 1) {
+                            tag = '<span class="release-tag initial">Initial</span>';
+                        }
+
+                        var cls = i === 0 ? ' latest' : '';
+
+                        html += '<div class="release' + cls + '">';
+                        html += '<div class="release-card">';
+                        html += '<div class="release-header">';
+                        html += '<span class="release-version">' + escHtml(version) + '</span>';
+                        html += tag;
+                        html += '</div>';
+
+                        if (date) {
+                            html += '<div class="release-date">' + escHtml(date) + '</div>';
+                        }
+
+                        if (items.length) {
+                            html += '<ul class="release-list">';
+                            items.forEach(function(item) {
+                                html += '<li>' + escHtml(item) + '</li>';
+                            });
+                            html += '</ul>';
+                        } else {
+                            html += '<p class="release-empty">No release notes.</p>';
+                        }
+
+                        html += '</div></div>';
+                    });
+
+                    loading.style.display = 'none';
+                    container.innerHTML = html;
+                })
+                .catch(function() {
+                    loading.style.display = 'none';
+                    container.innerHTML =
+                        '<div class="changelog-error">' +
+                        '<p>Could not load changelog.</p>' +
+                        '<a href="https://github.com/alilibx/kerstel/releases">View releases on GitHub</a>' +
+                        '</div>';
+                });
+
+            function formatDate(iso) {
+                var d = new Date(iso);
+                return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            }
+
+            function parseBody(body) {
+                var lines = body.split('\n');
+                var items = [];
+                var currentHeading = '';
+
+                lines.forEach(function(line) {
+                    var trimmed = line.trim();
+                    if (!trimmed) return;
+
+                    var headingMatch = trimmed.match(/^###\s+(.+)/);
+                    if (headingMatch) {
+                        currentHeading = headingMatch[1].replace(/[*_`]/g, '');
+                        return;
+                    }
+
+                    if (/^#{1,2}\s/.test(trimmed)) {
+                        currentHeading = '';
+                        return;
+                    }
+
+                    var bulletMatch = trimmed.match(/^[-*]\s+(.+)/);
+                    if (bulletMatch) {
+                        var text = bulletMatch[1].replace(/[*_`]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+                        items.push(text);
+                        return;
+                    }
+
+                    if (currentHeading && !/^[#>|]/.test(trimmed)) {
+                        var desc = trimmed.replace(/[*_`]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+                        items.push(currentHeading + ' \u2014 ' + desc);
+                        currentHeading = '';
+                    }
+                });
+
+                return items;
+            }
+
+            function escHtml(s) {
+                var d = document.createElement('div');
+                d.appendChild(document.createTextNode(s));
+                return d.innerHTML;
+            }
+        })();
+    </script>
+</body>
+</html>

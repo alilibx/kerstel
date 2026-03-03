@@ -496,6 +496,17 @@
 
         .changelog-error a:hover { border-color: var(--accent); }
 
+        .view-all-link {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid var(--accent-border);
+            transition: border-color 0.15s;
+        }
+
+        .view-all-link:hover { border-color: var(--accent); }
+
         /* ── Footer ────────────────────────────────── */
 
         footer {
@@ -755,9 +766,11 @@
         <div id="changelog-loading">
             <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
             <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
-            <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
         </div>
         <div id="changelog"></div>
+        <div id="changelog-more" style="display:none; text-align:center; margin-top:16px;">
+            <a href="/changelog" class="view-all-link">View full changelog</a>
+        </div>
     </div>
 
     <!-- ── Requirements ───────────────────────────── -->
@@ -779,8 +792,8 @@
                 <span class="footer-text">Kerstel &middot; MIT License</span>
             </div>
             <div class="footer-links">
+                <a href="/changelog">Changelog</a>
                 <a href="https://github.com/alilibx/kerstel">GitHub</a>
-                <a href="https://github.com/alilibx/kerstel/releases">Releases</a>
                 <a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
             </div>
         </div>
@@ -816,8 +829,10 @@
                         badge.textContent = releases[0].tag_name;
                     }
 
+                    // Show only latest 2 releases on the home page
+                    var preview = releases.slice(0, 2);
                     var html = '';
-                    releases.forEach(function(release, i) {
+                    preview.forEach(function(release, i) {
                         var version = release.tag_name || release.name;
                         var body = release.body || '';
 
@@ -835,8 +850,6 @@
                         var tag = '';
                         if (i === 0) {
                             tag = '<span class="changelog-tag latest">Latest</span>';
-                        } else if (i === releases.length - 1) {
-                            tag = '<span class="changelog-tag initial">Initial</span>';
                         }
 
                         html += '<div class="changelog-entry">';
@@ -858,6 +871,11 @@
 
                     loading.style.display = 'none';
                     container.innerHTML = html;
+
+                    // Show "View all" link if there are more releases
+                    if (releases.length > 2) {
+                        document.getElementById('changelog-more').style.display = 'block';
+                    }
                 })
                 .catch(function() {
                     loading.style.display = 'none';
