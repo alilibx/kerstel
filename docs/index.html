@@ -443,6 +443,59 @@
             background: var(--surface-border);
         }
 
+        /* ── Changelog loading / error ────────────── */
+
+        .changelog-skeleton {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 10px;
+        }
+
+        .changelog-skeleton .skel-line {
+            height: 12px;
+            border-radius: 6px;
+            background: linear-gradient(90deg, var(--surface-border) 25%, rgba(255,255,255,0.06) 50%, var(--surface-border) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            margin-bottom: 10px;
+        }
+
+        .changelog-skeleton .skel-line:first-child { width: 30%; height: 16px; margin-bottom: 14px; }
+        .changelog-skeleton .skel-line:nth-child(2) { width: 90%; }
+        .changelog-skeleton .skel-line:nth-child(3) { width: 75%; }
+        .changelog-skeleton .skel-line:last-child { width: 60%; margin-bottom: 0; }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .changelog-error {
+            text-align: center;
+            padding: 32px 24px;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+        }
+
+        .changelog-error p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .changelog-error a {
+            font-size: 13px;
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid var(--accent-border);
+            transition: border-color 0.15s;
+        }
+
+        .changelog-error a:hover { border-color: var(--accent); }
+
         /* ── Footer ────────────────────────────────── */
 
         footer {
@@ -699,64 +752,12 @@
     <div class="section">
         <div class="section-label"><span>Changelog</span></div>
 
-        <div class="changelog-entry">
-            <div class="changelog-header">
-                <span class="changelog-version">v1.3.1</span>
-                <span class="changelog-tag latest">Latest</span>
-            </div>
-            <ul class="changelog-list">
-                <li>Fix Claude: read credentials from macOS Keychain, add required API header, parse session/weekly utilization</li>
-                <li>Fix Codex: parse nested token structure, use correct ChatGPT usage API endpoint</li>
-                <li>Fix Cursor: add token fallback patterns, use usage-summary endpoint</li>
-                <li>Fix popover overlapping Mac notch on notched MacBooks</li>
-            </ul>
+        <div id="changelog-loading">
+            <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
+            <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
+            <div class="changelog-skeleton"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line"></div></div>
         </div>
-
-        <div class="changelog-entry">
-            <div class="changelog-header">
-                <span class="changelog-version">v1.3.0</span>
-            </div>
-            <ul class="changelog-list">
-                <li>App bundle in ~/Applications with Spotlight support</li>
-                <li>AI usage tracking with periodic refresh for Claude, Cursor, and Codex</li>
-                <li>Improved install script and CLI launch commands</li>
-            </ul>
-        </div>
-
-        <div class="changelog-entry">
-            <div class="changelog-header">
-                <span class="changelog-version">v1.2.0</span>
-            </div>
-            <ul class="changelog-list">
-                <li>Polished README with ASCII logo and badges</li>
-                <li>Shorter install URL: kerstel.dev/install.sh</li>
-                <li>Landing page with license and release links</li>
-            </ul>
-        </div>
-
-        <div class="changelog-entry">
-            <div class="changelog-header">
-                <span class="changelog-version">v1.1.0</span>
-            </div>
-            <ul class="changelog-list">
-                <li>kerstel CLI: open, stop, restart, status, update, version, uninstall</li>
-                <li>Redesigned installer with ASCII header and preflight checks</li>
-                <li>One-command updates with <code style="color:var(--accent);font-family:var(--mono);font-size:12px">kerstel update</code></li>
-            </ul>
-        </div>
-
-        <div class="changelog-entry">
-            <div class="changelog-header">
-                <span class="changelog-version">v1.0.0</span>
-                <span class="changelog-tag initial">Initial</span>
-            </div>
-            <ul class="changelog-list">
-                <li>Menu bar system monitor: CPU, memory, disk, GPU, battery</li>
-                <li>Port management with kill controls</li>
-                <li>Top processes by CPU/memory</li>
-                <li>System cleanup: purge memory, clear caches, flush DNS</li>
-            </ul>
-        </div>
+        <div id="changelog"></div>
     </div>
 
     <!-- ── Requirements ───────────────────────────── -->
@@ -796,6 +797,124 @@
                 btn.classList.remove('copied');
             }, 2000);
         }
+
+        (function loadChangelog() {
+            var container = document.getElementById('changelog');
+            var loading = document.getElementById('changelog-loading');
+
+            fetch('https://api.github.com/repos/alilibx/kerstel/releases')
+                .then(function(res) {
+                    if (!res.ok) throw new Error(res.status);
+                    return res.json();
+                })
+                .then(function(releases) {
+                    if (!releases.length) throw new Error('empty');
+
+                    // Update hero version badge to latest release
+                    var badge = document.querySelector('.version-badge');
+                    if (badge && releases[0].tag_name) {
+                        badge.textContent = releases[0].tag_name;
+                    }
+
+                    var html = '';
+                    releases.forEach(function(release, i) {
+                        var version = release.tag_name || release.name;
+                        var body = release.body || '';
+
+                        // Strip everything after --- (install boilerplate)
+                        var hrIdx = body.indexOf('\n---');
+                        if (hrIdx !== -1) body = body.substring(0, hrIdx);
+
+                        // Strip code blocks
+                        body = body.replace(/```[\s\S]*?```/g, '');
+
+                        // Parse into bullet points
+                        var items = parseBody(body);
+
+                        // Build tag
+                        var tag = '';
+                        if (i === 0) {
+                            tag = '<span class="changelog-tag latest">Latest</span>';
+                        } else if (i === releases.length - 1) {
+                            tag = '<span class="changelog-tag initial">Initial</span>';
+                        }
+
+                        html += '<div class="changelog-entry">';
+                        html += '<div class="changelog-header">';
+                        html += '<span class="changelog-version">' + escHtml(version) + '</span>';
+                        html += tag;
+                        html += '</div>';
+
+                        if (items.length) {
+                            html += '<ul class="changelog-list">';
+                            items.forEach(function(item) {
+                                html += '<li>' + escHtml(item) + '</li>';
+                            });
+                            html += '</ul>';
+                        }
+
+                        html += '</div>';
+                    });
+
+                    loading.style.display = 'none';
+                    container.innerHTML = html;
+                })
+                .catch(function() {
+                    loading.style.display = 'none';
+                    container.innerHTML =
+                        '<div class="changelog-error">' +
+                        '<p>Could not load changelog.</p>' +
+                        '<a href="https://github.com/alilibx/kerstel/releases">View releases on GitHub</a>' +
+                        '</div>';
+                });
+
+            function parseBody(body) {
+                var lines = body.split('\n');
+                var items = [];
+                var currentHeading = '';
+
+                lines.forEach(function(line) {
+                    var trimmed = line.trim();
+                    if (!trimmed) return;
+
+                    // ### Heading
+                    var headingMatch = trimmed.match(/^###\s+(.+)/);
+                    if (headingMatch) {
+                        currentHeading = headingMatch[1].replace(/[*_`]/g, '');
+                        return;
+                    }
+
+                    // Skip top-level headings (## or #)
+                    if (/^#{1,2}\s/.test(trimmed)) {
+                        currentHeading = '';
+                        return;
+                    }
+
+                    // Bullet point: - item
+                    var bulletMatch = trimmed.match(/^[-*]\s+(.+)/);
+                    if (bulletMatch) {
+                        var text = bulletMatch[1].replace(/[*_`]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+                        items.push(text);
+                        return;
+                    }
+
+                    // Plain paragraph following a heading
+                    if (currentHeading && !/^[#>|]/.test(trimmed)) {
+                        var desc = trimmed.replace(/[*_`]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+                        items.push(currentHeading + ' \u2014 ' + desc);
+                        currentHeading = '';
+                    }
+                });
+
+                return items;
+            }
+
+            function escHtml(s) {
+                var d = document.createElement('div');
+                d.appendChild(document.createTextNode(s));
+                return d.innerHTML;
+            }
+        })();
     </script>
 </body>
 </html>
