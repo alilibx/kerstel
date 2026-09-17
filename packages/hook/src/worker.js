@@ -7,17 +7,12 @@ const { PROTOCOL_VERSION } = require("./protocol.js");
 // `port` is the MessagePort half handed over by the bridge. Results go back on
 // it rather than on parentPort, because the bridge drains replies with
 // receiveMessageOnPort() while its own thread is blocked in Atomics.wait().
-const { socketPath, token, timeoutMs, control, header, port } = workerData;
+const { socketPath, token, timeoutMs, control, port } = workerData;
 
 const status = new Int32Array(control);
-const headerView = new Int32Array(header);
 
 const STATUS_INDEX = 0;
-const STATE_PENDING = 0;
 const STATE_DONE = 1;
-
-const HEADER_OK = 0;
-const HEADER_LENGTH = 1;
 
 let socket = null;
 let buffer = "";
@@ -31,7 +26,12 @@ function connect() {
   socket.setNoDelay(true);
   socket.unref();
 
-  socket.on("data", (chunk) => {
+  // Pin the connection this closure belongs to. A late "close" from a socket we
+  // already replaced must not null out its successor, fail that successor's
+  // pending requests, or orphan it with live handlers and nothing watching it.
+  const self = socket;
+
+  self.on("data", (chunk) => {
     buffer += chunk.toString("utf8");
     let newline = buffer.indexOf("\n");
     while (newline !== -1) {
@@ -55,6 +55,8 @@ function connect() {
   });
 
   const failAll = (message) => {
+    // Only the live connection may tear down shared state.
+    if (socket !== self) return;
     socket = null;
     buffer = "";
     for (const waiter of pending.values()) {
@@ -63,34 +65,39 @@ function connect() {
     pending.clear();
   };
 
-  socket.on("error", (error) => failAll(error.message));
-  socket.on("close", () => failAll("Daemon connection closed"));
+  self.on("error", (error) => failAll(error.message));
+  self.on("close", () => failAll("Daemon connection closed"));
 
-  return socket;
+  return self;
 }
 
-/** Writes the reply into shared memory and wakes the blocked main thread. */
+/** Posts the reply to the bridge and wakes the blocked main thread. */
 function reply(seq, ok, payload) {
-  const bytes = Buffer.from(JSON.stringify(payload), "utf8");
-  headerView[HEADER_OK] = ok ? 1 : 0;
-  headerView[HEADER_LENGTH] = bytes.length;
-
-  // The payload travels by postMessage because it can exceed any fixed buffer;
-  // shared memory carries only the wake-up signal and the length. `seq` echoes
-  // the request so a caller that already gave up cannot have its stale answer
+  // The payload travels by postMessage because it can exceed any fixed buffer,
+  // so shared memory carries nothing but the wake-up signal. `seq` echoes the
+  // request so a caller that already gave up cannot have its stale answer
   // mistaken for the next request's.
-  port.postMessage({ type: "result", seq, ok, payload: bytes.toString("utf8") });
+  port.postMessage({ type: "result", seq, ok, payload: JSON.stringify(payload) });
 
+  // postMessage strictly before the store: the bridge re-reads the port after
+  // every wake-up, so a reply that is queued first can never be missed. Storing
+  // first would open a window where the bridge wakes to an empty port.
   Atomics.store(status, STATUS_INDEX, STATE_DONE);
   Atomics.notify(status, STATUS_INDEX);
 }
 
 port.on("message", (request) => {
+  const id = `w${++counter}`;
   let settled = false;
   const settle = (ok, payload) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    // Drop our own entry on EVERY exit path. The data handler deletes only the
+    // ids it answers, so without this a request that ends by timeout would
+    // leave its waiter behind and the map would grow without bound against a
+    // daemon that accepts connections but never replies.
+    pending.delete(id);
     reply(request.seq, ok, payload);
   };
 
@@ -107,7 +114,6 @@ port.on("message", (request) => {
     return;
   }
 
-  const id = `w${++counter}`;
   pending.set(id, (message) => {
     if (message.ok) settle(true, { value: message.value });
     else settle(false, message.error || { code: "internal", message: "Unknown daemon error" });

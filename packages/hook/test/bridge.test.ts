@@ -19,7 +19,9 @@ afterEach(async () => {
   while (vaults.length) vaults.pop()!.close();
 });
 
-const DAEMON_RUNNER = join(dirname(import.meta.path), "fixtures", "daemon-process.ts");
+const FIXTURES = join(dirname(import.meta.path), "fixtures");
+const DAEMON_RUNNER = join(FIXTURES, "daemon-process.ts");
+const UNREF_PROBE = join(FIXTURES, "unref-probe.cjs");
 
 /**
  * Boots a daemon in a CHILD PROCESS, not in this one.
@@ -44,11 +46,9 @@ async function boot(): Promise<{ sock: string; vault: Vault }> {
     stderr: "inherit",
   });
 
-  const reader = child.stdout.getReader();
-  const first = await reader.read();
-  reader.releaseLock();
-  if (first.done) throw new Error("daemon process exited before it was ready");
-
+  // Register for cleanup BEFORE awaiting readiness. If the child starts but
+  // never reports ready, the read below never settles and the test times out —
+  // and an unregistered child would be left alive holding the socket.
   const handle: DaemonHandle = {
     socketPath: sock,
     async close() {
@@ -57,6 +57,15 @@ async function boot(): Promise<{ sock: string; vault: Vault }> {
     },
   };
   running.push(handle);
+
+  const reader = child.stdout.getReader();
+  try {
+    const first = await reader.read();
+    if (first.done) throw new Error("daemon process exited before it was ready");
+  } finally {
+    reader.releaseLock();
+  }
+
   return { sock, vault };
 }
 
@@ -119,9 +128,25 @@ test("an unreachable daemon throws rather than hanging", async () => {
 test("the bridge does not keep the event loop alive", async () => {
   const { sock, vault } = await boot();
   vault.setSecret({ scope: "global", key: "K" }, "v");
-  const bridge = bridgeFor(sock);
-  bridge.resolveSync("global", "K");
 
-  const proc = Bun.spawn([process.execPath, "-e", "process.exit(0)"], { stdout: "ignore" });
-  expect(await proc.exited).toBe(0);
-});
+  // The probe creates a bridge, resolves a value, and returns WITHOUT
+  // disposing, then exits only because the worker and its socket are unref'd.
+  // The wait is bounded so a regression fails loudly instead of hanging CI.
+  const proc = Bun.spawn([process.execPath, UNREF_PROBE, sock, TOKEN], { stdout: "ignore" });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"hung">((resolve) => {
+    timer = setTimeout(() => resolve("hung"), 10_000);
+  });
+  const outcome = await Promise.race([proc.exited, hung]);
+  clearTimeout(timer);
+
+  if (outcome === "hung") {
+    proc.kill();
+    await proc.exited;
+    throw new Error("a live, undisposed bridge kept its host process alive");
+  }
+  expect(outcome).toBe(0);
+  // The per-test budget sits above the 10s bound above so that a regression
+  // reports the diagnosis rather than bun's generic per-test timeout.
+}, 30_000);
