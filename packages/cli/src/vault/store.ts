@@ -48,10 +48,25 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
   const target = file ?? vaultPath();
   if (!file) ensureHome();
 
-  const isNew = !existsSync(target);
   const db = new Database(target, { create: true });
+  // Mode 0600 is asserted on every open, not only on creation, and before
+  // migrate() runs. A crash between file creation and this point (or an
+  // older build that only chmod'd on creation) can strand the vault at the
+  // umask default (typically 0644); re-asserting here every time makes a
+  // stranded vault repair itself on its next open instead of staying wrong
+  // forever. Do not gate this behind an "isNew" check.
+  if (process.platform !== "win32") chmodSync(target, 0o600);
   migrate(db);
-  if (isNew && process.platform !== "win32") chmodSync(target, 0o600);
+  if (process.platform !== "win32") {
+    // WAL mode (set inside migrate()) creates these sidecar files. They never
+    // hold plaintext values, but they carry the same scope/key metadata as
+    // the main file, so they get the same permissions. SQLite may not have
+    // created them yet on a fresh vault, so guard on existence.
+    for (const suffix of ["-wal", "-shm"]) {
+      const sidecar = `${target}${suffix}`;
+      if (existsSync(sidecar)) chmodSync(sidecar, 0o600);
+    }
+  }
 
   const now = (): number => Date.now();
 

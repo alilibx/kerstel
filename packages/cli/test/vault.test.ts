@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateDataKey } from "../src/vault/crypto";
@@ -131,4 +131,25 @@ test("reopening an existing vault does not re-run migrations destructively", () 
   const row = db.query<{ user_version: number }, []>("PRAGMA user_version").get();
   expect(row?.user_version).toBe(SCHEMA_VERSION);
   db.close();
+});
+
+test("a vault stranded at the wrong file mode repairs itself on reopen", () => {
+  const dir = tempDir();
+  const file = join(dir, "vault.db");
+  const key = generateDataKey();
+
+  const v1 = vaultIn(dir, key);
+  v1.setSecret({ scope: "global", key: "K" }, "v");
+  v1.close();
+  open.pop();
+
+  // Simulate a vault stranded at the umask default by an earlier crash
+  // (a process killed between file creation and the chmod that follows it).
+  chmodSync(file, 0o644);
+
+  const v2 = vaultIn(dir, key);
+  if (process.platform !== "win32") {
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  }
+  expect(v2.getSecret({ scope: "global", key: "K" })).toBe("v");
 });
