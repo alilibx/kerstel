@@ -81,7 +81,10 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
     }
   });
 
+  let closed = false;
+
   const fail = (error: Error): void => {
+    closed = true;
     for (const waiter of pending.values()) waiter.reject(error);
     pending.clear();
   };
@@ -89,6 +92,11 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
   socket.on("close", () => fail(new DaemonError("unreachable", "Daemon connection closed")));
 
   function send(payload: Record<string, unknown>): Promise<Response> {
+    if (closed || socket.destroyed || !socket.writable) {
+      return Promise.reject(
+        new DaemonError("unreachable", "The daemon connection is closed. Reconnect with connectDaemon()."),
+      );
+    }
     const id = `${process.pid}-${++counter}`;
     return new Promise<Response>((resolve, reject) => {
       pending.set(id, { resolve, reject });
@@ -136,6 +144,7 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
     },
 
     close() {
+      closed = true;
       socket.destroy();
     },
   };

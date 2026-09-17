@@ -88,3 +88,28 @@ test("connecting to a nonexistent socket rejects quickly", async () => {
   const sock = process.platform === "win32" ? "\\\\.\\pipe\\kerstel-absent" : join(dir, "absent.sock");
   await expect(connectDaemon({ socketPath: sock, token: TOKEN, timeoutMs: 300 })).rejects.toThrow();
 });
+
+test("a request issued after close rejects instead of hanging", async () => {
+  const { sock } = await boot();
+  const client = await connectDaemon({ socketPath: sock, token: TOKEN });
+  client.close();
+
+  // Let the socket's own "close" event fire and fully drain the (empty)
+  // pending map before issuing a *new* request. This reproduces the real
+  // race: send() must not queue into a pending map whose settling events
+  // have already fired and will never fire again.
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Bound the assertion so a regression that reintroduces the hang fails this
+  // test in ~1s instead of hanging the whole suite forever.
+  let timer!: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out waiting for the post-close request to reject")), 1_000);
+  });
+
+  try {
+    await expect(Promise.race([client.resolve("global", "K"), timeout])).rejects.toThrow(DaemonError);
+  } finally {
+    clearTimeout(timer);
+  }
+});
