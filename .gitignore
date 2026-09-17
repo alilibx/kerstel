@@ -1,7 +1,6 @@
-.DS_Store
+node_modules/
+dist/
 .build/
-.swiftpm/
-*.xcodeproj/
-xcuserdata/
-DerivedData/
-Package.resolved
+*.tsbuildinfo
+.DS_Store
+bun.lock*
