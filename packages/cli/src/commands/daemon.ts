@@ -13,11 +13,13 @@ const POLL_INTERVAL_MS = 100;
  * actually holds the vault open for the life of the daemon; `daemon start`
  * spawns it detached, and a user may also run it directly to watch it.
  *
- * Deliberately does NOT close the vault on the normal try/finally path every
- * other command uses -- the vault must stay open for as long as this process
- * is serving requests. It IS closed if startDaemon() itself fails (e.g. the
- * socket is already bound), since in that case this process never starts
- * serving and there is nothing left to hold the vault open for.
+ * Deliberately does NOT use the normal try/finally-around-the-whole-function
+ * shape every other command uses -- the vault must stay open for as long as
+ * this process is serving requests, which is most of this function's life.
+ * It IS closed on every path that actually ends this process's reason to
+ * keep running: if startDaemon() itself fails (the vault was opened but
+ * never started serving), and once the shutdown-detection loop below ends
+ * (the vault is no longer needed and this function is about to return).
  */
 async function serveCommand(): Promise<number> {
   const ctx = await openContext();
@@ -51,6 +53,7 @@ async function serveCommand(): Promise<number> {
   while (await isDaemonRunning(handle.socketPath)) {
     await Bun.sleep(POLL_INTERVAL_MS * 5);
   }
+  ctx.vault.close();
   return 0;
 }
 
