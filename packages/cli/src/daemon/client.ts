@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { basename } from "node:path";
 import { socketPath as defaultSocketPath } from "../paths";
@@ -151,15 +152,44 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
 }
 
 export async function isDaemonRunning(sock: string = defaultSocketPath()): Promise<boolean> {
+  // The overwhelmingly common case is "no daemon running at all" -- a socket
+  // file that was never created. Short-circuit on that without touching
+  // node:net: connecting to a Unix socket path that doesn't exist raises its
+  // ENOENT asynchronously outside the normal "error" event / promise-rejection
+  // path in Bun, which no listener or try/catch downstream can intercept.
+  // (Named pipes on Windows aren't regular files, so this check only applies
+  // to the Unix socket path.)
+  if (process.platform !== "win32" && !existsSync(sock)) return false;
+
   return new Promise((resolve) => {
-    const conn = createConnection(sock);
+    let settled = false;
+    let conn: Socket | undefined;
     const done = (result: boolean): void => {
-      conn.destroy();
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      conn?.destroy();
       resolve(result);
     };
-    conn.once("connect", () => done(true));
-    conn.once("error", () => done(false));
-    setTimeout(() => done(false), 1_000).unref?.();
+    const timer = setTimeout(() => done(false), 1_000);
+    timer.unref?.();
+
+    try {
+      conn = createConnection(sock);
+      conn.once("connect", () => done(true));
+      // Not `.once`: a socket already destroyed by `done()` above (e.g. after
+      // the connect timeout, or after a first error) can still emit a stray
+      // async error afterwards -- with no listener left, that throws instead
+      // of being ignorable, which is exactly the case of connecting to a
+      // socket file that existed and was removed out from under us (a
+      // daemon shutting down mid-poll).
+      conn.on("error", () => done(false));
+    } catch {
+      // Bun's Unix-socket connect can fail synchronously (not just via the
+      // "error" event) when the path plain doesn't exist -- the ordinary,
+      // most common case of "no daemon running". Either way, no daemon.
+      done(false);
+    }
   });
 }
 

@@ -5,6 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "build:hook": "bun run ../hook/build.ts",
+    "build": "bun run build:hook && bun build src/index.ts --compile --outfile ../../dist/kerstel"
   }
 }
