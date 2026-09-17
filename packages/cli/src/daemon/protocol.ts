@@ -1,7 +1,11 @@
 export const PROTOCOL_VERSION = 1;
 
-/** One megabyte is far beyond any legitimate request or secret. */
-export const MAX_LINE_BYTES = 1_048_576;
+/**
+ * Maximum line length in UTF-16 code units (JavaScript string length).
+ * Bounds the in-memory buffer from a malicious or buggy peer. Not a byte-denominated wire limit.
+ * One megabyte is far beyond any legitimate request or secret.
+ */
+export const MAX_LINE_CHARS = 1_048_576;
 
 export type ErrorCode =
   | "bad_request"
@@ -89,7 +93,7 @@ export function errorResponse(id: string, code: ErrorCode, message: string): Err
 export class LineDecoder {
   private buffer = "";
 
-  constructor(private readonly maxBytes: number = MAX_LINE_BYTES) {}
+  constructor(private readonly maxChars: number = MAX_LINE_CHARS) {}
 
   push(chunk: Buffer | string): string[] {
     this.buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
@@ -103,9 +107,9 @@ export class LineDecoder {
       newline = this.buffer.indexOf("\n");
     }
 
-    if (this.buffer.length > this.maxBytes) {
+    if (this.buffer.length > this.maxChars) {
       this.buffer = "";
-      throw new Error(`Kerstel protocol line too large (> ${this.maxBytes} bytes)`);
+      throw new Error(`Kerstel protocol line too large (> ${this.maxChars} characters)`);
     }
     return lines;
   }
