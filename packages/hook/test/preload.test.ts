@@ -118,10 +118,15 @@ test("the reference string is never returned to application code", async () => {
   expect(stdout).toBe("real");
 });
 
-test("a spawned child process resolves the same reference", async () => {
+test("an unhooked grandchild still gets the resolved value, not the reference", async () => {
   const { sock, vault } = await boot();
   vault.setSecret({ scope: "global", key: "CHILD_KEY" }, "child-value");
 
+  // spawn-child.cjs strips NODE_OPTIONS before spawning its own child, so
+  // that grandchild has no preload and cannot resolve anything itself. It
+  // only prints the right value because the parent already resolved it while
+  // building the grandchild's env -- proving resolution happens at envp
+  // construction time, not by propagating the reference downstream.
   const { stdout } = await runHooked("node", sock, join(FIXTURES, "spawn-child.cjs"), ["CHILD_KEY"], {
     CHILD_KEY: "kerstel://global/CHILD_KEY",
   });

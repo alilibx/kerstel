@@ -79,7 +79,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 
 - A `get` whose stored value matches `^kerstel://` resolves through the daemon and returns the plaintext. Resolved values are memoized per process.
 - It never cares how the reference entered the env — dotenv, Next.js env loading, Bun's native `.env` loader, or the parent shell. It intercepts the *read*.
-- **Child processes:** the hook ensures `NODE_OPTIONS` (and Bun equivalents) in the env it exposes include the preload, so spawned node/bun children are covered. References — not plaintext — propagate in child env vars.
+- **Child processes:** the hook injects the preload into `NODE_OPTIONS` (and Bun equivalents) in the env it exposes, so spawned node/bun children are covered and can resolve references of their own. Variables already present in the environment are handed to any child already resolved: building a child's envp reads `process.env` through the same trap application code uses, so the hook cannot tell the two apart, and a non-Node child (python, git, curl, ...) could not resolve a reference anyway. This matches level 1's stated boundary — a child is a process that runs code.
 - Resolution failure (daemon unreachable, key missing, locked vault) throws a clear, actionable error naming the reference and the fix (`kerstel doctor`). It never silently returns the reference string to app code.
 
 ### 6.2 Wiring (owned by the wizard, never by the user's fingers)

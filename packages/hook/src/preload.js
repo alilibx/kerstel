@@ -80,7 +80,11 @@ function install() {
     },
   });
 
-  // Children inherit references, not plaintext, plus the wiring to resolve them.
+  // Children inherit the resolution wiring, so a variable they set or build
+  // themselves resolves too. Variables already present are handed over
+  // already resolved: building a child's envp reads process.env through the
+  // same get trap application code uses, so there is no way to tell the two
+  // apart, and a non-Node child could not resolve a reference anyway.
   raw.KERSTEL_ACTIVE = "1";
   raw.KERSTEL_SOCKET = socketPath;
   raw.KERSTEL_TOKEN = token;
