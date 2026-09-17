@@ -70,61 +70,76 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
 
     touchIdleTimer();
 
-    switch (message.op) {
-      case "status":
-        return {
-          v: PROTOCOL_VERSION,
-          id,
-          ok: true,
-          op: "status",
-          pid: process.pid,
-          unlocked,
-          backend: backendName,
-          secretCount: vault.listSecrets().length,
-          uptimeMs: Date.now() - startedAt,
-        };
+    // Everything below can touch the vault (SQLite I/O), which can throw
+    // synchronously for reasons that have nothing to do with the request
+    // (a full disk, a corrupted row). An uncaught throw here would escape
+    // the `socket.on("data")` listener and take down the whole process,
+    // dropping every live session — so every op is guarded, not just the
+    // ones we happened to think of first. Keep this generic: never surface
+    // the underlying error's message, which can carry a file path or row
+    // content.
+    try {
+      switch (message.op) {
+        case "status":
+          return {
+            v: PROTOCOL_VERSION,
+            id,
+            ok: true,
+            op: "status",
+            pid: process.pid,
+            unlocked,
+            backend: backendName,
+            secretCount: vault.listSecrets().length,
+            uptimeMs: Date.now() - startedAt,
+          };
 
-      case "lock":
-        lock();
-        return { v: PROTOCOL_VERSION, id, ok: true, op: "lock" };
+        case "lock":
+          lock();
+          return { v: PROTOCOL_VERSION, id, ok: true, op: "lock" };
 
-      case "shutdown":
-        queueMicrotask(() => void close());
-        return { v: PROTOCOL_VERSION, id, ok: true, op: "shutdown" };
+        case "shutdown":
+          queueMicrotask(() => void close());
+          return { v: PROTOCOL_VERSION, id, ok: true, op: "shutdown" };
 
-      case "resolve": {
-        if (!unlocked) {
-          return errorResponse(id, "locked", "Vault is locked. Run `kerstel daemon start` to unlock.");
+        case "resolve": {
+          if (!unlocked) {
+            return errorResponse(id, "locked", "Vault is locked. Run `kerstel daemon start` to unlock.");
+          }
+          const { scope, key } = message;
+          if (typeof scope !== "string" || typeof key !== "string") {
+            return errorResponse(id, "bad_request", "resolve requires string scope and key");
+          }
+
+          // Distinct from the outer catch: this tells "wrong key, can't
+          // decrypt" apart from "key simply isn't there" (Vault.getSecret's
+          // contract), which the generic guard below cannot.
+          let value: string | null;
+          try {
+            value = vault.getSecret({ scope, key });
+          } catch {
+            return errorResponse(id, "internal", "Could not decrypt the stored value");
+          }
+          if (value === null) {
+            return errorResponse(id, "not_found", `No secret at kerstel://${scope}/${key}`);
+          }
+
+          vault.appendAudit({
+            ts: Date.now(),
+            event: "resolve",
+            scope,
+            key,
+            pid: typeof message.pid === "number" ? message.pid : null,
+            processName: typeof message.processName === "string" ? message.processName : null,
+          });
+
+          return { v: PROTOCOL_VERSION, id, ok: true, op: "resolve", value };
         }
-        const { scope, key } = message;
-        if (typeof scope !== "string" || typeof key !== "string") {
-          return errorResponse(id, "bad_request", "resolve requires string scope and key");
-        }
 
-        let value: string | null;
-        try {
-          value = vault.getSecret({ scope, key });
-        } catch {
-          return errorResponse(id, "internal", "Could not decrypt the stored value");
-        }
-        if (value === null) {
-          return errorResponse(id, "not_found", `No secret at kerstel://${scope}/${key}`);
-        }
-
-        vault.appendAudit({
-          ts: Date.now(),
-          event: "resolve",
-          scope,
-          key,
-          pid: typeof message.pid === "number" ? message.pid : null,
-          processName: typeof message.processName === "string" ? message.processName : null,
-        });
-
-        return { v: PROTOCOL_VERSION, id, ok: true, op: "resolve", value };
+        default:
+          return errorResponse(id, "bad_request", `Unknown op "${String(message.op)}"`);
       }
-
-      default:
-        return errorResponse(id, "bad_request", `Unknown op "${String(message.op)}"`);
+    } catch {
+      return errorResponse(id, "internal", "Internal server error");
     }
   }
 
@@ -144,7 +159,20 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
         socket.end();
         return;
       }
-      for (const line of lines) socket.write(encodeMessage(handle(line)));
+      for (const line of lines) {
+        const response = handle(line);
+        socket.write(encodeMessage(response));
+        // A malformed request (bad JSON) has no recoverable id, so the reply
+        // carries id: "" and a client matching replies by id can never pair
+        // it up. End the connection after flushing the reply — same
+        // treatment as the oversized-line path above — so the client's own
+        // close handling deterministically rejects the stranded request
+        // instead of leaving it silently unmatched.
+        if (!response.ok && response.id === "") {
+          socket.end();
+          break;
+        }
+      }
     });
 
     socket.on("error", () => socket.destroy());

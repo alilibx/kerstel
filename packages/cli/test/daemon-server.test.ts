@@ -149,6 +149,35 @@ test("the daemon relocks itself after the idle timeout", async () => {
   expect(res).toMatchObject({ ok: false, error: { code: "locked" } });
 });
 
+test("shutdown acknowledges the request before the daemon stops accepting connections", async () => {
+  const { sock, token } = await boot();
+
+  // If the synchronous ack write got clobbered by the scheduled close()
+  // destroying the socket first, this would hang forever instead of
+  // resolving — race it against a timeout so that failure mode surfaces as
+  // a clear assertion instead of a stuck test run.
+  const res = await Promise.race([
+    request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "shutdown" }),
+    new Promise<Response>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("shutdown ack was not delivered to the client")), 2000),
+    ),
+  ]);
+  expect(res).toMatchObject({ ok: true, op: "shutdown" });
+
+  // Give the microtask-scheduled close() a moment to actually tear the
+  // server down before probing that it is gone.
+  await Bun.sleep(50);
+
+  await new Promise<void>((resolve, reject) => {
+    const conn = createConnection(sock);
+    conn.on("connect", () => {
+      conn.destroy();
+      reject(new Error("connected to a daemon that should have shut down"));
+    });
+    conn.on("error", () => resolve());
+  });
+});
+
 test("a stale socket file is replaced on restart", async () => {
   const { sock, token } = await boot();
   await running.pop()!.close();
