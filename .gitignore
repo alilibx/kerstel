@@ -1,7 +1,4 @@
+node_modules/
+dist/
+*.tsbuildinfo
 .DS_Store
-.build/
-.swiftpm/
-*.xcodeproj/
-xcuserdata/
-DerivedData/
-Package.resolved
