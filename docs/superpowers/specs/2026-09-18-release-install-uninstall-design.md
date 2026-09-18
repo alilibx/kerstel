@@ -36,6 +36,8 @@ Fails the run before any build when:
 - the tag without its `v` differs from `version` in any workspace `package.json`;
 - `CHANGELOG.md` has no `## <version> (<YYYY-MM-DD>)` heading for it (an `(unreleased)` heading does not count).
 
+A pre-release tag such as `v0.1.0-rc.1` is checked against its base version (`0.1.0`), also accepts an `(unreleased)` heading, and publishes as a GitHub pre-release. It lets the whole pipeline be exercised before the real tag.
+
 ### 4.2 Build
 
 One Ubuntu job builds the hook, then cross-compiles four binaries with `bun build --compile --target=<target>`:
