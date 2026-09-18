@@ -173,6 +173,21 @@ test("a value init kept only in its backup trips the gate until --force", async 
   expect(existsSync(home)).toBe(false);
 });
 
+test("a corrupt backup trips the gate, and --force gets past it", async () => {
+  const { home, root } = await setup();
+  const { key } = await loadOrCreateDataKey();
+  const backup = createBackup({ scope: "demo-app", dataKey: key, files: [{ name: ".env", contents: "API_KEY=x\n" }] });
+  writeFileSync(join(backup.dir, ".env.enc"), "not a ciphertext");
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
+  expect(existsSync(home)).toBe(true);
+  expect(output.join("\n")).toContain("Backups Kerstel cannot read");
+
+  expect(await uninstallCommand(["--yes", "--force"], undefined, NO_BINARY)).toBe(0);
+  expect(existsSync(home)).toBe(false);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=sk-restored\n");
+});
+
 function git(root: string, ...args: string[]): void {
   const result = Bun.spawnSync(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);

@@ -45,6 +45,13 @@ export interface BackupOnlyValue {
   backupDir: string;
 }
 
+/** A backup `readBackup` could not decrypt or verify. It may hold the only copy of a value. */
+export interface UnreadableBackup {
+  project: string;
+  backupDir: string;
+  reason: string;
+}
+
 export interface RestoredProject {
   name: string;
   rootPath: string;
@@ -60,37 +67,69 @@ export interface UninstallPlan {
   /** kerstel:// references for vault secrets no reachable project uses. */
   unused: string[];
   backupOnly: BackupOnlyValue[];
+  unreadableBackups: UnreadableBackup[];
 }
 
 export function emptyPlan(): UninstallPlan {
-  return { files: [], restored: [], unreachable: [], unresolvable: [], unused: [], backupOnly: [] };
+  return {
+    files: [],
+    restored: [],
+    unreachable: [],
+    unresolvable: [],
+    unused: [],
+    backupOnly: [],
+    unreadableBackups: [],
+  };
 }
 
 /**
- * Keys in a project's LATEST backup whose values were collapsed by `init`,
- * narrowed to the files where a backed-up value will not be back after the
- * restore. A key `init` left in plaintext (`--keep`, or a "plaintext" answer)
- * still holds every value in the live files, so it loses nothing and is not
- * reported. `restored` maps each env file name to its contents after the
- * restore. The backup is decrypted in memory only; no value leaves this function.
+ * Keys `init` collapsed, found in EVERY backup of a project -- not just the
+ * latest: a value `init` dropped on its first run survives only in that
+ * first backup, and a later run backs up files that already hold references.
+ * Narrowed to the files where a backed-up value will not be back after the
+ * restore: a key `init` left in plaintext (`--keep`, or a "plaintext" answer)
+ * still holds every value in the live files, so it loses nothing. `restored`
+ * maps each env file name to its contents after the restore. Backups are
+ * decrypted in memory only; no value leaves this function.
  */
-function backupOnlyValues(project: string, dataKey: Buffer, restored: Map<string, string>): BackupOnlyValue[] {
-  const timestamp = listBackups(project).at(-1);
-  if (!timestamp) return [];
-  const backupDir = join(backupsDir(), project, timestamp);
+function scanBackups(
+  project: string,
+  dataKey: Buffer,
+  restored: Map<string, string>,
+): { backupOnly: BackupOnlyValue[]; unreadable: UnreadableBackup[] } {
+  const backupOnly: BackupOnlyValue[] = [];
+  const unreadable: UnreadableBackup[] = [];
+  for (const timestamp of listBackups(project)) {
+    const backupDir = join(backupsDir(), project, timestamp);
+    try {
+      backupOnly.push(...collapsedValues(project, readBackup(project, timestamp, dataKey), backupDir, restored));
+    } catch (error) {
+      // A backup that cannot be read may hold the only copy of a value, so it
+      // counts as a possible loss -- and, like every other one, --force passes it.
+      unreadable.push({ project, backupDir, reason: (error as Error).message });
+    }
+  }
+  return { backupOnly, unreadable };
+}
 
+function collapsedValues(
+  project: string,
+  files: { name: string; contents: string }[],
+  backupDir: string,
+  restored: Map<string, string>,
+): BackupOnlyValue[] {
   // The manifest lists files in the order init loaded them, highest
   // precedence first, which is the order collectKeys expects.
-  const loaded: LoadedEnvFile[] = readBackup(project, timestamp, dataKey).map((file) => ({
+  const loaded: LoadedEnvFile[] = files.map((file) => ({
     info: { name: file.name, path: join(backupDir, file.name), rank: envFileRank(file.name) },
     original: file.contents,
     file: parseDotenv(file.contents),
   }));
 
   const flagged = new Map<string, Set<string>>();
-  const flag = (key: string, files: string[]) => {
+  const flag = (key: string, names: string[]) => {
     const set = flagged.get(key) ?? new Set<string>();
-    for (const file of files) set.add(file);
+    for (const name of names) set.add(name);
     flagged.set(key, set);
   };
 
@@ -109,15 +148,16 @@ function backupOnlyValues(project: string, dataKey: Buffer, restored: Map<string
 
   const valuesOf = (source: string, key: string) =>
     new Set(entries(parseDotenv(source)).filter((pair) => pair.key === key).map((pair) => pair.value));
+  // A reference in a backup (from an init re-run) is not a value, so it cannot be lost.
   const loses = (entry: LoadedEnvFile, key: string) => {
     const after = valuesOf(restored.get(entry.info.name) ?? "", key);
-    return [...valuesOf(entry.original, key)].some((value) => !after.has(value));
+    return [...valuesOf(entry.original, key)].some((value) => !parseReference(value) && !after.has(value));
   };
 
   // Report files in backup (precedence) order, not discovery order.
   const result: BackupOnlyValue[] = [];
-  for (const [key, files] of flagged) {
-    const losing = loaded.filter((entry) => files.has(entry.info.name) && loses(entry, key));
+  for (const [key, names] of flagged) {
+    const losing = loaded.filter((entry) => names.has(entry.info.name) && loses(entry, key));
     if (losing.length > 0) result.push({ project, key, files: losing.map((entry) => entry.info.name), backupDir });
   }
   return result;
@@ -129,9 +169,9 @@ function backupOnlyValues(project: string, dataKey: Buffer, restored: Map<string
  *
  * Values come from the vault, not from the encrypted backups: a backup holds
  * what the files said when `init` ran, and restoring it would silently undo
- * every rotation since. The latest backup is still READ (in memory, with
- * `dataKey`), because it can hold the one thing the vault never did: the
- * losing values of a key `init` collapsed. See `backupOnlyValues`.
+ * every rotation since. The backups are still READ (in memory, with
+ * `dataKey`), because they can hold the one thing the vault never did: the
+ * losing values of a key `init` collapsed. See `scanBackups`.
  */
 export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   const plan = emptyPlan();
@@ -216,7 +256,9 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       }
     }
 
-    plan.backupOnly.push(...backupOnlyValues(project.name, dataKey, restoredContents));
+    const backups = scanBackups(project.name, dataKey, restoredContents);
+    plan.backupOnly.push(...backups.backupOnly);
+    plan.unreadableBackups.push(...backups.unreadable);
     plan.restored.push({ name: project.name, rootPath: root, envFiles: restoredEnvFiles });
   }
 
@@ -231,6 +273,11 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
 /** True when applying the plan would lose a secret. See the loss gate in spec §6.2. */
 export function hasLoss(plan: UninstallPlan): boolean {
   return (
-    plan.unreachable.length + plan.unresolvable.length + plan.unused.length + plan.backupOnly.length > 0
+    plan.unreachable.length +
+      plan.unresolvable.length +
+      plan.unused.length +
+      plan.backupOnly.length +
+      plan.unreadableBackups.length >
+    0
   );
 }

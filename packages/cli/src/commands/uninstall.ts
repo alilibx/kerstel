@@ -63,6 +63,11 @@ function printPlan(plan: UninstallPlan): void {
       info(`${b.project}: ${b.key} in ${b.files.join(", ")} (backup ${b.backupDir})`);
     }
   }
+  if (plan.unreadableBackups.length > 0) {
+    console.log("");
+    console.log(yellow("!  Backups Kerstel cannot read, which may hold values kept nowhere else:"));
+    for (const b of plan.unreadableBackups) info(`${b.project}: ${b.backupDir} (${b.reason})`);
+  }
 }
 
 async function stopDaemonIfRunning(): Promise<void> {

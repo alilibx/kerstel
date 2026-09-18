@@ -164,6 +164,52 @@ test("a key init collapsed across files is flagged as kept only in the backup", 
   expect(JSON.stringify(plan.backupOnly)).not.toContain("shared-pw");
 });
 
+test("a value collapsed by an earlier init is flagged from its older backup", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_KEY" }, "kept");
+  const reference = "API_KEY=kerstel://demo-app/API_KEY\n";
+  const root = project({ "package.json": WIRED, ".env": reference, ".env.local": reference });
+  v.registerProject("demo-app", root);
+  // First init collapsed two values; a re-run then backed up files that already held references.
+  const first = createBackup({
+    scope: "demo-app",
+    dataKey,
+    timestamp: "2026-01-01T00-00-00.000Z",
+    files: [
+      { name: ".env.local", contents: "API_KEY=kept\n" },
+      { name: ".env", contents: "API_KEY=dropped\n" },
+    ],
+  });
+  createBackup({
+    scope: "demo-app",
+    dataKey,
+    timestamp: "2026-02-01T00-00-00.000Z",
+    files: [
+      { name: ".env.local", contents: reference },
+      { name: ".env", contents: "API_KEY=kerstel://other/API_KEY\n" },
+    ],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  // The later backup's differing references are not values, so only the first backup counts.
+  expect(plan.backupOnly).toEqual([{ project: "demo-app", key: "API_KEY", files: [".env"], backupDir: first.dir }]);
+  expect(hasLoss(plan)).toBe(true);
+});
+
+test("an unreadable backup is a possible loss, named without failing the plan", async () => {
+  const v = await freshVault();
+  const root = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  v.registerProject("demo-app", root);
+  const backup = createBackup({ scope: "demo-app", dataKey, files: [{ name: ".env", contents: "PORT=3000\n" }] });
+  writeFileSync(join(backup.dir, ".env.enc"), "not a ciphertext");
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.unreadableBackups).toEqual([
+    { project: "demo-app", backupDir: backup.dir, reason: expect.any(String) as unknown as string },
+  ]);
+  expect(hasLoss(plan)).toBe(true);
+});
+
 test("a conflicting key init left in plaintext is not flagged", async () => {
   const v = await freshVault();
   // `init --keep DEBUG`: both values stay in the live files, nothing in the vault.
@@ -213,13 +259,6 @@ test("a backup with no conflicting values, or no backup at all, contributes noth
   v.registerProject("demo-app", root);
   expect(planUninstall(v, dataKey).backupOnly).toEqual([]);
 
-  // An older backup with a conflict is superseded: only the latest one counts.
-  createBackup({
-    scope: "demo-app",
-    dataKey,
-    timestamp: "2026-01-01T00-00-00.000Z",
-    files: [{ name: ".env", contents: "API_KEY=a\nAPI_KEY=b\n" }],
-  });
   createBackup({
     scope: "demo-app",
     dataKey,
