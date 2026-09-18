@@ -315,3 +315,12 @@ test("an unknown command exits 2 with usage", async () => {
   expect(await runCli(["frobnicate"])).toBe(2);
   expect(captured.join("\n")).toMatch(/usage/i);
 });
+
+test("--version and version print the bare package version", async () => {
+  const pkg = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as { version: string };
+  for (const flag of ["--version", "version"]) {
+    capture();
+    expect(await runCli([flag])).toBe(0);
+    expect(captured.join("\n")).toBe(pkg.version);
+  }
+});

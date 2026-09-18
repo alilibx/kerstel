@@ -5,6 +5,7 @@ import { initCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { bold, fail } from "./output";
+import { VERSION } from "./version";
 
 const USAGE = `${bold("kerstel")} — local-first secrets for your projects
 
@@ -21,6 +22,7 @@ Usage:
   kerstel resolve kerstel://<scope>/<KEY>       Print one resolved value
   kerstel daemon <serve|start|stop|status>      Manage the resolver daemon
   kerstel doctor                                Diagnose this machine's setup
+  kerstel --version                             Print the version
 
 Scopes are explicit: "global" or a project name. A reference resolves in exactly
 one scope — there is no fallback.`;
@@ -31,6 +33,11 @@ export async function runCli(argv: string[]): Promise<number> {
   if (!command || command === "--help" || command === "-h" || command === "help") {
     console.log(USAGE);
     return command ? 0 : 2;
+  }
+
+  if (command === "--version" || command === "version") {
+    console.log(VERSION);
+    return 0;
   }
 
   try {

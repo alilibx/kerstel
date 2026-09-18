@@ -160,6 +160,14 @@ test("the vault file holds no plaintext after a full round trip", async () => {
   expect(Buffer.from(raw).includes(Buffer.from("PLAINTEXT_CANARY_E2E"))).toBe(false);
 });
 
+test("the compiled binary reports its version", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-version-"));
+  const pkg = (await Bun.file(join(REPO, "packages/cli/package.json")).json()) as { version: string };
+  const result = await kerstel(["--version"]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(`${pkg.version}\n`);
+});
+
 // Windows has no `sh`, and this test's whole point is running the rewritten
 // script the way a package manager would -- through a shell.
 test.if(process.platform !== "win32")(
