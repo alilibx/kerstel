@@ -35,7 +35,7 @@
 <h3>Added</h3>
 <ul>
 <li>Encrypted local vault at <code>~/.kerstel/vault.db</code>. Every value is sealed with AES-256-GCM and its own random nonce.</li>
-<li>Vault data key kept in the OS credential store: Keychain on macOS, Secret Service on Linux, and Credential Manager on Windows.</li>
+<li>Vault data key kept in the OS credential store: Keychain on macOS, Secret Service on Linux, and Credential Manager on Windows. Linux machines without a Secret Service provider fall back to a <code>0600</code> key file, with a warning.</li>
 <li><code>kerstel://&lt;scope&gt;/&lt;KEY&gt;</code> references, so <code>.env</code> files hold nothing secret and are safe to commit.</li>
 <li><code>kerstel set</code>, <code>get</code>, <code>ls</code>, and <code>rm</code> to manage secrets. <code>get</code> prints plaintext only with <code>--reveal</code>.</li>
 <li><code>kerstel run -- &lt;command&gt;</code> to run any command with every reference resolved up front.</li>

@@ -9,7 +9,7 @@ The first release: a local-first secrets manager for Node and Bun projects.
 ### Added
 
 - Encrypted local vault at `~/.kerstel/vault.db`. Every value is sealed with AES-256-GCM and its own random nonce.
-- Vault data key kept in the OS credential store: Keychain on macOS, Secret Service on Linux, and Credential Manager on Windows.
+- Vault data key kept in the OS credential store: Keychain on macOS, Secret Service on Linux, and Credential Manager on Windows. Linux machines without a Secret Service provider fall back to a `0600` key file, with a warning.
 - `kerstel://<scope>/<KEY>` references, so `.env` files hold nothing secret and are safe to commit.
 - `kerstel set`, `get`, `ls`, and `rm` to manage secrets. `get` prints plaintext only with `--reveal`.
 - `kerstel run -- <command>` to run any command with every reference resolved up front.
