@@ -48,8 +48,9 @@
 <p>The hook is a small, dependency-free preload that runs before your app code. It replaces <code>process.env</code> with a proxy. When code reads a key whose value starts with <code>kerstel://</code>, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun&#39;s native <code>.env</code> loader, Next.js env loading, or your shell.</p>
 <p>No command wires this up for you today; you add it by hand. Kerstel writes the hook&#39;s files to <code>~/.kerstel/hook</code> the first time any <code>kerstel</code> command runs, and the file to point at is <code>~/.kerstel/hook/preload.cjs</code>.</p>
 <p>For a Bun project, add it to <code>preload</code> in <code>bunfig.toml</code>:</p>
-<pre><code class="language-toml">preload = [&quot;~/.kerstel/hook/preload.cjs&quot;]
+<pre><code class="language-toml">preload = [&quot;/Users/you/.kerstel/hook/preload.cjs&quot;]
 </code></pre>
+<p><code>bunfig.toml</code> does not expand <code>~</code>, so write the full path (on Linux it is under <code>/home/you</code>).</p>
 <p>For a Node project, set <code>NODE_OPTIONS</code> for the scripts that need it:</p>
 <pre><code class="language-bash">NODE_OPTIONS=&quot;--require ~/.kerstel/hook/preload.cjs&quot; npm run dev
 </code></pre>

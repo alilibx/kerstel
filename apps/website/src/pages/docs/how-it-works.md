@@ -47,8 +47,10 @@ No command wires this up for you today; you add it by hand. Kerstel writes the h
 For a Bun project, add it to `preload` in `bunfig.toml`:
 
 ```toml
-preload = ["~/.kerstel/hook/preload.cjs"]
+preload = ["/Users/you/.kerstel/hook/preload.cjs"]
 ```
+
+`bunfig.toml` does not expand `~`, so write the full path (on Linux it is under `/home/you`).
 
 For a Node project, set `NODE_OPTIONS` for the scripts that need it:
 
