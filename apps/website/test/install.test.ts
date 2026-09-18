@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -150,4 +150,35 @@ test("a failure after staging leaves no staged file behind", async () => {
   expect(result.code).not.toBe(0);
   expect(existsSync(join(installDir, "kerstel"))).toBe(false);
   expect(readdirSync(installDir).filter((name) => name.startsWith(".kerstel-install."))).toEqual([]);
+});
+
+test("creates ks as a link to kerstel", async () => {
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(readlinkSync(join(installDir, "ks"))).toBe("kerstel");
+  expect(result.stdout).toContain("Linked ks -> kerstel");
+});
+
+test("a re-run keeps the ks link", async () => {
+  await install({});
+  const again = await install({});
+  expect(again.code).toBe(0);
+  expect(readlinkSync(join(installDir, "ks"))).toBe("kerstel");
+});
+
+test("another ks on PATH is left alone", async () => {
+  shim("ks", "echo someone else's ks");
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(existsSync(join(installDir, "ks"))).toBe(false);
+  expect(result.stdout).toContain("ks is already taken by");
+  expect(result.stdout).toContain("so use kerstel");
+});
+
+test("a regular file named ks in the install directory is left alone", async () => {
+  mkdirSync(installDir, { recursive: true });
+  writeFileSync(join(installDir, "ks"), "mine");
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(installDir, "ks"), "utf8")).toBe("mine");
 });
