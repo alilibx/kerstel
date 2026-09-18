@@ -48,9 +48,21 @@ kerstel exec -- <command>                     # Run a command with the hook wire
 kerstel resolve kerstel://<scope>/<KEY>       # Print one resolved value
 kerstel daemon <serve|start|stop|status>      # Manage the resolver daemon
 kerstel doctor                                # Diagnose this machine's setup
+kerstel uninstall [--dry-run] [--yes]         # Restore every project, then remove Kerstel
+kerstel --version                             # Print the version
 ```
 
 `kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
+
+## Install
+
+```bash
+curl -fsSL https://kerstel.dev/install.sh | bash
+```
+
+macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Re-run it to upgrade, or set `KERSTEL_VERSION=0.1.0` to pin a version.
+
+To remove Kerstel, run `kerstel uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, and the binary, in that order. It refuses if a secret would be lost, and names it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 

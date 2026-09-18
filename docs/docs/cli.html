@@ -158,6 +158,14 @@
 <td><code>kerstel doctor</code></td>
 <td>Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. Run inside a project with a <code>package.json</code>, it adds a <strong>Project</strong> section: the project root, its scope, the runtime and package manager, how many of the wrappable scripts are wired through <code>kerstel exec</code>, how many of the references in your <code>.env*</code> files this vault can resolve, and any env file it could not read.</td>
 </tr>
+<tr>
+<td><code>kerstel --version</code></td>
+<td>Print the version, such as <code>0.1.0</code>.</td>
+</tr>
+<tr>
+<td><code>kerstel uninstall</code></td>
+<td>Remove Kerstel from this machine. For every project <code>init</code> set up, it rewrites each <code>kerstel://</code> reference back to the value in the vault, unwraps the <code>package.json</code> scripts, and turns the <code>.gitignore</code> note back into <code>.env</code> and <code>.env.*</code> lines. It opens the vault without creating anything, so on a machine with no Kerstel data it says so and only removes the binary. Otherwise it shows every diff with values masked and asks once, defaulting to no; before writing anything it checks that every planned file is writable, and if one is not, names it and changes nothing. Once every file is written it stops the daemon and deletes <code>~/.kerstel</code>, the vault key, and the binary, in that order — the binary only when it is the compiled <code>kerstel</code>, not when running from source. It refuses if a project folder is gone, a reference cannot be resolved, or a secret is used by no project, and names each one; save those with <code>get --reveal</code>, then pass <code>--force</code>. <code>--dry-run</code> prints the plan and changes nothing; <code>--yes</code> skips the question but never implies <code>--force</code>.</td>
+</tr>
 </tbody></table>
 </div><h2>Environment variables</h2>
 <div class="table-wrap"><table>
