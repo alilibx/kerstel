@@ -32,12 +32,13 @@
 <p class="lede">Five minutes from a plaintext <code>.env</code> to one that is safe to commit.</p><h2>1. Install</h2>
 <pre><code class="language-bash">curl -fsSL https://kerstel.dev/install.sh | bash
 </code></pre>
-<p>The installer places the <code>kerstel</code> binary in <code>~/.kerstel/bin</code>, adds it to your PATH, creates the vault, and stores the data key in your OS credential store. Run <code>kerstel doctor</code> afterwards to confirm the vault and credential store are reachable.</p>
+<p>Binaries are not published yet: the installer prints a message saying so and exits without installing anything. Until they ship, build from source instead, as covered below.</p>
+<p>Once binaries ship, the installer will place the <code>kerstel</code> binary in <code>~/.kerstel/bin</code>, add it to your PATH, create the vault, and store the data key in your OS credential store. Run <code>kerstel doctor</code> afterwards to confirm the vault and credential store are reachable.</p>
 <p>Prefer to build it yourself? The <a href="https://github.com/alilibx/kerstel#build-from-source">README</a> covers building from source with Bun.</p>
 <h2>2. Store a secret</h2>
 <pre><code class="language-bash">kerstel set global/OPENAI_API_KEY --value sk-...
 </code></pre>
-<p>Or pipe the value in so it never lands in your shell history:</p>
+<p><code>--value</code> is the quickest way to try this, but it lands in your shell history. Pipe the value in instead so it never does:</p>
 <pre><code class="language-bash">pbpaste | kerstel set global/OPENAI_API_KEY
 </code></pre>
 <p><code>global</code> is a scope shared by every project on this machine. Use a project name instead, such as <code>myapp/DATABASE_URL</code>, for a value that belongs to one project.</p>

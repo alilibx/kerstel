@@ -39,7 +39,7 @@
 </thead>
 <tbody><tr>
 <td><code>kerstel set &lt;scope&gt;/&lt;KEY&gt; [--value &lt;value&gt;]</code></td>
-<td>Store or overwrite a secret. Without <code>--value</code>, the value is read from stdin.</td>
+<td>Store or overwrite a secret. Without <code>--value</code>, the value must be piped on stdin; a terminal with nothing piped in fails rather than waiting.</td>
 </tr>
 <tr>
 <td><code>kerstel get &lt;scope&gt;/&lt;KEY&gt; [--reveal]</code></td>

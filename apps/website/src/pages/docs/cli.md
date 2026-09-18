@@ -12,7 +12,7 @@ order: 2
 
 | Command | What it does |
 | --- | --- |
-| `kerstel set <scope>/<KEY> [--value <value>]` | Store or overwrite a secret. Without `--value`, the value is read from stdin. |
+| `kerstel set <scope>/<KEY> [--value <value>]` | Store or overwrite a secret. Without `--value`, the value must be piped on stdin; a terminal with nothing piped in fails rather than waiting. |
 | `kerstel get <scope>/<KEY> [--reveal]` | Read a secret. Prints a masked value unless `--reveal` is given. |
 | `kerstel ls [--scope <scope>]` | List stored references, optionally for one scope. Values are never listed. |
 | `kerstel rm <scope>/<KEY> --yes` | Remove a secret. `--yes` is required; there is no interactive confirmation. |

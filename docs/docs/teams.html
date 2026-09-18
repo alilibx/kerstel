@@ -38,14 +38,14 @@ STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
 </code></pre>
 <p>If <code>.env</code> is in <code>.gitignore</code>, remove it there only after every value is a reference. <code>git grep &quot;=sk-&quot;</code> and similar checks stay useful as a guard.</p>
 <h2>Onboard a teammate</h2>
-<p>A new clone has the references but an empty vault for that project. <code>kerstel ls</code> shows what the file expects; each missing key is set once:</p>
+<p>A new clone has the references but an empty vault for that project. The committed <code>.env</code> is already the list of what the project needs; each missing key is set once, piping the value on stdin so it never lands in shell history:</p>
 <pre><code class="language-bash">git clone git@github.com:acme/myapp.git &amp;&amp; cd myapp
+printf %s &quot;$DATABASE_URL&quot; | kerstel set myapp/DATABASE_URL
+printf %s &quot;$STRIPE_SECRET_KEY&quot; | kerstel set myapp/STRIPE_SECRET_KEY
 kerstel ls --scope myapp
-kerstel set myapp/DATABASE_URL
-kerstel set myapp/STRIPE_SECRET_KEY
 kerstel run -- npm run dev
 </code></pre>
-<p>Values are typed or pasted on stdin and never appear in shell history. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.</p>
+<p><code>kerstel ls --scope myapp</code> now shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.</p>
 <h2>Share values out of band</h2>
 <p>How the value reaches a teammate is up to you: a password manager share, a secure channel, or your cloud provider&#39;s console. Kerstel&#39;s job is that the value lands in a local vault and nowhere else in the repo.</p>
 <h2>Rotate a secret</h2>

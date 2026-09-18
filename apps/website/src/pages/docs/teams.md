@@ -23,17 +23,17 @@ If `.env` is in `.gitignore`, remove it there only after every value is a refere
 
 ## Onboard a teammate
 
-A new clone has the references but an empty vault for that project. `kerstel ls` shows what the file expects; each missing key is set once:
+A new clone has the references but an empty vault for that project. The committed `.env` is already the list of what the project needs; each missing key is set once, piping the value on stdin so it never lands in shell history:
 
 ```bash
 git clone git@github.com:acme/myapp.git && cd myapp
+printf %s "$DATABASE_URL" | kerstel set myapp/DATABASE_URL
+printf %s "$STRIPE_SECRET_KEY" | kerstel set myapp/STRIPE_SECRET_KEY
 kerstel ls --scope myapp
-kerstel set myapp/DATABASE_URL
-kerstel set myapp/STRIPE_SECRET_KEY
 kerstel run -- npm run dev
 ```
 
-Values are typed or pasted on stdin and never appear in shell history. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.
+`kerstel ls --scope myapp` now shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.
 
 ## Share values out of band
 

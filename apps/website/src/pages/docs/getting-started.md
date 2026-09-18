@@ -14,7 +14,9 @@ order: 1
 curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
-The installer places the `kerstel` binary in `~/.kerstel/bin`, adds it to your PATH, creates the vault, and stores the data key in your OS credential store. Run `kerstel doctor` afterwards to confirm the vault and credential store are reachable.
+Binaries are not published yet: the installer prints a message saying so and exits without installing anything. Until they ship, build from source instead, as covered below.
+
+Once binaries ship, the installer will place the `kerstel` binary in `~/.kerstel/bin`, add it to your PATH, create the vault, and store the data key in your OS credential store. Run `kerstel doctor` afterwards to confirm the vault and credential store are reachable.
 
 Prefer to build it yourself? The [README](https://github.com/alilibx/kerstel#build-from-source) covers building from source with Bun.
 
@@ -24,7 +26,7 @@ Prefer to build it yourself? The [README](https://github.com/alilibx/kerstel#bui
 kerstel set global/OPENAI_API_KEY --value sk-...
 ```
 
-Or pipe the value in so it never lands in your shell history:
+`--value` is the quickest way to try this, but it lands in your shell history. Pipe the value in instead so it never does:
 
 ```bash
 pbpaste | kerstel set global/OPENAI_API_KEY
