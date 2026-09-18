@@ -52,6 +52,7 @@ bun run test          # builds the hook first, then runs every suite
 bun run --cwd packages/cli build   # compiled binary at dist/kerstel
 ```
 
+- CI and release builds use the Bun version pinned in `.github/workflows/` (1.4.2), and the release binaries embed it. Develop on the same version, and bump every pin together.
 - The macOS Keychain tests touch the real login Keychain. They run only with `KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS=1`.
 - Tests must never print a secret value, and temporary vaults and homes must be cleaned up.
 
