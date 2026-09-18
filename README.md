@@ -75,7 +75,7 @@ Useful flags:
 
 | Flag | What it does |
 |---|---|
-| `--dry-run` | Prints every diff and writes nothing to your project or your vault (it still prepares `~/.kerstel`). Run this first. |
+| `--dry-run` | Prints every diff and writes nothing: not to your project, your vault, or `~/.kerstel`. Run this first. |
 | `--yes` | Accepts every suggestion, asks nothing. |
 | `--scope <name>` | Overrides the project scope (default: your `package.json` name). |
 | `--global KEY[,KEY]` | Forces those keys into the `global` scope. |
@@ -96,7 +96,7 @@ git clone git@github.com:acme/my-app.git && cd my-app
 kerstel init
 ```
 
-The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. The references double as a living `.env.example`. To supply them from a script instead:
+The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. It stores them when you apply the plan, or straight away if nothing else in the project needs changing. The references double as a living `.env.example`. To supply them from a script instead:
 
 ```bash
 echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | kerstel init --from-stdin --non-interactive

@@ -191,3 +191,14 @@ test("the continuation lines of an unclosed quote are never mined for key names"
   expect(JSON.stringify(file.unsupported)).not.toContain("MIIEow");
   expect(serializeDotenv(file)).toBe(source);
 });
+
+test("a lone carriage return ends a line, as dotenv treats it", () => {
+  const source = "A=1\rB=2\r";
+  const file = parseDotenv(source);
+  expect(entries(file).map((e) => [e.key, e.value])).toEqual([
+    ["A", "1"],
+    ["B", "2"],
+  ]);
+  expect(file.unsupported).toEqual([]);
+  expect(serializeDotenv(file)).toBe(source);
+});
