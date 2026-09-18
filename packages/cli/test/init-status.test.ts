@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctorCommand } from "../src/commands/doctor";
@@ -148,4 +148,48 @@ test("doctor outside a project prints no project section", async () => {
     console.log = realLog;
   }
   expect(captured.join("\n")).not.toContain("Project");
+});
+
+/**
+ * A `.env` the process cannot read. A DANGLING SYMLINK cannot stand in for
+ * this: `discoverEnvFiles` stats every candidate and drops the ones that do
+ * not resolve to a file, so a broken link never reaches the reader at all.
+ * Mode 000 is the case that does -- stat succeeds, open does not.
+ *
+ * Skipped when running as root, for whom mode 000 is still readable.
+ */
+const asRoot = process.getuid?.() === 0;
+
+test.skipIf(asRoot)("projectStatus reports an unreadable env file instead of throwing", () => {
+  const root = makeProject({
+    "package.json": '{\n  "name": "site"\n}\n',
+    ".env": "PRESENT=kerstel://site/PRESENT\n",
+    ".env.production": "LOCKED=kerstel://site/LOCKED\n",
+  });
+  chmodSync(join(root, ".env.production"), 0o000);
+
+  const status = projectStatus(root, emptyVault, "/hook");
+  expect(status?.unreadable).toEqual([".env.production"]);
+  // The readable file is still read.
+  expect(status?.references.total).toBe(1);
+});
+
+test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", async () => {
+  isolateEnv({ prefix: "status-doctor-unreadable" });
+  const root = makeProject({
+    "package.json": '{\n  "name": "site"\n}\n',
+    ".env": "PRESENT=kerstel://site/PRESENT\n",
+    ".env.production": "LOCKED=kerstel://site/LOCKED\n",
+  });
+  chmodSync(join(root, ".env.production"), 0o000);
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await doctorCommand(root)).toBe(0);
+  } finally {
+    console.log = realLog;
+  }
+  expect(captured.join("\n")).toContain(".env.production");
 });

@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { preloadPathFor } from "../commands/exec";
 import { formatReference, type SecretRef } from "../reference";
-import { collectKeys, loadEnvFiles } from "./collect";
-import { detectProject, type PackageManager, type Runtime } from "./detect";
+import { collectKeys, type LoadedEnvFile } from "./collect";
+import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } from "./detect";
+import { parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
 import { wireBunfig, wirePackageJson } from "./wiring";
 
@@ -18,6 +19,32 @@ export interface ProjectStatus {
   scripts: { wrappable: number; wired: number };
   bunfig: "not-applicable" | "present" | "missing" | "unknown";
   references: { total: number; resolvable: number; unresolved: string[] };
+  /** Env files that exist but could not be read, by name. */
+  unreadable: string[];
+}
+
+/**
+ * `loadEnvFiles`, but a file that will not open is RECORDED rather than
+ * thrown.
+ *
+ * `init` deliberately keeps the loud version: a wizard that is about to
+ * rewrite a file it could not read must stop. `doctor` is the opposite tool --
+ * it exists to report the broken state of a machine, so one unreadable
+ * `.env` has to become a line of output, not a stack trace over the whole
+ * diagnosis.
+ */
+function readEnvFiles(files: EnvFileInfo[]): { loaded: LoadedEnvFile[]; unreadable: string[] } {
+  const loaded: LoadedEnvFile[] = [];
+  const unreadable: string[] = [];
+  for (const info of files) {
+    try {
+      const original = readFileSync(info.path, "utf8");
+      loaded.push({ info, original, file: parseDotenv(original) });
+    } catch {
+      unreadable.push(info.name);
+    }
+  }
+  return { loaded, unreadable };
 }
 
 /**
@@ -61,10 +88,11 @@ export function projectStatus(
     }
   }
 
+  const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
   let resolvable = 0;
   const unresolved: string[] = [];
-  for (const key of collectKeys(loadEnvFiles(detected.envFiles))) {
+  for (const key of collectKeys(loaded)) {
     if (!key.reference) continue;
     total += 1;
     if (vault.getSecret(key.reference) !== null) resolvable += 1;
@@ -80,5 +108,6 @@ export function projectStatus(
     scripts: { wrappable: wired + wiring.rewrites.length, wired },
     bunfig,
     references: { total, resolvable, unresolved },
+    unreadable,
   };
 }

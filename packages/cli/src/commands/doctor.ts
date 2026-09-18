@@ -101,6 +101,15 @@ export async function doctorCommand(cwd: string = process.cwd()): Promise<number
       info(
         `References: ${project.references.resolvable} of ${project.references.total} reference${project.references.total === 1 ? "" : "s"} in ${project.envFiles.join(", ") || "no env files"} resolve here`,
       );
+      if (project.unreadable.length > 0) {
+        console.log(
+          yellow(
+            `!  Could not read ${project.unreadable.join(", ")}. Any reference in ` +
+              `${project.unreadable.length === 1 ? "that file is" : "those files are"} missing from the count above; ` +
+              "check the file's permissions.",
+          ),
+        );
+      }
       for (const missing of project.references.unresolved) {
         console.log(yellow(`!  ${missing} has no value in this vault. Run \`kerstel init\` to supply it.`));
       }
