@@ -19,7 +19,9 @@ Kerstel is a local-first secrets manager for Node and Bun projects. It is a new 
 3. **If a PR ships a feature that is not on the roadmap,** add it under the release it ships in, already ticked.
 4. **If a plan or spec moves a feature to another release,** move its line in `ROADMAP.md` in the same PR.
 5. **Never tick a box, add a changelog line, or move a feature for work that isn't in the PR.**
-6. **Only the maintainer cuts a release.** See "Releasing" below.
+6. **Every open roadmap item has a GitHub issue,** labelled `roadmap` and in the milestone named after its section (`0.2.0`, `Next`, `Later`), and the roadmap line links to it. When you add an item, open its issue and link it in the same PR. When you move an item, move its issue to the new milestone.
+7. **A PR that finishes a roadmap item says `Closes #N`** in its description, so merging closes the issue as the box is ticked. Designs stay in `docs/superpowers/`; an issue links to its spec rather than copying it.
+8. **Only the maintainer cuts a release.** See "Releasing" below.
 
 ## Releasing
 
