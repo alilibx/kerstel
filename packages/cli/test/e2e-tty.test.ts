@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 const REPO = resolve(import.meta.dir, "../../..");
 const BINARY = join(REPO, "dist", process.platform === "win32" ? "kerstel.exe" : "kerstel");
 const dirs: string[] = [];
+/** Every KERSTEL_HOME a test ran the binary under, whose daemon afterAll stops. */
+const homes: string[] = [];
 
 beforeAll(async () => {
   // `bun run build` in packages/cli runs `build:hook` (packages/hook/build.ts)
@@ -22,7 +24,17 @@ beforeAll(async () => {
   expect(existsSync(BINARY)).toBe(true);
 });
 
-afterAll(() => {
+afterAll(async () => {
+  // Here rather than at the end of the test body, so a failed assertion
+  // cannot skip it and leave a detached daemon running in CI.
+  for (const home of homes) {
+    const stop = Bun.spawn([BINARY, "daemon", "stop"], {
+      env: { ...process.env, KERSTEL_HOME: home, KERSTEL_KEYCHAIN_BACKEND: "file" },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await stop.exited;
+  }
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -89,6 +101,7 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
     const home = mkdtempSync(join(tmpdir(), "kerstel-tty-home-"));
     const root = mkdtempSync(join(tmpdir(), "kerstel-tty-app-"));
     dirs.push(home, root);
+    homes.push(home);
     writeFileSync(join(root, "package.json"), '{\n  "name": "tty-app",\n  "scripts": {\n    "dev": "node app.js"\n  }\n}\n');
     writeFileSync(join(root, ".env"), "PORT=3000\nDB_PASSWORD=correct-horse-battery\n");
 
@@ -104,13 +117,6 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
     expect(output).toContain("Look right?");
     expect(readFileSync(join(root, ".env"), "utf8")).toBe("PORT=3000\nDB_PASSWORD=kerstel://tty-app/DB_PASSWORD\n");
     expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "kerstel exec -- node app.js"');
-
-    const stop = Bun.spawn([BINARY, "daemon", "stop"], {
-      env: { ...process.env, KERSTEL_HOME: home, KERSTEL_KEYCHAIN_BACKEND: "file" },
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    await stop.exited;
   },
   60_000,
 );
