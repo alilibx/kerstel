@@ -10,7 +10,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] Resolver daemon and runtime hook for Node and Bun
 - [x] `kerstel doctor`
 - [x] [kerstel.dev](https://kerstel.dev) with docs, changelog, and roadmap
-- [ ] Setup wizard: `kerstel init` and `kerstel exec`
+- [x] Setup wizard: `kerstel init` and `kerstel exec`
 - [ ] Release binaries for macOS, Linux, and Windows, with checksums
 - [ ] Working `install.sh`
 - [ ] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel

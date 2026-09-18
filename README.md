@@ -87,7 +87,7 @@ Useful flags:
 
 ### One key, several files
 
-If the same key appears in more than one file with different values, Kerstel stores the highest-precedence one — `.env.<x>.local` beats `.env.local` beats `.env.<x>` beats `.env` — points **every** occurrence at that one reference, and tells you which files it collapsed. The other values remain in the encrypted backup. v1 has no environments (that is on the roadmap), so one key resolves to one value.
+If the same key appears in more than one file with different values, Kerstel stores the highest-precedence one — `.env.<x>.local` beats `.env.local` beats `.env.<x>` beats `.env` — points **every** occurrence at that one reference, and tells you which files it collapsed. The other values remain in the encrypted backup. Kerstel has no environments yet (they are on the [roadmap](ROADMAP.md)), so one key resolves to one value.
 
 ### Joining a project that already uses Kerstel
 

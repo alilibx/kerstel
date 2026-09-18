@@ -530,7 +530,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       yellow(
         `!  ${key.key} differs between ${key.source} and ${key.conflicts.join(", ")}. Kerstel stores the ` +
           `${key.source} value and points every file at it; the others survive only in the encrypted ` +
-          "backup. (v1 has no environments.)",
+          "backup. (Kerstel has no environments yet.)",
       ),
     );
   }
