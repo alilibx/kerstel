@@ -30,7 +30,7 @@ git clone git@github.com:acme/myapp.git && cd myapp
 kerstel init
 ```
 
-The committed `.env` is already the list of what the project needs, so `init` lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. It also re-points the `bunfig.toml` preload at this machine's copy of the hook, which is why every developer on a Bun project runs it once after cloning. To supply the values from a script instead:
+The committed `.env` is already the list of what the project needs, so `init` lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. To supply the values from a script instead:
 
 ```bash
 echo '{"DATABASE_URL":"kerstel-demo-value","STRIPE_SECRET_KEY":"kerstel-demo-value"}' | kerstel init --from-stdin --non-interactive

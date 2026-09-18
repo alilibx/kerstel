@@ -54,7 +54,7 @@ When the same key appears in several files, the highest-precedence one is stored
 | `kerstel daemon stop` | Stop it. |
 | `kerstel daemon status` | Report whether it is running and where its socket is. |
 | `kerstel daemon serve` | Run the daemon in the foreground. Used by `start`; handy for debugging. |
-| `kerstel doctor` | Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. Run inside a project with a `package.json`, it adds a **Project** section: the project root, its scope, the runtime and package manager, how many of the wrappable scripts are wired through `kerstel exec`, whether the `bunfig.toml` preload is in place on a Bun project, how many of the references in your `.env*` files this vault can resolve, and any env file it could not read. |
+| `kerstel doctor` | Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. Run inside a project with a `package.json`, it adds a **Project** section: the project root, its scope, the runtime and package manager, how many of the wrappable scripts are wired through `kerstel exec`, how many of the references in your `.env*` files this vault can resolve, and any env file it could not read. |
 
 ## Environment variables
 

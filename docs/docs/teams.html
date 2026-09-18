@@ -42,7 +42,7 @@ STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
 <pre><code class="language-bash">git clone git@github.com:acme/myapp.git &amp;&amp; cd myapp
 kerstel init
 </code></pre>
-<p>The committed <code>.env</code> is already the list of what the project needs, so <code>init</code> lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. It also re-points the <code>bunfig.toml</code> preload at this machine&#39;s copy of the hook, which is why every developer on a Bun project runs it once after cloning. To supply the values from a script instead:</p>
+<p>The committed <code>.env</code> is already the list of what the project needs, so <code>init</code> lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. To supply the values from a script instead:</p>
 <pre><code class="language-bash">echo &#39;{&quot;DATABASE_URL&quot;:&quot;kerstel-demo-value&quot;,&quot;STRIPE_SECRET_KEY&quot;:&quot;kerstel-demo-value&quot;}&#39; | kerstel init --from-stdin --non-interactive
 </code></pre>
 <p>Setting keys one at a time still works, piping each value on stdin so it never lands in shell history:</p>

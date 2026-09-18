@@ -81,7 +81,7 @@ You are asked three kinds of question, and no more:
 2. **One confirmation**, under the full plan and a line-for-line diff of every file it means to change, covering all of it at once: the backup, the vault entries, the `.env` rewrites, and the wiring. Values are masked in that diff too.
 3. **One question about `.gitignore`**, afterwards, defaulting to **no**: if `.gitignore` currently hides your env files, Kerstel offers to remove those lines and leave a note instead, so the now reference-only files can be committed. It re-reads the rewritten files first and names any key that still holds a plaintext value rather than calling the files safe.
 
-Before its first write it puts your original files, encrypted with your vault key, in `~/.kerstel/backups/<scope>/<timestamp>/`. Then it rewrites the values, wires every `package.json` script as `kerstel exec -- <your original command>`, adds the `bunfig.toml` preload on a Bun project, and finishes by running a probe through the wiring to prove a reference resolves.
+Before its first write it puts your original files, encrypted with your vault key, in `~/.kerstel/backups/<scope>/<timestamp>/`. Then it rewrites the values, wires every `package.json` script as `kerstel exec -- <your original command>`, and finishes by running a probe through the wiring to prove a reference resolves.
 
 To see all of that without writing anything, add `--dry-run`: it prints every diff and stops before the first write.
 

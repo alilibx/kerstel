@@ -14,6 +14,8 @@
 
 ## Global Constraints
 
+> **Amended 2026-09-18:** the bunfig half of ruling 2 was dropped after implementation; see spec §6.2.
+
 Carried verbatim from plan 1 — every one of these still binds:
 
 - **Language/runtime:** TypeScript throughout. Bun is the only toolchain dependency for building. The shipped artifact is a single self-contained binary per platform (`bun build --compile`).

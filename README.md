@@ -65,13 +65,11 @@ The wizard shows you everything it intends to do — the plan, and a full diff o
 2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found — key names, value sizes and shapes, never the values themselves. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
 3. **Back up** the originals, encrypted with your vault key, to `~/.kerstel/backups/<project>/<timestamp>/`.
 4. **Rewrite** the files, changing only the bytes of the values it stored. Comments, blank lines, key order, quoting style and inline comments all survive byte for byte.
-5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped), and Bun projects also get a `preload` entry in `bunfig.toml`. You see the diff first.
+5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped). You see the diff first. Bun projects are wired the same way — `kerstel exec` passes `--preload` to `bun` itself, because Bun ignores `NODE_OPTIONS`.
 6. **Offer to update `.gitignore`**, as a separate confirmation that defaults to **no**: if it currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the now reference-only files can be committed. It re-reads the rewritten files first: if any key still holds a plaintext value — `--keep`, a **plaintext** answer, or a line it could not parse — it names those keys rather than telling you the files are safe to commit. Decline and it leaves `.gitignore` untouched.
 7. **Self-check** by running a probe through the wiring and confirming a reference resolves.
 
 Afterwards `npm run dev` is still `npm run dev`.
-
-The `bunfig.toml` preload path points into `~/.kerstel`, which is per-machine, so the committed path is not the one that works on a teammate's laptop. Every developer on a Bun project runs `kerstel init` once after cloning; it replaces the stale path with theirs.
 
 Useful flags:
 
