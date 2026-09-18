@@ -112,3 +112,32 @@ test("a value whose quote never closes is reported, not parsed", () => {
   // And it still round-trips: an unparsed line is carried as raw text.
   expect(serializeDotenv(file)).toBe('GOOD=1\nMULTI="line one\nstill going"\n');
 });
+
+test("a key whose name the parser does not support is reported, not silently kept", () => {
+  const source = "GOOD=1\nMY-KEY=dash-secret\nmy.key=dotted-secret\n";
+  const file = parseDotenv(source);
+  expect(file.unsupported.map((u) => u.key)).toEqual(["MY-KEY", "my.key"]);
+  expect(file.unsupported.map((u) => u.line)).toEqual([2, 3]);
+  for (const entry of file.unsupported) {
+    expect(entry.reason).toContain("key");
+    expect(entry.reason).not.toContain("secret");
+  }
+  expect(entries(file).map((e) => e.key)).toEqual(["GOOD"]);
+  // Still raw text, so the file round-trips byte for byte.
+  expect(serializeDotenv(file)).toBe(source);
+});
+
+test("comments, blank lines and prose are not reported as unsupported keys", () => {
+  const file = parseDotenv("# a=b in a comment\n\n   \nnot a pair at all\nGOOD=1\n");
+  expect(file.unsupported).toEqual([]);
+});
+
+test("the continuation lines of an unclosed quote are never mined for key names", () => {
+  // Base64 key material pads with "=", which a naive "text before =" reader
+  // would report as a key -- printing the secret it exists to hide.
+  const source = 'K="-----BEGIN KEY-----\nMIIEowIBAAKCAQEAsecretkeymaterial==\n-----END KEY-----"\n';
+  const file = parseDotenv(source);
+  expect(file.unsupported.map((u) => u.key)).toEqual(["K"]);
+  expect(JSON.stringify(file.unsupported)).not.toContain("MIIEow");
+  expect(serializeDotenv(file)).toBe(source);
+});

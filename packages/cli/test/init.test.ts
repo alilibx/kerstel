@@ -458,3 +458,33 @@ test("the diff masks every value it is not migrating, parsed or not", async () =
   expect(env).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
   expect(env).toContain("OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY");
 });
+
+test("init warns about a key it cannot parse and never prints its value", async () => {
+  isolateEnv({ prefix: "init-badkey" });
+  await bootLocalDaemon();
+
+  const envSource = "MY-KEY=dash-secret-value\nGOOD_KEY=good-secret-value\n";
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": envSource });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(options(root), new ScriptedPrompter(["project", true]));
+  } finally {
+    console.log = realLog;
+  }
+  expect(code).toBe(0);
+
+  const output = captured.join("\n");
+  expect(output).toContain("MY-KEY");
+  expect(output).toContain("Kerstel does not support");
+  expect(output).not.toContain("dash-secret-value");
+  expect(output).not.toContain("good-secret-value");
+
+  // The line the wizard refused is on disk exactly as the developer wrote it.
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("MY-KEY=dash-secret-value");
+  expect(env).toContain("GOOD_KEY=kerstel://demo-app/GOOD_KEY");
+});

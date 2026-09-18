@@ -89,9 +89,52 @@ function findInlineComment(rest: string, from: number): number {
   return rest.length;
 }
 
-function parseLine(text: string, eol: string, lineNumber: number, unsupported: UnsupportedValue[]): DotenvLine {
+/** Blank, whitespace, or a comment: a line that cannot be hiding an assignment. */
+const BLANK_OR_COMMENT = /^\s*(#.*)?$/;
+
+/**
+ * What the wizard is willing to REPRINT as a key name.
+ *
+ * A line that is not a recognised pair but does contain `=` is usually a key
+ * whose name uses a character `PAIR` rejects (`MY-KEY`, `my.key`). Naming it
+ * is the whole point -- silence there leaves a secret in plaintext with no
+ * warning. But the text before `=` is only a key name if it LOOKS like one:
+ * it has to start like an identifier, carry no whitespace, and stay short.
+ * Anything else is more likely to be value material, and rule 1 (never print
+ * a value) outranks the warning.
+ */
+const KEY_SHAPED = /^[A-Za-z_][^\s]{0,63}$/;
+
+interface ParsedLine {
+  line: DotenvLine;
+  /**
+   * Set when this line opened a quote it never closed, so the caller knows the
+   * lines that follow are continuations of a value rather than assignments.
+   */
+  openQuote: string | null;
+}
+
+function parseLine(
+  text: string,
+  eol: string,
+  lineNumber: number,
+  unsupported: UnsupportedValue[],
+): ParsedLine {
   const match = PAIR.exec(text);
-  if (!match) return { kind: "raw", text, eol };
+  if (!match) {
+    const equals = text.indexOf("=");
+    if (equals > 0 && !BLANK_OR_COMMENT.test(text)) {
+      const candidate = text.slice(0, equals).replace(/^\s*(export[ \t]+)?/, "").trimEnd();
+      if (KEY_SHAPED.test(candidate)) {
+        unsupported.push({
+          key: candidate,
+          line: lineNumber,
+          reason: "the key contains characters Kerstel does not support",
+        });
+      }
+    }
+    return { line: { kind: "raw", text, eol }, openQuote: null };
+  }
 
   const prefix = match[1] ?? "";
   const key = match[4] ?? "";
@@ -112,32 +155,38 @@ function parseLine(text: string, eol: string, lineNumber: number, unsupported: U
         line: lineNumber,
         reason: "the value opens a quote that does not close on the same line",
       });
-      return { kind: "raw", text, eol };
+      return { line: { kind: "raw", text, eol }, openQuote: head };
     }
     const body = rest.slice(i + 1, closing);
     return {
-      kind: "pair",
-      text,
-      eol,
-      key,
-      value: head === '"' ? decodeDoubleQuoted(body) : body,
-      quote: head,
-      valueStart: prefix.length + i,
-      valueEnd: prefix.length + closing + 1,
+      line: {
+        kind: "pair",
+        text,
+        eol,
+        key,
+        value: head === '"' ? decodeDoubleQuoted(body) : body,
+        quote: head,
+        valueStart: prefix.length + i,
+        valueEnd: prefix.length + closing + 1,
+      },
+      openQuote: null,
     };
   }
 
   const commentAt = findInlineComment(rest, i);
   const trimmed = rest.slice(i, commentAt).replace(/[ \t]+$/, "");
   return {
-    kind: "pair",
-    text,
-    eol,
-    key,
-    value: trimmed,
-    quote: "",
-    valueStart: prefix.length + i,
-    valueEnd: prefix.length + i + trimmed.length,
+    line: {
+      kind: "pair",
+      text,
+      eol,
+      key,
+      value: trimmed,
+      quote: "",
+      valueStart: prefix.length + i,
+      valueEnd: prefix.length + i + trimmed.length,
+    },
+    openQuote: null,
   };
 }
 
@@ -151,13 +200,28 @@ export function parseDotenv(source: string): DotenvFile {
   const lines: DotenvLine[] = [];
   const unsupported: UnsupportedValue[] = [];
 
+  // The quote character of a value that opened on an earlier line and has not
+  // closed yet. While it is set, every line is a CONTINUATION of that value:
+  // carried through as raw text and never inspected, because inspecting it
+  // would mean reading key material looking for something to print.
+  let openQuote: string | null = null;
+
   for (let i = 0; i < parts.length; i += 2) {
     const text = parts[i] ?? "";
     const eol = parts[i + 1] ?? "";
     // split() leaves an empty final piece after a trailing terminator. Keeping
     // it would append a phantom empty line on every serialize.
     if (i > 0 && text === "" && eol === "") break;
-    lines.push(parseLine(text, eol, i / 2 + 1, unsupported));
+
+    if (openQuote !== null) {
+      if (findClosingQuote(text, -1, openQuote) !== -1) openQuote = null;
+      lines.push({ kind: "raw", text, eol });
+      continue;
+    }
+
+    const parsed = parseLine(text, eol, i / 2 + 1, unsupported);
+    openQuote = parsed.openQuote;
+    lines.push(parsed.line);
   }
 
   return { lines, unsupported };
