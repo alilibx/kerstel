@@ -1,0 +1,116 @@
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  detectPackageManager,
+  detectProject,
+  discoverEnvFiles,
+  envFileRank,
+  isEnvFileName,
+} from "../src/init/detect";
+
+function project(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "kerstel-detect-"));
+  for (const [name, contents] of Object.entries(files)) {
+    writeFileSync(join(root, name), contents);
+  }
+  return root;
+}
+
+test("isEnvFileName accepts .env and its variants and rejects templates", () => {
+  for (const name of [".env", ".env.local", ".env.production", ".env.production.local"]) {
+    expect(isEnvFileName(name)).toBe(true);
+  }
+  for (const name of [
+    ".env.example",
+    ".env.sample",
+    ".env.template",
+    ".env.dist",
+    ".environment",
+    "env",
+    ".envrc",
+    "package.json",
+  ]) {
+    expect(isEnvFileName(name)).toBe(false);
+  }
+});
+
+test("envFileRank implements the documented precedence", () => {
+  expect(envFileRank(".env.production.local")).toBeGreaterThan(envFileRank(".env.local"));
+  expect(envFileRank(".env.local")).toBeGreaterThan(envFileRank(".env.production"));
+  expect(envFileRank(".env.production")).toBeGreaterThan(envFileRank(".env"));
+});
+
+test("discoverEnvFiles returns the highest-precedence file first", () => {
+  const root = project({
+    ".env": "A=1",
+    ".env.local": "A=2",
+    ".env.production": "A=3",
+    ".env.production.local": "A=4",
+    ".env.example": "A=",
+    "package.json": "{}",
+  });
+  expect(discoverEnvFiles(root).map((f) => f.name)).toEqual([
+    ".env.production.local",
+    ".env.local",
+    ".env.production",
+    ".env",
+  ]);
+});
+
+test("discoverEnvFiles ignores directories named like env files", () => {
+  const root = project({ ".env": "A=1" });
+  mkdirSync(join(root, ".env.d"));
+  expect(discoverEnvFiles(root).map((f) => f.name)).toEqual([".env"]);
+});
+
+test("discoverEnvFiles returns nothing for a project without env files", () => {
+  expect(discoverEnvFiles(project({ "package.json": "{}" }))).toEqual([]);
+});
+
+test("lockfiles decide the package manager, in the documented order", () => {
+  expect(detectPackageManager(project({ "bun.lock": "" }), null)).toBe("bun");
+  expect(detectPackageManager(project({ "bun.lockb": "" }), null)).toBe("bun");
+  expect(detectPackageManager(project({ "pnpm-lock.yaml": "" }), null)).toBe("pnpm");
+  expect(detectPackageManager(project({ "yarn.lock": "" }), null)).toBe("yarn");
+  expect(detectPackageManager(project({ "package-lock.json": "" }), null)).toBe("npm");
+  // Bun wins when a repo carries more than one lockfile.
+  expect(detectPackageManager(project({ "bun.lock": "", "package-lock.json": "" }), null)).toBe("bun");
+});
+
+test("the packageManager field decides when no lockfile does", () => {
+  const root = project({ "package.json": "{}" });
+  expect(detectPackageManager(root, { packageManager: "pnpm@9.1.0" })).toBe("pnpm");
+  expect(detectPackageManager(root, { packageManager: "yarn@4.2.2" })).toBe("yarn");
+  expect(detectPackageManager(root, { packageManager: "bun@1.1.0" })).toBe("bun");
+  expect(detectPackageManager(root, { packageManager: "who-knows@1" })).toBe("npm");
+  expect(detectPackageManager(root, null)).toBe("npm");
+});
+
+test("detectProject reads the package name and maps bun to the bun runtime", () => {
+  const root = project({
+    "package.json": JSON.stringify({ name: "@acme/web", scripts: { dev: "vite" } }),
+    "bun.lock": "",
+    ".env": "A=1",
+  });
+  const detected = detectProject(root);
+  expect(detected.root).toBe(root);
+  expect(detected.packageName).toBe("@acme/web");
+  expect(detected.packageManager).toBe("bun");
+  expect(detected.runtime).toBe("bun");
+  expect(detected.envFiles.map((f) => f.name)).toEqual([".env"]);
+  expect(detected.packageJsonPath).toBe(join(root, "package.json"));
+});
+
+test("detectProject reports a missing or unreadable package.json as null", () => {
+  expect(detectProject(project({ ".env": "A=1" })).packageJson).toBeNull();
+  expect(detectProject(project({ "package.json": "{ not json" })).packageJson).toBeNull();
+});
+
+test("a non-bun project is a node project", () => {
+  const root = project({ "package.json": JSON.stringify({ name: "web" }), "pnpm-lock.yaml": "" });
+  const detected = detectProject(root);
+  expect(detected.packageManager).toBe("pnpm");
+  expect(detected.runtime).toBe("node");
+});
