@@ -109,14 +109,14 @@ Open the vault without creating anything: no home, hook, token, or key is writte
 
 Then compute **unused secrets**: every `scope/KEY` in the vault that no reachable project's `.env` files refer to. These include `global` keys used by repositories that never ran `init`, and keys added with `kerstel set` alone.
 
-Finally compute **backup-only values**. `init` collapses a key defined in several env files, or assigned twice with different values in one file, into one vault entry; the other values survive only in its encrypted backup, which uninstall deletes with the key that opens it. For each reachable project, decrypt its latest backup in memory (never to disk) with the vault data key, and take every key with cross-file conflicts (`collectKeys(...).conflicts`) or with differing values inside one backed-up file. Record it, by key, file names, and backup directory, only for the files where a backed-up value will not be back after the restore; a key `init` left in plaintext keeps every value in the live files and loses nothing. A project with no backup contributes nothing.
+Finally compute **backup-only values**. `init` collapses a key defined in several env files, or assigned twice with different values in one file, into one vault entry; the other values survive only in its encrypted backup, which uninstall deletes with the key that opens it. For each reachable project, decrypt every one of its backups in memory (never to disk) with the vault data key, since a value collapsed by an earlier `init` survives only in that earlier backup, and take every key with cross-file conflicts (`collectKeys(...).conflicts`) or with differing values inside one backed-up file. Record it, by key, file names, and backup directory, only for the files where a backed-up value (not a `kerstel://` reference, which a re-run's backup holds) will not be back after the restore; a key `init` left in plaintext keeps every value in the live files and loses nothing. A project with no backup contributes nothing. A backup that cannot be decrypted or fails its hash check is recorded as an **unreadable backup** (project, directory, reason) instead of aborting the plan.
 
 ### 6.2 Show and confirm
 
 - Print every file diff with values masked, using the display masking `init` uses. No value is printed.
-- List by name every unreachable project (with its recorded path), unresolvable reference, unused secret, and backup-only value (key, files, and backup directory, never the value).
+- List by name every unreachable project (with its recorded path), unresolvable reference, unused secret, backup-only value (key, files, and backup directory, never the value), and unreadable backup.
 - `--dry-run` exits 0 here, having written nothing, whether or not anything would be lost.
-- **Loss gate.** If any of those four lists is non-empty, stop with exit 1 unless `--force` is passed. The message names each item and says to save values first with `kerstel get <scope>/<KEY> --reveal`.
+- **Loss gate.** If any of those five lists is non-empty, stop with exit 1 unless `--force` is passed. The message names each item and says to save values first with `kerstel get <scope>/<KEY> --reveal`.
 - Ask once, defaulting to **no**: "Restore these files and delete Kerstel from this machine?" `--yes` answers yes. `--yes` never implies `--force`. Without a terminal and without `--yes`, exit 2.
 
 ### 6.3 Apply
