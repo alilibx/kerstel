@@ -19,7 +19,17 @@ Kerstel is a local-first secrets manager for Node and Bun projects. It is a new 
 3. **If a PR ships a feature that is not on the roadmap,** add it under the release it ships in, already ticked.
 4. **If a plan or spec moves a feature to another release,** move its line in `ROADMAP.md` in the same PR.
 5. **Never tick a box, add a changelog line, or move a feature for work that isn't in the PR.**
-6. **Only the maintainer cuts a release.** A release replaces `(unreleased)` with the date (`## 0.1.0 (2026-10-01)`), tags `v0.1.0`, and opens a new `(unreleased)` section for the next version.
+6. **Only the maintainer cuts a release.** See "Releasing" below.
+
+## Releasing
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it verifies the tag, cross-compiles the four binaries, smoke-tests each on its own OS with no source checkout, publishes the GitHub Release, and then installs it with the real `install.sh`.
+
+1. In `CHANGELOG.md`, replace `(unreleased)` with today's date (`## 0.1.0 (2026-10-01)`) and add an empty `## 0.1.1 (unreleased)` section above it. Merge that to `main`.
+2. Tag the merge commit and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
+3. To rehearse, push a pre-release tag first (`v0.1.0-rc.1`). It accepts an `(unreleased)` heading and publishes a GitHub pre-release. Delete it afterwards with `gh release delete v0.1.0-rc.1 --cleanup-tag --yes`.
+
+`bun scripts/release-verify.ts <tag>` runs the same pre-flight check locally.
 
 ## Website
 
