@@ -100,7 +100,7 @@ The landing page's "Binaries are not published yet" note is removed. Getting sta
 
 ### 6.1 Plan (read only)
 
-Open the vault. For each project in the `projects` table:
+Open the vault without creating anything: no home, hook, token, or key is written, so `--dry-run` and every refusal leave the machine as they found it. With no vault on disk, there is nothing to restore. For each project in the `projects` table:
 
 - **Reachable** when its `root_path` exists and holds a `package.json`. Otherwise it is **unreachable**.
 - **`.env` files.** Discover them as `init` does. Every value that parses as a `kerstel://` reference is replaced, through `setValue`, with the secret's current vault value. A reference the vault cannot resolve is left as it is and recorded as **unresolvable**. Files are rewritten in place: comments, order, quoting style, and line endings stay intact.
@@ -121,8 +121,8 @@ Then compute **unused secrets**: every `scope/KEY` in the vault that no reachabl
 
 1. Write every planned file. On the first failure, stop, exit 1, name the file, and list which files were already written. Nothing below runs.
 2. Stop the daemon if it is running.
-3. Delete the data key with the active credential-store backend's `delete()`.
-4. Delete `~/.kerstel` (`KERSTEL_HOME`): the vault, backups, hook, token, and socket.
+3. Delete `~/.kerstel` (`KERSTEL_HOME`): the vault, backups, hook, token, and socket.
+4. Delete the data key with the credential-store backend the vault was opened with. It goes after the home so a failure here leaves a harmless orphaned key rather than a vault no key can open.
 5. Delete the binary, only when running as the compiled executable (`process.execPath`'s file name is `kerstel` and the process is not the `bun` runtime). Otherwise print where the binary is.
 6. Print each restored project, and a warning that its `.env` files now hold plaintext and must stay out of git.
 

@@ -1,5 +1,5 @@
-import { rmSync, writeFileSync } from "node:fs";
-import { openContext } from "../context";
+import { accessSync, constants, rmSync, writeFileSync } from "node:fs";
+import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
 import { TtyPrompter, type Prompter } from "../init/prompts";
@@ -7,7 +7,6 @@ import { renderDiff } from "../init/wiring";
 import { bold, fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
 import { hasLoss, planUninstall, type UninstallPlan } from "../uninstall/plan";
-import { selectBackend } from "../vault/keychain";
 
 /**
  * Plan-5 spec §6. Three phases: plan (read only), show and gate, then apply:
@@ -77,12 +76,20 @@ export async function uninstallCommand(
     return 2;
   }
 
-  const ctx = await openContext();
+  // Read-only: never creates ~/.kerstel, a hook install, a token, or a vault
+  // key. A --dry-run, a declined prompt, or a loss-gate refusal must be able
+  // to touch nothing, and this machine may genuinely have no vault yet.
+  const existing = await openExistingVault();
   let plan: UninstallPlan;
-  try {
-    plan = planUninstall(ctx.vault);
-  } finally {
-    ctx.vault.close();
+  if (existing) {
+    try {
+      plan = planUninstall(existing.vault);
+    } finally {
+      existing.vault.close();
+    }
+  } else {
+    info("Kerstel has no data on this machine.");
+    plan = { files: [], restored: [], unreachable: [], unresolvable: [], unused: [] };
   }
 
   printPlan(plan);
@@ -119,6 +126,24 @@ export async function uninstallCommand(
   }
 
   // Phase 1: project files. Nothing below runs unless every one is written.
+  //
+  // Checked up front, before any file is touched: a write failing partway
+  // through would restore some files but not others, and a re-run would then
+  // see the already-restored files as no longer referencing their secrets --
+  // tripping the loss gate on secrets that were never actually lost. Failing
+  // here instead means either every file is written, or none is.
+  for (const file of plan.files) {
+    try {
+      accessSync(file.path, constants.W_OK);
+    } catch {
+      fail(
+        `Cannot write ${file.path}: it is not writable. Kerstel is still installed and nothing was ` +
+          "written. Fix the file's permissions and re-run.",
+      );
+      return 1;
+    }
+  }
+
   const written: string[] = [];
   for (const file of plan.files) {
     try {
@@ -127,21 +152,25 @@ export async function uninstallCommand(
     } catch (error) {
       fail(
         `Could not write ${file.path} (${(error as Error).message}). Kerstel is still installed and ` +
-          "nothing was deleted. Fix the file's permissions and re-run.",
+          "nothing was deleted. A re-run will list this project's secrets as unused, because the " +
+          "restored files no longer reference them. Once you have confirmed they are saved, re-run with --force.",
       );
       if (written.length > 0) info(`Already restored: ${written.join(", ")}`);
       return 1;
     }
   }
 
-  // Phase 2: Kerstel itself.
+  // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
+  // a leftover key with no vault is harmless, but a keyless vault would block
+  // every re-run if the key delete happened first and this one failed after.
   await stopDaemonIfRunning();
-  const backend = await selectBackend();
-  await backend.delete();
-  ok(`Deleted the vault key from the ${backend.name} credential store.`);
   const home = kerstelHome();
   rmSync(home, { recursive: true, force: true });
   ok(`Deleted ${home}.`);
+  if (existing) {
+    await existing.backend.delete();
+    ok(`Deleted the vault key from the ${existing.backend.name} credential store.`);
+  }
 
   if (binary.compiled) {
     rmSync(binary.path, { force: true });

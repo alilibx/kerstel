@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
@@ -71,6 +71,26 @@ test("an interactive yes applies; the default no changes nothing", async () => {
   expect(existsSync(home)).toBe(false);
 });
 
+test("a declined prompt leaves the home's file list byte-identical", async () => {
+  const { home } = await setup();
+  const before = readdirSync(home).sort();
+  capture();
+  expect(await uninstallCommand([], new ScriptedPrompter([false]), NO_BINARY)).toBe(0);
+  // In particular: no hook/ directory and no session.token, which openContext()
+  // would have created but a read-only vault open must not.
+  expect(readdirSync(home).sort()).toEqual(before);
+});
+
+test("--dry-run creates nothing when no vault exists yet", async () => {
+  const home = isolateEnv({ prefix: "uninstall-empty" });
+  dirs.push(home);
+  const neverCreated = join(home, "never-created");
+  process.env.KERSTEL_HOME = neverCreated;
+  capture();
+  expect(await uninstallCommand(["--dry-run"], undefined, NO_BINARY)).toBe(0);
+  expect(existsSync(neverCreated)).toBe(false);
+});
+
 test("--dry-run writes nothing and exits 0 even when something would be lost", async () => {
   const { home, root } = await setup({ unusedSecret: true });
   capture();
@@ -109,6 +129,9 @@ test("a failed write deletes nothing", async () => {
   expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
   expect(existsSync(home)).toBe(true);
   expect(output.join("\n")).toContain(join(root, ".env"));
+  // The writability pre-check runs before any file is touched, so package.json
+  // -- which was perfectly writable -- proves nothing was written either.
+  expect(readFileSync(join(root, "package.json"), "utf8")).toBe(WIRED);
 });
 
 test("the compiled binary removes itself; a source run leaves the runtime alone", async () => {
