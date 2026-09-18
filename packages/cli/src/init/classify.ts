@@ -131,6 +131,31 @@ export function explain(key: string, value: string): Explanation {
   return stored(key, "Might be a secret, so it's safer in the vault");
 }
 
+/**
+ * May the overview print this value in full? Spec §5.1 step 2. Narrower than
+ * `explain`, on purpose: `explain` decides what stays in the FILE, and a
+ * number or a plain URL there is harmless, but printing `DB_PASSWORD=12345678`
+ * or a webhook URL with its token in the path puts it on screen and, under
+ * `--yes`, into CI logs.
+ *
+ * True only for a key that is configuration by convention (`PORT`,
+ * `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth hiding -- empty,
+ * a boolean, a number, a short lowercase word -- under a key that does not
+ * name a credential. A URL is shown only under a configuration key. The caller
+ * still combines this with where the value is going and with `--keep`.
+ */
+export function isSafeToDisplay(key: string, value: string): boolean {
+  if (PLAINTEXT_KEYS.test(key)) return true;
+  if (SECRET_KEYS.test(key)) return false;
+  const trimmed = value.trim();
+  return (
+    trimmed === "" ||
+    BOOLEANS.has(trimmed.toLowerCase()) ||
+    NUMBER.test(trimmed) ||
+    (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed))
+  );
+}
+
 /** What the wizard SUGGESTS. See `explain` for why; the two cannot disagree. */
 export function suggest(key: string, value: string): Suggestion {
   return explain(key, value).suggestion;

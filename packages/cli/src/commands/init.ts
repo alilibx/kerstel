@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openContext } from "../context";
 import { cliCommand } from "../daemon/spawn";
-import { DESTINATION_CHOICES, explain, type Suggestion } from "../init/classify";
+import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
 import { detectProject, type DetectedProject } from "../init/detect";
@@ -42,7 +42,8 @@ import type { Vault } from "../vault/store";
  *      shape and nothing else; the value itself only ever moves between the
  *      file, the vault and the encrypted backup. The one exception (spec §5.1
  *      step 2, `showValue` below): the overview prints a config value that
- *      stays in plain text on the suggester's own say-so, like PORT=3000.
+ *      stays in plain text on the suggester's own say-so and that
+ *      `isSafeToDisplay` calls configuration, like PORT=3000.
  *      Diffs mask every value.
  *   2. NOTHING IS WRITTEN BEFORE THE USER SAYS YES, and the backup is written
  *      before anything else, so every step has an undo. That includes values
@@ -209,12 +210,19 @@ interface Decision {
 
 /**
  * Rule 1 for the overview: a value is printed in full only when it stays in
- * plain text, the suggester itself called it plain text, and `--keep` did not
- * force it there. Everything else -- vault-bound, a secret-looking value the
- * user moved to plain text, every `--keep` key -- is shown as its length.
+ * plain text, the suggester itself called it plain text, `--keep` did not
+ * force it there, and `isSafeToDisplay` calls it configuration rather than a
+ * credential-shaped number or URL. Everything else -- vault-bound, a
+ * secret-looking value the user moved to plain text, every `--keep` key,
+ * `DB_PASSWORD=12345678`, a webhook URL -- is shown as its length.
  */
 function showValue(decision: Decision): boolean {
-  return decision.target === "plaintext" && decision.suggestion === "plaintext" && !decision.fixed;
+  return (
+    decision.target === "plaintext" &&
+    decision.suggestion === "plaintext" &&
+    !decision.fixed &&
+    isSafeToDisplay(decision.key.key, decision.key.value)
+  );
 }
 
 function destinationLabel(target: Suggestion, scope: string): string {
@@ -413,7 +421,7 @@ async function planGitignore(
       ),
     );
   } else {
-    info("They now hold references, not secrets, so committing them gives teammates a living .env.example.");
+    info("Once applied, they'll hold references, not secrets, so committing them gives teammates a living .env.example.");
   }
 
   const answer = await prompter.select(

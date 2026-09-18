@@ -535,7 +535,7 @@ test("the .gitignore offer names the keys that still hold plaintext", async () =
   expect(output).toContain("committing these files would expose");
   expect(output).not.toContain("kept-plaintext-value");
   // The reassuring sentence is a claim, and here it would be a false one.
-  expect(output).not.toContain("they now hold references, not secrets");
+  expect(output).not.toContain("they'll hold references, not secrets");
 });
 
 test("the .gitignore offer reassures only when every value is a reference", async () => {
@@ -560,7 +560,7 @@ test("the .gitignore offer reassures only when every value is a reference", asyn
   }
 
   const output = captured.join("\n");
-  expect(output).toContain("They now hold references, not secrets");
+  expect(output).toContain("they'll hold references, not secrets");
   expect(output).not.toContain("still holds a plaintext value");
 });
 
@@ -913,4 +913,26 @@ test("the overview shows a config value in full, but a secret moved to plain tex
   expect(out).not.toContain("moved-to-plaintext-secret");
   expect(out).toMatch(/^\s+API_TOKEN\s+•••• 25 chars\s/m);
   expect(out).toMatch(/^\s+PORT\s+3000\s/m);
+});
+
+test("under --yes the overview shows config values but never a credential-shaped one", async () => {
+  isolateEnv({ prefix: "init-yes-display" });
+  const harmless = "a".repeat(60);
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env":
+      "PORT=3000\nNODE_ENV=development\nDB_PASSWORD=12345678\n" +
+      "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T0/B0/webhookpathsecret\n" +
+      "LOG_LEVEL=\u001b]0;pwned\u0007debug\n" +
+      `PUBLIC_TAGLINE=${harmless}\n`,
+  });
+  const out = await captureLog(() => runInit(options(root, ["--dry-run", "--yes"]), new DefaultsPrompter()));
+  expect(out).not.toContain("12345678");
+  expect(out).not.toContain("webhookpathsecret");
+  expect(out).not.toContain("\u001b]0;");
+  expect(out).toMatch(/^\s+DB_PASSWORD\s+•••• 8 chars\s/m);
+  expect(out).toMatch(/^\s+PORT\s+3000\s/m);
+  expect(out).toMatch(/^\s+NODE_ENV\s+development\s/m);
+  expect(out).not.toContain(harmless);
+  expect(out).toContain(`${"a".repeat(39)}…`);
 });

@@ -18,14 +18,37 @@ export interface OverviewRow {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The widest a shown value may be, in terminal columns, "…" included. */
+const MAX_VALUE_COLUMNS = 40;
+
+/** C0 and C1 control characters, ESC and DEL included. */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * A shown value made safe for the terminal: control characters removed, so a
+ * value cannot smuggle an escape sequence into the overview, and anything
+ * wider than `MAX_VALUE_COLUMNS` cut short with a trailing "…".
+ */
+function displayable(value: string): string {
+  const clean = value.replace(CONTROL_CHARACTERS, "");
+  if (Bun.stringWidth(clean) <= MAX_VALUE_COLUMNS) return clean;
+  let out = "";
+  for (const char of clean) {
+    if (Bun.stringWidth(out + char) > MAX_VALUE_COLUMNS - 1) break;
+    out += char;
+  }
+  return `${out}…`;
+}
+
 /**
  * What the overview and the one-by-one prompt show for a value: its length
  * and nothing else, unless `showValue` says it is a config value (plaintext,
- * suggested plaintext, and not kept by `--keep`, which can keep a real secret
- * in the file and would print it into CI logs under `--yes`). Spec §5.1 step 2.
+ * suggested plaintext, not kept by `--keep`, and configuration by
+ * `isSafeToDisplay` in classify.ts -- anything looser prints real secrets into
+ * CI logs under `--yes`). Spec §5.1 step 2.
  */
 export function valueColumn(value: string, showValue: boolean): string {
-  return showValue ? value : `•••• ${value.length} chars`;
+  return showValue ? displayable(value) : `•••• ${value.length} chars`;
 }
 
 /** Spec §5.1 step 2. */

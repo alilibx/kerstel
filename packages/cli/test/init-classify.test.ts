@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import type { Choice } from "../src/init/prompts";
-import { DESTINATION_CHOICES, GLOBAL_KEYS, SUGGESTIONS, explain, suggest, type Suggestion } from "../src/init/classify";
+import {
+  DESTINATION_CHOICES,
+  GLOBAL_KEYS,
+  SUGGESTIONS,
+  explain,
+  isSafeToDisplay,
+  suggest,
+  type Suggestion,
+} from "../src/init/classify";
 
 const CASES: [key: string, value: string, expected: Suggestion][] = [
   // Plaintext: nothing worth encrypting.
@@ -134,4 +142,22 @@ test("the destination choices carry the spec's labels and hints", () => {
     { value: "global", label: "Vault, shared by all your projects", hint: "For accounts you use everywhere, like an OpenAI key" },
     { value: "plaintext", label: "Keep as plain text", hint: "Stays in the file. For settings, not secrets" },
   ]);
+});
+
+test.each([
+  ["PORT", "3000", true],
+  ["NODE_ENV", "development", true],
+  ["PUBLIC_SITE_URL", "https://example.com", true],
+  ["FEATURE_FLAG", "true", true],
+  ["RETRIES", "3", true],
+  ["MODE", "fast", true],
+  ["EMPTY", "", true],
+  ["DB_PASSWORD", "12345678", false],
+  ["STRIPE_SECRET_KEY", "1234567890", false],
+  ["API_TOKEN", "true", false],
+  ["SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/abc", false],
+  ["HOMEPAGE", "https://example.com", false],
+  ["SESSION_ID", "a-long-opaque-value", false],
+] as const)("isSafeToDisplay(%p, …) is %p", (key, value, expected) => {
+  expect(isSafeToDisplay(key, value)).toBe(expected);
 });

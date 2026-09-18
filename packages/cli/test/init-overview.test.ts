@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { renderChangeSummary, renderOverview, type OverviewRow } from "../src/init/overview";
+import { renderChangeSummary, renderOverview, valueColumn, type OverviewRow } from "../src/init/overview";
 
 const rows: OverviewRow[] = [
   { key: "DATABASE_URL", value: "postgres://u:hunter2@db/app", source: ".env.local", conflicts: [], target: "project", showValue: false },
@@ -69,4 +69,14 @@ test("the key and value columns line up across every group", () => {
   expect(column("OPENAI_API_KEY", "••••")).toBe(vault);
   expect(column("PORT", "3000")).toBe(vault);
   expect(column("PORT", ".env")).toBe(column("OPENAI_API_KEY", ".env"));
+});
+
+test("a shown value loses its control characters and is cut at 40 columns", () => {
+  expect(valueColumn("\u001b]0;title\u0007debug\u009b", true)).toBe("]0;titledebug");
+  const long = "a".repeat(60);
+  const shown = valueColumn(long, true);
+  expect(shown).toBe(`${"a".repeat(39)}…`);
+  expect(Bun.stringWidth(shown)).toBe(40);
+  expect(valueColumn("a".repeat(40), true)).toBe("a".repeat(40));
+  expect(valueColumn(long, false)).toBe("•••• 60 chars");
 });
