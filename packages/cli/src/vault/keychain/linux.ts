@@ -1,7 +1,10 @@
 import { commandExists, run } from "./exec";
-import { ACCOUNT_NAME, SERVICE_NAME, type KeychainBackend, type SetOptions } from "./types";
+import { ACCOUNT_NAME, serviceName, type KeychainBackend, type SetOptions } from "./types";
 
-const ATTRS = ["service", SERVICE_NAME, "account", ACCOUNT_NAME];
+/** Rebuilt on every call so a test-time `KERSTEL_KEYCHAIN_SERVICE` override is honoured. */
+function attrs(): string[] {
+  return ["service", serviceName(), "account", ACCOUNT_NAME];
+}
 
 export const linuxBackend: KeychainBackend = {
   name: "linux",
@@ -11,12 +14,12 @@ export const linuxBackend: KeychainBackend = {
     if (!(await commandExists("secret-tool"))) return false;
     // A running Secret Service is required; `lookup` on a missing item exits 1
     // with empty stderr, while a missing daemon reports a D-Bus error.
-    const probe = await run(["secret-tool", "lookup", ...ATTRS]);
+    const probe = await run(["secret-tool", "lookup", ...attrs()]);
     return !/dbus|no such|not provided/i.test(probe.stderr);
   },
 
   async get(): Promise<Buffer | null> {
-    const res = await run(["secret-tool", "lookup", ...ATTRS]);
+    const res = await run(["secret-tool", "lookup", ...attrs()]);
     if (res.code !== 0 || res.stdout.trim() === "") return null;
     const key = Buffer.from(res.stdout.trim(), "base64");
     return key.length === 32 ? key : null;
@@ -31,7 +34,7 @@ export const linuxBackend: KeychainBackend = {
     // leaving the item findable, so `lookup` succeeding and `get()` succeeding
     // are the same event. The value is discarded without being logged or
     // returned; only the yes/no leaves this function.
-    const res = await run(["secret-tool", "lookup", ...ATTRS]);
+    const res = await run(["secret-tool", "lookup", ...attrs()]);
     return res.code === 0 && res.stdout.trim() !== "";
   },
 
@@ -46,13 +49,13 @@ export const linuxBackend: KeychainBackend = {
       );
     }
     const res = await run(
-      ["secret-tool", "store", "--label=Kerstel vault key", ...ATTRS],
+      ["secret-tool", "store", "--label=Kerstel vault key", ...attrs()],
       `${key.toString("base64")}\n`,
     );
     if (res.code !== 0) throw new Error(`Secret Service write failed: ${res.stderr.trim()}`);
   },
 
   async delete(): Promise<void> {
-    await run(["secret-tool", "clear", ...ATTRS]);
+    await run(["secret-tool", "clear", ...attrs()]);
   },
 };

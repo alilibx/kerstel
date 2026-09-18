@@ -5,16 +5,23 @@ import { join } from "node:path";
 import {
   loadOrCreateDataKey,
   selectBackend,
+  serviceName,
   type KeychainBackend,
 } from "../src/vault/keychain";
 
 const originalHome = process.env.KERSTEL_HOME;
 const originalBackend = process.env.KERSTEL_KEYCHAIN_BACKEND;
+const originalService = process.env.KERSTEL_KEYCHAIN_SERVICE;
 
 function isolate(): string {
   const dir = mkdtempSync(join(tmpdir(), "kerstel-kc-"));
   process.env.KERSTEL_HOME = dir;
   process.env.KERSTEL_KEYCHAIN_BACKEND = "file";
+  // The macOS backend ignores KERSTEL_HOME -- its item lives in the login
+  // Keychain, not under the home directory -- so isolating the service name
+  // is the only thing standing between these tests and a developer's real,
+  // machine-global `dev.kerstel.vault` item and its one and only data key.
+  process.env.KERSTEL_KEYCHAIN_SERVICE = "dev.kerstel.vault.test";
   return dir;
 }
 
@@ -23,6 +30,8 @@ afterEach(() => {
   else process.env.KERSTEL_HOME = originalHome;
   if (originalBackend === undefined) delete process.env.KERSTEL_KEYCHAIN_BACKEND;
   else process.env.KERSTEL_KEYCHAIN_BACKEND = originalBackend;
+  if (originalService === undefined) delete process.env.KERSTEL_KEYCHAIN_SERVICE;
+  else process.env.KERSTEL_KEYCHAIN_SERVICE = originalService;
 });
 
 test("the file backend round-trips a key", async () => {
@@ -66,11 +75,22 @@ test("KERSTEL_KEYCHAIN_BACKEND selects the backend explicitly", async () => {
   expect((await selectBackend()).name).toBe("file");
 });
 
-test.if(process.platform === "darwin")("the macOS Keychain backend round-trips", async () => {
+// These two tests exercise the real macOS login Keychain -- they write to and
+// delete from it, under the `dev.kerstel.vault.test` service name set by
+// isolate() above, never the real `dev.kerstel.vault` item. They are opt-in
+// (set KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS=1) because a regression in that
+// isolation would otherwise touch a developer's live vault key on their own
+// machine the moment `bun test` runs.
+test.if(
+  process.platform === "darwin" && process.env.KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS === "1",
+)("the macOS Keychain backend round-trips", async () => {
   isolate();
   process.env.KERSTEL_KEYCHAIN_BACKEND = "macos";
   const backend = await selectBackend();
   expect(backend.name).toBe("macos");
+  // Guards against a regression that silently stops honouring the override
+  // and points the backend back at the real, machine-global item.
+  expect(serviceName()).toBe("dev.kerstel.vault.test");
   const key = Buffer.alloc(32, 42);
   // Start from a known-empty item: a leftover from an earlier run would now make
   // set() refuse rather than silently overwrite, which is the point of the fix.
@@ -203,7 +223,9 @@ test("loadOrCreateDataKey still creates when nothing is stored", async () => {
   expect(second.key.equals(first.key)).toBe(true);
 });
 
-test.if(process.platform === "darwin")(
+test.if(
+  process.platform === "darwin" && process.env.KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS === "1",
+)(
   "the macOS backend's exists() answers without reading the secret",
   async () => {
     isolate();

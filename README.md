@@ -85,10 +85,12 @@ Contributions are welcome! Here's how:
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Run the tests (`bun test`)
+4. Run the tests (`bun run test`)
 5. Commit (`git commit -m 'Add my feature'`)
 6. Push (`git push origin feature/my-feature`)
 7. Open a Pull Request
+
+The macOS Keychain tests in `packages/cli/test/keychain.test.ts` write to and delete from the real login Keychain, so they are skipped unless you set `KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS=1`.
 
 Please keep PRs focused — one feature or fix per PR.
 

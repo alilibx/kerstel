@@ -1,4 +1,13 @@
-export const SERVICE_NAME = "dev.kerstel.vault";
+/**
+ * Read fresh on every call, mirroring `paths.ts`'s `kerstelHome()`, so tests
+ * can rebind it via `KERSTEL_KEYCHAIN_SERVICE` without touching the real,
+ * machine-global Keychain item that a developer's live vault depends on.
+ */
+export function serviceName(): string {
+  const override = process.env.KERSTEL_KEYCHAIN_SERVICE;
+  if (override && override.length > 0) return override;
+  return "dev.kerstel.vault";
+}
 export const ACCOUNT_NAME = "kerstel";
 
 export interface SetOptions {

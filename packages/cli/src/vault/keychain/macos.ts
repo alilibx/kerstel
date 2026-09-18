@@ -1,5 +1,5 @@
 import { commandExists, run } from "./exec";
-import { ACCOUNT_NAME, SERVICE_NAME, type KeychainBackend, type SetOptions } from "./types";
+import { ACCOUNT_NAME, serviceName, type KeychainBackend, type SetOptions } from "./types";
 
 // `security find-generic-password` on a missing item exits with errSecItemNotFound.
 const ITEM_NOT_FOUND_EXIT = 44;
@@ -32,7 +32,7 @@ export const macosBackend: KeychainBackend = {
     // unchanged -- only the needless copy of the key is gone.
     const probe = await run([
       "security", "find-generic-password",
-      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
+      "-a", ACCOUNT_NAME, "-s", serviceName(),
     ]);
     return probe.code === 0 || probe.code === ITEM_NOT_FOUND_EXIT;
   },
@@ -40,7 +40,7 @@ export const macosBackend: KeychainBackend = {
   async get(): Promise<Buffer | null> {
     const res = await run([
       "security", "find-generic-password",
-      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME, "-w",
+      "-a", ACCOUNT_NAME, "-s", serviceName(), "-w",
     ]);
     if (res.code !== 0) return null;
     const key = Buffer.from(res.stdout.trim(), "base64");
@@ -57,7 +57,7 @@ export const macosBackend: KeychainBackend = {
     // "empty" and overwriting the only copy of the vault's data key.
     const res = await run([
       "security", "find-generic-password",
-      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
+      "-a", ACCOUNT_NAME, "-s", serviceName(),
     ]);
     if (res.code === 0) return true;
     if (res.code === ITEM_NOT_FOUND_EXIT) return false;
@@ -92,7 +92,7 @@ export const macosBackend: KeychainBackend = {
     const res = await run(
       [
         "security", "add-generic-password",
-        "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
+        "-a", ACCOUNT_NAME, "-s", serviceName(),
         "-D", "Kerstel vault key",
         ...(options.rotate ? ["-U"] : []),
         "-w",
@@ -110,6 +110,6 @@ export const macosBackend: KeychainBackend = {
   },
 
   async delete(): Promise<void> {
-    await run(["security", "delete-generic-password", "-a", ACCOUNT_NAME, "-s", SERVICE_NAME]);
+    await run(["security", "delete-generic-password", "-a", ACCOUNT_NAME, "-s", serviceName()]);
   },
 };

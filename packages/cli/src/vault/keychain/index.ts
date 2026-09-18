@@ -7,7 +7,7 @@ import { windowsBackend } from "./windows";
 
 export {
   ACCOUNT_NAME,
-  SERVICE_NAME,
+  serviceName,
   type KeychainBackend,
   type SetOptions,
 } from "./types";
