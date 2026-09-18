@@ -27,17 +27,23 @@ export function note(body: string, title?: string): void {
   for (const line of body.split("\n")) console.log(line);
 }
 
-export async function withSpinner<T>(label: string, done: string, work: () => Promise<T>): Promise<T> {
+/** `done` may depend on the result, e.g. a path the work has just created. */
+export async function withSpinner<T>(
+  label: string,
+  done: string | ((result: T) => string),
+  work: () => Promise<T>,
+): Promise<T> {
+  const doneText = (result: T): string => (typeof done === "string" ? done : done(result));
   if (!interactive()) {
     const result = await work();
-    ok(done);
+    ok(doneText(result));
     return result;
   }
   const spin = clack.spinner();
   spin.start(label);
   try {
     const result = await work();
-    spin.stop(done);
+    spin.stop(doneText(result));
     return result;
   } catch (error) {
     spin.error((error as Error).message);

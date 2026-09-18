@@ -10,7 +10,7 @@ const DESTINATIONS = [
 test("ScriptedPrompter answers in order and records the questions", async () => {
   const prompter = new ScriptedPrompter([true, "global", "sk-typed-value", false]);
   expect(await prompter.confirm("Continue?", false)).toBe(true);
-  expect(await prompter.choose("Where?", ["project", "global", "plaintext"], "project")).toBe("global");
+  expect(await prompter.select("Where?", [...DESTINATIONS], "project")).toBe("global");
   expect(await prompter.text("Value for OPENAI_API_KEY?", { secret: true })).toBe("sk-typed-value");
   expect(await prompter.confirm("Update .gitignore?", false)).toBe(false);
   expect(prompter.asked).toEqual([
@@ -30,9 +30,6 @@ test("ScriptedPrompter throws when its answers run out", async () => {
 test("ScriptedPrompter rejects an answer of the wrong shape", async () => {
   await expect(new ScriptedPrompter(["yes"]).confirm("Sure?", false)).rejects.toThrow(/boolean/i);
   await expect(new ScriptedPrompter([true]).text("Value?")).rejects.toThrow(/string/i);
-  await expect(
-    new ScriptedPrompter(["nope"]).choose("Where?", ["project", "global"], "project"),
-  ).rejects.toThrow(/not one of/i);
 });
 
 test("ScriptedPrompter answers select and multiselect from its queue", async () => {
@@ -64,7 +61,6 @@ test("DefaultsPrompter returns every default without asking", async () => {
   const prompter = new DefaultsPrompter();
   expect(await prompter.confirm("Continue?", true)).toBe(true);
   expect(await prompter.confirm("Update .gitignore?", false)).toBe(false);
-  expect(await prompter.choose("Where?", ["project", "global"], "project")).toBe("project");
 });
 
 test("DefaultsPrompter returns the default choice and the initial selection", async () => {

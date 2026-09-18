@@ -2,36 +2,48 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openContext } from "../context";
 import { cliCommand } from "../daemon/spawn";
-import { SUGGESTIONS, suggest, type Suggestion } from "../init/classify";
+import { DESTINATION_CHOICES, explain, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
-import { detectProject, type DetectedProject, type EnvFileInfo } from "../init/detect";
+import { detectProject, type DetectedProject } from "../init/detect";
 import { entries, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
-import { describeValue, maskForDisplay } from "../init/display";
+import { maskForDisplay } from "../init/display";
+import { renderChangeSummary, renderOverview, valueColumn } from "../init/overview";
 import {
   CancelledError,
   ClackPrompter,
   DefaultsPrompter,
   NonInteractiveError,
+  type Choice,
   type Prompter,
 } from "../init/prompts";
 import { GITIGNORE_NOTE, renderDiff, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
 import { vaultPath } from "../paths";
+import { printBanner } from "../ui/banner";
+import { cliName } from "../ui/cli-name";
+import { interactive, note, step, withSpinner } from "../ui/steps";
+import { renderTable } from "../ui/table";
+import { theme } from "../ui/theme";
+import { VERSION } from "../version";
 import { loadOrCreateDataKey } from "../vault/keychain";
 import { readStoredReferences } from "../vault/meta";
 import type { Vault } from "../vault/store";
 
 /**
- * Spec §8's setup wizard.
+ * Spec §8's setup wizard, presented as spec §5 of the CLI-look design:
+ * an overview of every variable, "Look right?", a change summary, then apply.
  *
  * Three rules shape every line below:
- *   1. NO PLAINTEXT IS EVER PRINTED. Not in the plan, not in a diff, not in an
- *      error, not in the self-check. The user is told a value's length and
- *      shape and nothing else; the value itself only ever moves between the
- *      file, the vault and the encrypted backup.
+ *   1. NO VAULT-BOUND VALUE IS EVER PRINTED. Not in the overview, not in a
+ *      diff, not in an error, not in the self-check. The user is told its
+ *      length and shape and nothing else; the value itself only ever moves
+ *      between the file, the vault and the encrypted backup. The one
+ *      exception is deliberate (spec §5.1 step 2): the overview prints a value
+ *      that STAYS in plain text, because it stays readable in the file anyway.
+ *      Diffs still mask every value.
  *   2. NOTHING IS WRITTEN BEFORE THE USER SAYS YES, and the backup is written
  *      before anything else, so every step has an undo. That includes values
  *      a teammate types in: they are held in memory until the plan is applied.
@@ -98,7 +110,7 @@ export function parseInitArgs(args: string[], cwd: string): InitOptions | { erro
     } else {
       return {
         error:
-          `Unknown option "${arg}". kerstel init accepts: --yes, --dry-run, --scope <name>, ` +
+          `Unknown option "${arg}". ${cliName()} init accepts: --yes, --dry-run, --scope <name>, ` +
           "--global KEY[,KEY], --keep KEY[,KEY], --non-interactive, --from-stdin.",
       };
     }
@@ -124,8 +136,9 @@ interface SuppliedValue {
 }
 
 /**
- * Spec §8's teammate flow: the repository carries references, this machine's
- * vault does not carry the values. Ask for them, or read them as JSON.
+ * Spec §5.4's teammate flow: the repository carries references, this
+ * machine's vault does not carry the values. Ask for them, or read them as
+ * JSON.
  *
  * Only COLLECTS the values. Storing them is the caller's job, after the user
  * has approved the plan (rule 2).
@@ -135,12 +148,12 @@ async function fillMissingReferences(
   options: InitOptions,
   prompter: Prompter,
 ): Promise<SuppliedValue[] | number> {
-  console.log("");
-  console.log(bold("Values this machine is missing"));
-  for (const key of missing) {
-    const ref = key.reference!;
-    info(`${key.key.padEnd(28)} ${formatReference(ref.scope, ref.key)}`);
-  }
+  const files = [...new Set(missing.flatMap((key) => key.files))];
+  step(
+    `This machine is missing ${missing.length === 1 ? "1 value" : `${missing.length} values`} ` +
+      `that ${files.join(", ")} ${files.length === 1 ? "references" : "reference"}:`,
+    renderTable(missing.map((key) => [key.key, dim(formatReference(key.reference!.scope, key.reference!.key))])),
+  );
 
   if (options.dryRun) {
     info("--dry-run: no values were requested and nothing was stored.");
@@ -161,15 +174,17 @@ async function fillMissingReferences(
   }
 
   const values: SuppliedValue[] = [];
-  for (const key of missing) {
+  for (const [i, key] of missing.entries()) {
     const ref = key.reference!;
-    const reference = formatReference(ref.scope, ref.key);
     let value = supplied[key.key];
     if (value === undefined) {
-      value = await prompter.text(`Value for ${reference}?`, { secret: true, flag: "--from-stdin" });
+      value = await prompter.text(`${key.key} · ${i + 1} of ${missing.length}`, {
+        secret: true,
+        flag: "--from-stdin",
+      });
     }
     if (typeof value !== "string" || value === "") {
-      fail(`No value supplied for ${reference}. Nothing was stored.`);
+      fail(`No value supplied for ${formatReference(ref.scope, ref.key)}. Nothing was stored.`);
       return 2;
     }
     values.push({ ref, value });
@@ -179,40 +194,107 @@ async function fillMissingReferences(
 }
 
 function storeSupplied(vault: Vault, values: SuppliedValue[]): void {
-  for (const { ref, value } of values) {
-    vault.setSecret(ref, value);
-    ok(`Stored ${formatReference(ref.scope, ref.key)}`);
-  }
+  for (const { ref, value } of values) vault.setSecret(ref, value);
 }
 
 interface Decision {
   key: CollectedKey;
   target: Suggestion;
+  /** What `explain` suggested, and why. Shown in one-by-one mode. */
+  suggestion: Suggestion;
+  reason: string;
+  /** Decided by `--keep` / `--global`: shown, never offered for change. */
+  fixed: boolean;
 }
 
+function destinationLabel(target: Suggestion, scope: string): string {
+  return DESTINATION_CHOICES(scope).find((choice) => choice.value === target)!.label;
+}
+
+/**
+ * Spec §5.1 steps 2 and 3: every variable at once, grouped by where it would
+ * go, then "Look right?" until the answer is yes.
+ */
 async function decideTargets(
   keys: CollectedKey[],
+  scope: string,
+  fileNames: string[],
   options: InitOptions,
   prompter: Prompter,
 ): Promise<Decision[]> {
-  const decisions: Decision[] = [];
-  for (const key of keys) {
-    if (options.keepKeys.has(key.key)) {
-      decisions.push({ key, target: "plaintext" });
-      continue;
-    }
-    if (options.globalKeys.has(key.key)) {
-      decisions.push({ key, target: "global" });
-      continue;
-    }
-    const answer = await prompter.choose(
-      `${key.key}  ${dim(`(${describeValue(key.value)}, from ${key.source})`)}`,
-      [...SUGGESTIONS],
-      suggest(key.key, key.value),
+  const decisions: Decision[] = keys.map((key) => {
+    const { suggestion, reason } = explain(key.key, key.value);
+    if (options.keepKeys.has(key.key)) return { key, target: "plaintext", suggestion, reason, fixed: true };
+    if (options.globalKeys.has(key.key)) return { key, target: "global", suggestion, reason, fixed: true };
+    return { key, target: suggestion, suggestion, reason, fixed: false };
+  });
+
+  const showOverview = (title: string): void =>
+    step(
+      title,
+      renderOverview(
+        decisions.map((d) => ({
+          key: d.key.key,
+          value: d.key.value,
+          source: d.key.source,
+          conflicts: d.key.conflicts,
+          target: d.target,
+        })),
+        scope,
+        fileNames,
+      ),
     );
-    decisions.push({ key, target: answer as Suggestion });
+
+  showOverview(
+    `Found ${decisions.length === 1 ? "1 variable" : `${decisions.length} variables`}. Here's where I'd put them:`,
+  );
+
+  const open = decisions.filter((d) => !d.fixed);
+  if (open.length === 0) return decisions;
+
+  for (;;) {
+    const answer = await prompter.select(
+      "Look right?",
+      [
+        { value: "accept", label: "Yes, use these" },
+        { value: "change", label: "Let me change some" },
+        { value: "each", label: "Go through them one by one" },
+      ],
+      "accept",
+    );
+    if (answer === "accept") return decisions;
+
+    if (answer === "change") {
+      const picked = await prompter.multiselect(
+        "Which ones do you want to change?",
+        open.map((d) => ({ value: d.key.key, label: d.key.key, hint: destinationLabel(d.target, scope) })),
+        [],
+      );
+      for (const name of picked) {
+        const decision = open.find((d) => d.key.key === name)!;
+        decision.target = await prompter.select(
+          `${name} · where should it go?`,
+          DESTINATION_CHOICES(scope),
+          decision.target,
+        );
+      }
+    } else {
+      for (const [i, decision] of open.entries()) {
+        const choices = DESTINATION_CHOICES(scope).map((choice) =>
+          choice.value === decision.suggestion ? { ...choice, hint: `${choice.hint} (suggested)` } : choice,
+        );
+        decision.target = await prompter.select(
+          `${decision.key.key} · ${i + 1} of ${open.length}\n` +
+            `${valueColumn(decision.key.value, decision.target)} · from ${decision.key.source}\n` +
+            dim(decision.reason),
+          choices,
+          decision.target,
+        );
+      }
+    }
+
+    showOverview("Here's where they'll go now:");
   }
-  return decisions;
 }
 
 interface FileChange {
@@ -220,6 +302,8 @@ interface FileChange {
   label: string;
   /** The bytes to write once the user has said yes. */
   after: string;
+  /** How many values in this file become references. */
+  count: number;
   /**
    * The two sides of the diff the user is shown: the same file with every
    * value masked (see `maskForDisplay`), so the diff is a full, honest,
@@ -236,6 +320,7 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
     // Re-parse from the original bytes so a rewrite is always computed from
     // what is on disk, never from an object an earlier step already mutated.
     const copy = parseDotenv(entry.original);
+    const before = entries(copy).map((pair) => pair.value);
     for (const [key, reference] of references) setValue(copy, key, reference);
     const after = serializeDotenv(copy);
     if (after === entry.original) continue;
@@ -244,6 +329,7 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
       path: entry.info.path,
       label: entry.info.name,
       after,
+      count: entries(copy).filter((pair, i) => pair.value !== before[i]).length,
       diffBefore: maskForDisplay(entry.original),
       diffAfter: maskForDisplay(after),
     });
@@ -252,36 +338,48 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
 }
 
 /**
- * Every key in the REWRITTEN files whose value is still plaintext.
+ * Every key in the PLANNED env files whose value is still plaintext.
  *
- * Re-read from disk rather than inferred from the plan: `--keep`, a
- * "plaintext" answer and a line the parser refused all leave a real value
- * behind, and the question this answers -- "is it safe to commit these
- * files?" -- may only be answered by what the files actually say.
+ * Read from the bytes init is about to write rather than inferred from the
+ * decisions: `--keep`, a "plaintext" answer and a line the parser refused all
+ * leave a real value behind, and the question this answers -- "is it safe to
+ * commit these files?" -- may only be answered by what the files will say.
  */
-function plaintextKeysRemaining(files: EnvFileInfo[]): string[] {
+function plaintextKeysRemaining(contents: string[]): string[] {
   const remaining: string[] = [];
-  for (const entry of loadEnvFiles(files)) {
-    for (const pair of entries(entry.file)) {
+  for (const source of contents) {
+    const file = parseDotenv(source);
+    for (const pair of entries(file)) {
       if (parseReference(pair.value) !== null) continue;
       if (!remaining.includes(pair.key)) remaining.push(pair.key);
     }
     // A line the parser could not read is a line that was never rewritten.
-    for (const unsupported of entry.file.unsupported) {
+    for (const unsupported of file.unsupported) {
       if (!remaining.includes(unsupported.key)) remaining.push(unsupported.key);
     }
   }
   return remaining;
 }
 
-/** Spec §8 step 5. Default NO: committing `.env` is the user's call, not ours. */
-async function offerGitignore(
+interface GitignoreChange {
+  path: string;
+  before: string;
+  after: string;
+  count: number;
+}
+
+/**
+ * Spec §5.1 step 5, asked before anything is written; `runInitSteps` writes
+ * the answer during apply. Default NO: committing `.env` is the user's call,
+ * not ours.
+ */
+async function planGitignore(
   root: string,
-  envFiles: EnvFileInfo[],
+  plaintext: string[],
   prompter: Prompter,
-): Promise<void> {
+): Promise<GitignoreChange | null> {
   const path = join(root, ".gitignore");
-  if (!existsSync(path)) return;
+  if (!existsSync(path)) return null;
 
   const source = readFileSync(path, "utf8");
   const parts = source.split(/(\r\n|\n)/);
@@ -290,13 +388,12 @@ async function offerGitignore(
     const text = parts[i] ?? "";
     if (GITIGNORE_ENV_LINE.test(text)) hidden.push(text.trim());
   }
-  if (hidden.length === 0) return;
+  if (hidden.length === 0) return null;
 
   console.log("");
   info(`.gitignore hides your env files: ${hidden.join(", ")}`);
 
   // Names only. `plaintextKeysRemaining` returns keys, never values.
-  const plaintext = plaintextKeysRemaining(envFiles);
   if (plaintext.length > 0) {
     console.log(
       yellow(
@@ -308,13 +405,21 @@ async function offerGitignore(
     info("They now hold references, not secrets, so committing them gives teammates a living .env.example.");
   }
 
-  const remove = await prompter.confirm(
-    "Remove those lines from .gitignore so the reference-only files can be committed?",
-    false,
+  const answer = await prompter.select(
+    "Remove the .env lines from .gitignore so these files can be committed?",
+    [
+      { value: "keep", label: "No, leave .gitignore as it is", hint: "Safest if any value is still plain text" },
+      {
+        value: "remove",
+        label: "Yes, remove them",
+        hint: "The files hold references, so teammates get a working .env.example",
+      },
+    ],
+    "keep",
   );
-  if (!remove) {
+  if (answer === "keep") {
     info("Left .gitignore alone.");
-    return;
+    return null;
   }
 
   const kept: string[] = [];
@@ -332,21 +437,17 @@ async function offerGitignore(
     kept.push(text, eol);
   }
 
-  const after = kept.join("");
-  console.log(renderDiff(".gitignore", source, after));
-  writeFileSync(path, after);
-  ok("Updated .gitignore");
+  return { path, before: source, after: kept.join(""), count: hidden.length };
 }
 
 /**
- * The wizard's closing report.
+ * The closing report when the self-check fails.
  *
- * Shared by BOTH exits, which is the point: a failed self-check used to
- * return 1 straight after a migration that had entirely succeeded, so the
- * last thing the user saw was an error with no word about the secrets now in
- * their vault, the files now holding references, or the backup holding their
- * originals. Exit 1 is right -- something is wrong -- but silence about the
- * work that did land is not.
+ * A failed self-check used to return 1 straight after a migration that had
+ * entirely succeeded, so the last thing the user saw was an error with no
+ * word about the secrets now in their vault, the files now holding
+ * references, or the backup holding their originals. Exit 1 is right --
+ * something is wrong -- but silence about the work that did land is not.
  */
 export function summaryLines(options: {
   scope: string;
@@ -362,10 +463,22 @@ export function summaryLines(options: {
   lines.push(
     "The migration itself completed: your values are in the vault, your .env files hold references, and your scripts are wired.",
     `Your originals are in the encrypted backup at ${options.backupDir}.`,
-    "Only the self-check failed, so a wired process cannot reach the daemon yet. Run `kerstel doctor` in this directory, " +
-      "and `kerstel daemon start` if it reports the daemon is down.",
+    `Only the self-check failed, so a wired process cannot reach the daemon yet. Run \`${cliName()} doctor\` in this directory, ` +
+      `and \`${cliName()} daemon start\` if it reports the daemon is down.`,
   );
   return lines;
+}
+
+type SelfCheckResult =
+  | { status: "passed" }
+  | { status: "failed"; message: string; stderr: string }
+  | { status: "skipped"; message: string };
+
+/** Carries a failed or skipped self-check out of its spinner, which shows the message. */
+class SelfCheckProblem extends Error {
+  constructor(readonly result: Exclude<SelfCheckResult, { status: "passed" }>) {
+    super(result.message);
+  }
 }
 
 /**
@@ -374,12 +487,13 @@ export function summaryLines(options: {
  * The probe spawns THIS CLI (`kerstel exec -- <runtime> -e ...`) with one
  * reference in its environment and compares what the child printed to what the
  * vault holds. Neither string is ever printed -- a self-check that leaks the
- * secret it is checking would defeat the product it is checking.
+ * secret it is checking would defeat the product it is checking. It prints
+ * nothing itself: it runs under a spinner.
  */
 async function selfCheck(
   detected: DetectedProject,
   probe: { key: string; reference: string; expected: string },
-): Promise<"passed" | "failed" | "skipped"> {
+): Promise<SelfCheckResult> {
   const runtime = detected.runtime === "bun" ? "bun" : "node";
   const expression = `process.stdout.write(String(process.env.${probe.key}))`;
   const command = cliCommand(["exec", "--", runtime, "-e", expression]);
@@ -397,25 +511,32 @@ async function selfCheck(
       child.exited,
     ]);
 
-    if (code === 0 && stdout === probe.expected) return "passed";
+    if (code === 0 && stdout === probe.expected) return { status: "passed" };
 
-    fail(
-      `Self-check failed: a ${runtime} process wired through \`kerstel exec\` did not receive the ` +
-        `value behind ${probe.reference}. Run \`kerstel doctor\` in this directory.`,
-    );
     // stderr is the child's diagnostics, never the resolved value: the probe
     // writes the value to stdout, which is deliberately not echoed anywhere.
-    if (stderr.trim().length > 0) console.log(dim(stderr.trim()));
-    return "failed";
+    return {
+      status: "failed",
+      message:
+        `Self-check failed: a ${runtime} process wired through \`kerstel exec\` did not receive the ` +
+        `value behind ${probe.reference}. Run \`${cliName()} doctor\` in this directory.`,
+      stderr: stderr.trim(),
+    };
   } catch (error) {
-    console.log(
-      yellow(
-        `!  Self-check skipped: could not run "${runtime}" (${(error as Error).message}). ` +
-          "Your scripts are wired; run one to confirm.",
-      ),
-    );
-    return "skipped";
+    return {
+      status: "skipped",
+      message:
+        `Self-check skipped: could not run "${runtime}" (${(error as Error).message}). ` +
+        "Your scripts are wired; run one to confirm.",
+    };
   }
+}
+
+/** The script the closing note tells the user to run: `dev`, else the first one init wired. */
+function scriptToRun(packageJson: Record<string, unknown>, wired: string[]): string {
+  const scripts = packageJson.scripts;
+  if (scripts && typeof scripts === "object" && "dev" in scripts) return "dev";
+  return wired[0] ?? "<script>";
 }
 
 /**
@@ -425,15 +546,15 @@ async function selfCheck(
  * whether it reached us through `initCommand` or straight from a test.
  */
 async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<number> {
-  console.log(bold("kerstel init"));
+  printBanner(theme, VERSION);
 
-  // --- Step 1: detect -----------------------------------------------------
+  // --- Detect ---------------------------------------------------------------
   const detected = detectProject(options.cwd);
   if (!detected.packageJson) {
     fail(
       detected.packageJsonError === "invalid"
-        ? `${detected.packageJsonPath} is not valid JSON. Fix it, then re-run \`kerstel init\`.`
-        : `No readable package.json in ${options.cwd}. Run \`kerstel init\` from your project root ` +
+        ? `${detected.packageJsonPath} is not valid JSON. Fix it, then re-run \`${cliName()} init\`.`
+        : `No readable package.json in ${options.cwd}. Run \`${cliName()} init\` from your project root ` +
             "(Kerstel wires package scripts, so it needs one).",
     );
     return 2;
@@ -444,8 +565,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     rootPath: detected.root,
   }).scope;
 
-  info(`Runtime:    ${detected.runtime} (${detected.packageManager})`);
-  info(`Scope:      ${bold(scope)}`);
+  const fileNames = detected.envFiles.map((file) => file.name);
+  step(
+    [`Setting up ${scope}`, `${detected.framework ?? detected.runtime} on ${detected.packageManager}`]
+      .concat(fileNames.length > 0 ? [fileNames.join(", ")] : [])
+      .join(" · "),
+  );
 
   // Before the empty check: a project whose only .env is a broken symlink has
   // an env file, and "no .env files here" would be the wrong thing to say.
@@ -454,19 +579,18 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   }
 
   if (detected.envFiles.length === 0 && detected.unreadableEnvFiles.length > 0) {
-    fail("No readable .env files here. Fix or remove the ones above, then re-run `kerstel init`.");
+    fail(`No readable .env files here. Fix or remove the ones above, then re-run \`${cliName()} init\`.`);
     return 1;
   }
   if (detected.envFiles.length === 0) {
     fail(
       "No .env files here. There is nothing to migrate yet -- create one, or store secrets " +
-        "directly with `kerstel set <scope>/<KEY>`.",
+        `directly with \`${cliName()} set <scope>/<KEY>\`.`,
     );
     return 1;
   }
-  info(`Env files:  ${detected.envFiles.map((file) => file.name).join(", ")}`);
 
-  // --- Step 2: parse ------------------------------------------------------
+  // --- Parse ----------------------------------------------------------------
   const loaded = loadEnvFiles(detected.envFiles);
   for (const entry of loaded) {
     for (const unsupported of entry.file.unsupported) {
@@ -496,12 +620,14 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       console.log(yellow(`!  ${flag} names ${migrated.join(", ")}, already a reference. Ignored.`));
     }
   }
+  // A plaintext key's conflict is named in the overview. A reference that
+  // differs between files never reaches the overview, so it is named here.
   for (const key of keys) {
-    if (key.conflicts.length === 0) continue;
+    if (key.conflicts.length === 0 || key.reference === null) continue;
     console.log(
       yellow(
-        `!  ${key.key} differs between ${key.source} and ${key.conflicts.join(", ")}. Kerstel stores the ` +
-          `${key.source} value and points every file at it; the others survive only in the encrypted ` +
+        `!  ${key.key} differs between ${key.source} and ${key.conflicts.join(", ")}. Kerstel keeps the ` +
+          `${key.source} reference and points every file at it; the others survive only in the encrypted ` +
           "backup. (Kerstel has no environments yet.)",
       ),
     );
@@ -518,7 +644,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const inVault = (ref: SecretRef): boolean =>
       ctx ? ctx.vault.getSecret(ref) !== null : storedNames!.has(`${ref.scope}/${ref.key}`);
 
-    // --- Teammate flow ----------------------------------------------------
+    // --- Teammate flow ------------------------------------------------------
     const missing = referenced.filter((key) => !inVault(key.reference!));
     let supplied: SuppliedValue[] = [];
     if (missing.length > 0) {
@@ -527,8 +653,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       supplied = result;
     }
 
-    // --- Step 3: classify and decide --------------------------------------
-    const decisions = plain.length > 0 ? await decideTargets(plain, options, prompter) : [];
+    // --- Overview and "Look right?" -----------------------------------------
+    const decisions = plain.length > 0 ? await decideTargets(plain, scope, fileNames, options, prompter) : [];
 
     const references = new Map<string, string>();
     for (const decision of decisions) {
@@ -542,7 +668,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       references.set(key.key, key.value);
     }
 
-    // --- Plan ---------------------------------------------------------------
+    // --- Plan -----------------------------------------------------------------
     const envChanges = planEnvRewrites(loaded, references);
 
     const packageSource = readFileSync(detected.packageJsonPath, "utf8");
@@ -555,6 +681,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       if (ctx) {
         ctx.vault.registerProject(scope, detected.root);
         storeSupplied(ctx.vault, supplied);
+        for (const { ref } of supplied) ok(`Stored ${formatReference(ref.scope, ref.key)}`);
       }
       // "Already migrated" is a claim about the FILE. A project where keys were
       // kept in plaintext on purpose also has nothing to change, and telling
@@ -583,92 +710,159 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         return 0;
       }
 
-      ok(`Already migrated: every value in ${detected.envFiles.map((f) => f.name).join(", ")} is a reference, and your scripts are wired.`);
+      ok(`Already migrated: every value in ${fileNames.join(", ")} is a reference, and your scripts are wired.`);
       return 0;
     }
 
-    if (decisions.length > 0) {
+    const plannedContents = loaded.map(
+      (entry) => envChanges.find((change) => change.path === entry.info.path)?.after ?? entry.original,
+    );
+    const plaintext = plaintextKeysRemaining(plannedContents);
+
+    // --- .gitignore: asked now, written during apply --------------------------
+    const gitignore = options.dryRun ? null : await planGitignore(detected.root, plaintext, prompter);
+
+    // --- What will change -------------------------------------------------------
+    step(
+      "Here's what will change:",
+      renderChangeSummary([
+        ...envChanges.map((change) => ({ label: change.label, kind: "env" as const, count: change.count })),
+        ...(packageWiring.changed
+          ? [{ label: "package.json", kind: "package" as const, count: packageWiring.rewrites.length }]
+          : []),
+        ...(gitignore ? [{ label: ".gitignore", kind: "gitignore" as const, count: gitignore.count }] : []),
+      ]),
+    );
+
+    const printDiffs = (): void => {
       console.log("");
-      console.log(bold("Plan"));
-      for (const decision of decisions) {
-        const target =
-          decision.target === "plaintext"
-            ? dim("stays plaintext")
-            : formatReference(decision.target === "global" ? GLOBAL_SCOPE : scope, decision.key.key);
-        info(`${decision.key.key.padEnd(28)} ${target}`);
+      for (const change of envChanges) {
+        console.log(renderDiff(change.label, change.diffBefore, change.diffAfter));
       }
-    }
+      if (packageWiring.changed) console.log(renderDiff("package.json", packageSource, packageWiring.contents));
+      if (gitignore) console.log(renderDiff(".gitignore", gitignore.before, gitignore.after));
+    };
 
-    console.log("");
-    for (const change of envChanges) {
-      console.log(renderDiff(change.label, change.diffBefore, change.diffAfter));
-    }
-    if (packageWiring.changed) console.log(renderDiff("package.json", packageSource, packageWiring.contents));
-
-    // --- Step 4: --dry-run stops here, before the first write ---------------
+    // --dry-run stops here, before the first write.
     if (options.dryRun) {
+      printDiffs();
       console.log("");
       info("--dry-run: nothing was written.");
       return 0;
     }
 
-    console.log("");
-    if (!(await prompter.confirm("Apply these changes to your files and vault?", true))) {
-      info("Nothing was changed.");
-      return 0;
+    let applyChoices: Choice<"apply" | "diff" | "cancel">[] = [
+      { value: "apply", label: "Apply" },
+      { value: "diff", label: "Show the full diff first" },
+      { value: "cancel", label: "Cancel" },
+    ];
+    for (;;) {
+      const answer = await prompter.select("Apply these changes?", applyChoices, "apply");
+      if (answer === "apply") break;
+      if (answer === "cancel") {
+        info("Nothing was changed.");
+        return 0;
+      }
+      printDiffs();
+      applyChoices = applyChoices.filter((choice) => choice.value !== "diff");
     }
 
     // Past the dry-run return, so the vault is open.
     const vault = ctx!.vault;
 
-    // --- Step 5: backup, then store, then rewrite ---------------------------
-    // openContext() holds the data key privately; this reads the same key from
-    // the same credential store rather than widening CliContext to expose it.
-    const { key: dataKey } = await loadOrCreateDataKey();
-    const backup = createBackup({
-      scope,
-      dataKey,
-      files: loaded.map((entry) => ({ name: entry.info.name, contents: entry.original })),
-    });
-    ok(`Encrypted backup of your originals: ${backup.dir}`);
+    // --- Apply: backup, then store, then rewrite --------------------------------
+    const backup = await withSpinner(
+      "Backing up your originals",
+      (result) => `Encrypted backup of your originals: ${result.dir}`,
+      async () => {
+        // openContext() holds the data key privately; this reads the same key
+        // from the same credential store rather than widening CliContext.
+        const { key: dataKey } = await loadOrCreateDataKey();
+        return createBackup({
+          scope,
+          dataKey,
+          files: loaded.map((entry) => ({ name: entry.info.name, contents: entry.original })),
+        });
+      },
+    );
 
-    vault.registerProject(scope, detected.root);
-    storeSupplied(vault, supplied);
-    let stored = 0;
-    for (const decision of decisions) {
-      if (decision.target === "plaintext") continue;
-      vault.setSecret(
-        { scope: decision.target === "global" ? GLOBAL_SCOPE : scope, key: decision.key.key },
-        decision.key.value,
+    const toStore = decisions.filter((decision) => decision.target !== "plaintext");
+    const storedCount = supplied.length + toStore.length;
+    await withSpinner(
+      "Storing values in the vault",
+      storedCount > 0
+        ? `Stored ${storedCount} secret${storedCount === 1 ? "" : "s"} in the vault.`
+        : `Registered ${scope} with the vault.`,
+      async () => {
+        vault.registerProject(scope, detected.root);
+        storeSupplied(vault, supplied);
+        for (const decision of toStore) {
+          vault.setSecret(
+            { scope: decision.target === "global" ? GLOBAL_SCOPE : scope, key: decision.key.key },
+            decision.key.value,
+          );
+        }
+      },
+    );
+
+    if (envChanges.length > 0) {
+      await withSpinner(
+        "Rewriting your env files",
+        `Rewrote ${envChanges.map((c) => c.label).join(", ")} with references.`,
+        async () => {
+          for (const change of envChanges) writeFileSync(change.path, change.after);
+        },
       );
-      stored += 1;
     }
-    if (stored > 0) ok(`Stored ${stored} secret${stored === 1 ? "" : "s"} in the vault.`);
 
-    for (const change of envChanges) writeFileSync(change.path, change.after);
-    if (envChanges.length > 0) ok(`Rewrote ${envChanges.map((c) => c.label).join(", ")} with references.`);
-
-    // --- Step 6: wire -------------------------------------------------------
     if (packageWiring.changed) {
-      writeFileSync(detected.packageJsonPath, packageWiring.contents);
-      ok(`Wired ${packageWiring.rewrites.length} package.json script${packageWiring.rewrites.length === 1 ? "" : "s"} through \`kerstel exec\`.`);
+      const n = packageWiring.rewrites.length;
+      await withSpinner(
+        "Wiring package.json",
+        `Wired ${n} package.json script${n === 1 ? "" : "s"} through \`kerstel exec\`.`,
+        async () => writeFileSync(detected.packageJsonPath, packageWiring.contents),
+      );
     }
 
-    await offerGitignore(detected.root, detected.envFiles, prompter);
+    if (gitignore) {
+      await withSpinner("Updating .gitignore", "Updated .gitignore", async () =>
+        writeFileSync(gitignore.path, gitignore.after),
+      );
+    }
 
-    // --- Step 7: self-check -------------------------------------------------
-    const probeDecision = decisions.find((decision) => decision.target !== "plaintext");
+    // --- Self-check ---------------------------------------------------------------
+    const probeDecision = toStore[0];
     if (probeDecision) {
       const probeScope = probeDecision.target === "global" ? GLOBAL_SCOPE : scope;
       const expected = vault.getSecret({ scope: probeScope, key: probeDecision.key.key });
       if (expected !== null) {
-        console.log("");
-        const result = await selfCheck(detected, {
-          key: probeDecision.key.key,
-          reference: formatReference(probeScope, probeDecision.key.key),
-          expected,
-        });
-        if (result === "failed") {
+        let result: SelfCheckResult;
+        try {
+          result = await withSpinner(
+            "Checking that a wired process can read the vault",
+            "Self-check passed: a wired process resolved a reference.",
+            async () => {
+              const outcome = await selfCheck(detected, {
+                key: probeDecision.key.key,
+                reference: formatReference(probeScope, probeDecision.key.key),
+                expected,
+              });
+              if (outcome.status !== "passed") throw new SelfCheckProblem(outcome);
+              return outcome;
+            },
+          );
+        } catch (error) {
+          if (!(error instanceof SelfCheckProblem)) throw error;
+          result = error.result;
+          // In a terminal the spinner has already shown the message.
+          if (!interactive()) {
+            if (result.status === "failed") fail(result.message);
+            else console.log(yellow(`!  ${result.message}`));
+          }
+        }
+
+        if (result.status === "failed") {
+          if (result.stderr.length > 0) console.log(dim(result.stderr));
           const [summary, ...notes] = summaryLines({
             scope,
             packageManager: detected.packageManager,
@@ -677,22 +871,25 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
           });
           console.log("");
           ok(summary as string);
-          for (const note of notes) console.log(yellow(`!  ${note}`));
+          for (const line of notes) console.log(yellow(`!  ${line}`));
           return 1;
         }
-        if (result === "passed") ok("Self-check passed: a wired process resolved a reference.");
       }
     }
 
-    console.log("");
-    for (const line of summaryLines({
-      scope,
-      packageManager: detected.packageManager,
-      backupDir: backup.dir,
-      verified: true,
-    })) {
-      ok(line);
+    // --- Outro ----------------------------------------------------------------------
+    const script = scriptToRun(
+      detected.packageJson,
+      packageWiring.rewrites.map((rewrite) => rewrite.name),
+    );
+    const closing = [
+      `${scope} is ready. Run ${detected.packageManager} run ${script} as usual.`,
+      `${cliName()} doctor checks the setup any time.`,
+    ];
+    if (plaintext.length === 0) {
+      closing.push("Your .env files hold only references now, so they're safe to commit.");
     }
+    note(closing.join("\n"), "Next steps");
     return 0;
   } finally {
     ctx?.vault.close();
@@ -731,7 +928,7 @@ export async function initCommand(args: string[], prompterOverride?: Prompter): 
   const prompter = prompterOverride ?? choosePrompter(parsed);
   if (!prompter) {
     fail(
-      "kerstel init asks questions, and this is not a terminal. Re-run with --yes to accept every " +
+      `${cliName()} init asks questions, and this is not a terminal. Re-run with --yes to accept every ` +
         "suggestion, or --non-interactive to fail loudly on anything it cannot decide.",
     );
     return 2;

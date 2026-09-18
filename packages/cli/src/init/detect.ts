@@ -22,6 +22,8 @@ export interface DetectedProject {
   /** Why `packageJson` is null, so the caller can name the actual problem. */
   packageJsonError: "missing" | "invalid" | null;
   packageName: string | null;
+  /** The framework `package.json` depends on, when Kerstel recognises one. */
+  framework: string | null;
   /** `.env*` files in the root, highest precedence first. */
   envFiles: EnvFileInfo[];
   /** `.env*` names that could not be read, such as a dangling symlink. */
@@ -145,6 +147,25 @@ function readPackageJson(path: string): PackageJsonRead {
   }
 }
 
+/** First match wins: Vite sits under most of the others, so it goes last. Spec §5.1. */
+const FRAMEWORKS: ReadonlyArray<readonly [test: (name: string) => boolean, label: string]> = [
+  [(n) => n === "next", "Next.js"],
+  [(n) => n === "nuxt", "Nuxt"],
+  [(n) => n === "@sveltejs/kit", "SvelteKit"],
+  [(n) => n === "astro", "Astro"],
+  [(n) => n.startsWith("@remix-run/"), "Remix"],
+  [(n) => n === "vite", "Vite"],
+];
+
+export function detectFramework(packageJson: Record<string, unknown> | null): string | null {
+  const names = ["dependencies", "devDependencies"].flatMap((field) => {
+    const deps = packageJson?.[field];
+    return deps && typeof deps === "object" ? Object.keys(deps) : [];
+  });
+  for (const [matches, label] of FRAMEWORKS) if (names.some(matches)) return label;
+  return null;
+}
+
 export function detectProject(root: string): DetectedProject {
   const packageJsonPath = join(root, "package.json");
   const { json: packageJson, error: packageJsonError } = readPackageJson(packageJsonPath);
@@ -160,6 +181,7 @@ export function detectProject(root: string): DetectedProject {
     packageJson,
     packageJsonError,
     packageName: typeof name === "string" && name.length > 0 ? name : null,
+    framework: detectFramework(packageJson),
     envFiles: envScan.found,
     unreadableEnvFiles: envScan.unreadable,
   };

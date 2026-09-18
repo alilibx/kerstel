@@ -27,7 +27,6 @@ export interface Choice<T extends string> {
 
 export interface Prompter {
   confirm(question: string, defaultValue: boolean): Promise<boolean>;
-  choose(question: string, options: string[], defaultValue: string): Promise<string>;
   select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T>;
   multiselect<T extends string>(question: string, choices: Choice<T>[], initial: T[]): Promise<T[]>;
   text(question: string, options?: TextOptions): Promise<string>;
@@ -67,14 +66,6 @@ function settled<T>(value: T | symbol): T {
 export class ClackPrompter implements Prompter {
   async confirm(question: string, defaultValue: boolean): Promise<boolean> {
     return settled<boolean>(await clack.confirm({ message: question, initialValue: defaultValue }));
-  }
-
-  async choose(question: string, options: string[], defaultValue: string): Promise<string> {
-    return this.select(
-      question,
-      options.map((value) => ({ value, label: value })),
-      defaultValue,
-    );
   }
 
   async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
@@ -141,16 +132,6 @@ export class ScriptedPrompter implements Prompter {
     return answer;
   }
 
-  async choose(question: string, options: string[], _defaultValue: string): Promise<string> {
-    const answer = this.next(question);
-    if (typeof answer !== "string" || !options.includes(answer)) {
-      throw new Error(
-        `ScriptedPrompter answer ${JSON.stringify(answer)} for "${question}" is not one of ${options.join(", ")}`,
-      );
-    }
-    return answer;
-  }
-
   async select<T extends string>(question: string, choices: Choice<T>[], _defaultValue: T): Promise<T> {
     const answer = this.next(question);
     const values = choices.map((choice) => choice.value as string);
@@ -185,10 +166,6 @@ export class ScriptedPrompter implements Prompter {
 /** `--yes` and `--non-interactive`: every default, no questions. */
 export class DefaultsPrompter implements Prompter {
   async confirm(_question: string, defaultValue: boolean): Promise<boolean> {
-    return defaultValue;
-  }
-
-  async choose(_question: string, _options: string[], defaultValue: string): Promise<string> {
     return defaultValue;
   }
 
