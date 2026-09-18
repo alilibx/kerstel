@@ -6,6 +6,7 @@
   "//type": "The preload and its worker are loaded by `node --require`, so every runtime file in this package is CommonJS. Declaring module here makes Node parse src/*.js as ESM, where `require` is undefined and `module.exports` is dropped silently.",
   "type": "commonjs",
   "scripts": {
+    "build": "bun run build.ts",
     "typecheck": "tsc -p tsconfig.json"
   }
 }

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_LINE_CHARS } from "../src/daemon/protocol";
@@ -270,6 +270,52 @@ test("doctor reports the keychain backend and vault location", async () => {
   expect(out).toContain("file");
   expect(out).toContain(dir);
 });
+
+// A failed hook install used to throw out of openContext(), which is on the way
+// into EVERY vault-opening command -- so a read-only ~/.kerstel (a binary
+// upgrade, a stray chmod) took out `kerstel ls` and `kerstel get` along with
+// the hook, and made doctor's "(not installed)" branch unreachable: doctor
+// could not report the problem because doctor could not start.
+test.if(process.platform !== "win32")(
+  "a hook install failure degrades to a doctor warning instead of killing commands",
+  async () => {
+    const dir = isolate();
+    await runCli(["set", "global/A", "--value", "1"]);
+
+    const hook = join(dir, "hook");
+    const preload = join(hook, "preload.cjs");
+    // Corrupt it so the content check wants to rewrite, then make the rewrite
+    // impossible: the file itself is unwritable (an existing file needs write
+    // permission on the file, not the directory) and the directory is too, so
+    // neither replacing nor recreating it can succeed.
+    writeFileSync(preload, "// corrupted\n");
+    chmodSync(preload, 0o400);
+    chmodSync(hook, 0o500);
+
+    try {
+      // The vault still opens, and the command still works.
+      capture();
+      expect(await runCli(["ls"])).toBe(0);
+      expect(captured.join("\n")).toContain("kerstel://global/A");
+
+      capture();
+      expect(await runCli(["doctor"])).toBe(0);
+      const out = captured.join("\n");
+      expect(out).toContain("(not installed)");
+      expect(out).toContain("Could not install the runtime hook");
+      // The reason has to be in there, not just the fact.
+      expect(out).toMatch(/EACCES|permission denied/i);
+    } finally {
+      chmodSync(hook, 0o700);
+      chmodSync(preload, 0o644);
+    }
+
+    // And it recovers on the next run once the permissions are back.
+    capture();
+    expect(await runCli(["doctor"])).toBe(0);
+    expect(captured.join("\n")).not.toContain("Could not install the runtime hook");
+  },
+);
 
 test("an unknown command exits 2 with usage", async () => {
   isolate();

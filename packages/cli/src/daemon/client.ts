@@ -47,13 +47,12 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
   }
 
   // Same short-circuit, and for the same reason, as isDaemonRunning() below:
-  // in Bun, connecting to a Unix socket PATH THAT DOES NOT EXIST raises its
-  // ENOENT outside the "error" event and outside this promise, where no
-  // listener and no `await`-site try/catch can intercept it -- it takes the
-  // process down. That is the ordinary state of a machine whose daemon has
-  // never been started, which is exactly the case ensureDaemon() has to
-  // survive in order to start one. (Windows named pipes are not files, so the
-  // check is Unix-only; there the connect error arrives normally.)
+  // "no daemon has ever been started" is the overwhelmingly common case, and a
+  // stat beats building a socket, waiting out a connect, and unwinding an
+  // error. It is an optimization, not a correctness guard -- on Bun 1.3.10 a
+  // connect to a missing Unix socket path rejects normally through the "error"
+  // event below, so removing this check would cost latency, not safety.
+  // (Windows named pipes are not files, so the check is Unix-only.)
   if (process.platform !== "win32" && !existsSync(sock)) {
     throw new DaemonError("unreachable", `Kerstel daemon is not running (no socket at ${sock})`);
   }
@@ -188,11 +187,11 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
 export async function isDaemonRunning(sock: string = defaultSocketPath()): Promise<boolean> {
   // The overwhelmingly common case is "no daemon running at all" -- a socket
   // file that was never created. Short-circuit on that without touching
-  // node:net: connecting to a Unix socket path that doesn't exist raises its
-  // ENOENT asynchronously outside the normal "error" event / promise-rejection
-  // path in Bun, which no listener or try/catch downstream can intercept.
-  // (Named pipes on Windows aren't regular files, so this check only applies
-  // to the Unix socket path.)
+  // node:net, because a stat is cheaper than a connect that is going to fail.
+  // Purely an optimization: on Bun 1.3.10 a connect to a missing Unix socket
+  // path reports ENOENT through the "error" event below like any other connect
+  // failure. (Named pipes on Windows aren't regular files, so this check only
+  // applies to the Unix socket path.)
   if (process.platform !== "win32" && !existsSync(sock)) return false;
 
   return new Promise((resolve) => {

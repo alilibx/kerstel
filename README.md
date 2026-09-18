@@ -69,11 +69,13 @@ bun run --cwd packages/cli build
 
 This produces a single compiled binary at `dist/kerstel` — no Node or Bun runtime required to run it.
 
+The runtime hook must be built before anything runs from source — the CLI embeds `packages/hook/dist/preload.cjs` and `worker.cjs` at import time, so `bun run packages/cli/src/index.ts` fails on a fresh clone until `bun run --cwd packages/hook build` has run once; the `build` command above and `bun run test` below both do it for you.
+
 ### Run tests
 
 ```bash
 bun run typecheck
-bun test
+bun run test
 ```
 
 ## Contributing

@@ -12,9 +12,20 @@ export async function doctorCommand(): Promise<number> {
     info(`Vault:     ${vaultPath()} (${ctx.vault.listSecrets().length} secrets)`);
     info(`Keychain:  ${ctx.backend}`);
     info(`Socket:    ${socketPath()}`);
-    // openContext() just installed these, so "not installed" here means the
-    // write failed (a read-only home, a permissions problem) -- worth saying.
+    // openContext() just tried to install these, so "not installed" here means
+    // the write failed (a read-only home, a permissions problem). That is now a
+    // reachable branch rather than dead code: installHookAssets() records the
+    // failure and lets the command run instead of throwing out of openContext().
     info(`Hook:      ${hookDir()}${hookAssetsInstalled() ? "" : yellow("  (not installed)")}`);
+    if (ctx.hookInstall.error) {
+      console.log(
+        yellow(
+          `!  Could not install the runtime hook: ${ctx.hookInstall.error}\n` +
+            "   Everything else still works; `kerstel run -- <command>` resolves " +
+            "references without the hook.",
+        ),
+      );
+    }
 
     if (ctx.backend === "file") {
       console.log(
