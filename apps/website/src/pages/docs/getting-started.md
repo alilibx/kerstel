@@ -14,9 +14,15 @@ order: 1
 curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
-Binaries are not published yet: the installer prints a message saying so and exits without installing anything. Until they ship, build from source instead, as covered below.
+The installer downloads the binary for your Mac or Linux machine, checks it against the SHA-256 checksum published with the release, and puts it at `~/.local/bin/kerstel`. It never uses `sudo` and never touches your vault. If `~/.local/bin` is not on your `PATH`, it prints the line to add.
 
-Once binaries ship, the installer will place the `kerstel` binary in `~/.kerstel/bin`, add it to your PATH, create the vault, and store the data key in your OS credential store. Run `kerstel doctor` afterwards to confirm the vault and credential store are reachable.
+Run the same command again to upgrade. To install a specific version, set `KERSTEL_VERSION`:
+
+```bash
+curl -fsSL https://kerstel.dev/install.sh | KERSTEL_VERSION=0.1.0 bash
+```
+
+Windows is not supported yet. Run `kerstel doctor` afterwards to confirm the vault and credential store are reachable.
 
 Prefer to build it yourself? The [README](https://github.com/alilibx/kerstel#build-from-source) covers building from source with Bun.
 

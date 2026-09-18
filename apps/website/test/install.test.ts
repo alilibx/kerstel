@@ -1,0 +1,130 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const SCRIPT = resolve(import.meta.dir, "../src/static/install.sh");
+const ASSETS = ["kerstel-darwin-arm64", "kerstel-darwin-x64", "kerstel-linux-x64", "kerstel-linux-arm64"];
+
+let work: string;
+let release: string;
+let shims: string;
+let installDir: string;
+
+function sha256(text: string): string {
+  return new Bun.CryptoHasher("sha256").update(text).digest("hex");
+}
+
+/** A stub binary that names its own asset, so a test can tell which one was installed. */
+function fakeBinary(asset: string): string {
+  return `#!/bin/sh\n# ${asset}\necho 0.1.0\n`;
+}
+
+function writeRelease(overrides: Record<string, string> = {}): void {
+  let sums = "";
+  for (const asset of ASSETS) {
+    const body = fakeBinary(asset);
+    writeFileSync(join(release, asset), body);
+    sums += `${overrides[asset] ?? sha256(body)}  ${asset}\n`;
+  }
+  writeFileSync(join(release, "SHA256SUMS"), sums);
+}
+
+function shim(name: string, body: string): void {
+  const path = join(shims, name);
+  writeFileSync(path, `#!/bin/sh\n${body}\n`);
+  chmodSync(path, 0o755);
+}
+
+async function install(env: Record<string, string>, pathPrefix = "") {
+  const proc = Bun.spawn(["bash", SCRIPT], {
+    env: {
+      HOME: work,
+      SHELL: "/bin/zsh",
+      PATH: `${pathPrefix}${shims}:/usr/bin:/bin`,
+      KERSTEL_INSTALL_DIR: installDir,
+      KERSTEL_DOWNLOAD_BASE: `file://${release}`,
+      FAKE_OS: "Darwin",
+      FAKE_ARCH: "arm64",
+      FAKE_TRANSLATED: "0",
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, code };
+}
+
+beforeEach(() => {
+  work = mkdtempSync(join(tmpdir(), "kerstel-install-"));
+  release = join(work, "release");
+  shims = join(work, "shims");
+  installDir = join(work, "bin");
+  mkdirSync(release);
+  mkdirSync(shims);
+  shim("uname", 'case "$1" in -s) echo "$FAKE_OS" ;; -m) echo "$FAKE_ARCH" ;; esac');
+  shim("sysctl", 'echo "$FAKE_TRANSLATED"');
+  shim("ldd", 'echo "ldd (GNU libc) 2.39"');
+  writeRelease();
+});
+
+afterEach(() => {
+  rmSync(work, { recursive: true, force: true });
+});
+
+test("installs the matching binary and reports its version", async () => {
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(installDir, "kerstel"), "utf8")).toBe(fakeBinary("kerstel-darwin-arm64"));
+  expect(result.stdout).toContain(`Installed kerstel 0.1.0 to ${installDir}/kerstel`);
+});
+
+test("maps Linux x86_64 to linux-x64", async () => {
+  const result = await install({ FAKE_OS: "Linux", FAKE_ARCH: "x86_64" });
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(installDir, "kerstel"), "utf8")).toBe(fakeBinary("kerstel-linux-x64"));
+});
+
+test("a shell under Rosetta gets the arm64 binary", async () => {
+  const result = await install({ FAKE_ARCH: "x86_64", FAKE_TRANSLATED: "1" });
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(installDir, "kerstel"), "utf8")).toBe(fakeBinary("kerstel-darwin-arm64"));
+});
+
+test("re-running upgrades an existing copy in place", async () => {
+  mkdirSync(installDir, { recursive: true });
+  writeFileSync(join(installDir, "kerstel"), "old");
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(installDir, "kerstel"), "utf8")).toBe(fakeBinary("kerstel-darwin-arm64"));
+});
+
+test("a checksum mismatch installs nothing", async () => {
+  writeRelease({ "kerstel-darwin-arm64": "0".repeat(64) });
+  const result = await install({});
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("checksum mismatch");
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});
+
+test("an unsupported platform is refused with a build-from-source link", async () => {
+  const result = await install({ FAKE_OS: "FreeBSD", FAKE_ARCH: "amd64" });
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("not supported yet");
+  expect(result.stderr).toContain("#build-from-source");
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});
+
+test("prints a PATH hint only when the install directory is not on PATH", async () => {
+  const missing = await install({});
+  expect(missing.stdout).toContain("is not on your PATH");
+  expect(missing.stdout).toContain(".zshrc");
+
+  const present = await install({}, `${installDir}:`);
+  expect(present.stdout).not.toContain("is not on your PATH");
+});

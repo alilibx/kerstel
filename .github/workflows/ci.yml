@@ -58,4 +58,5 @@ jobs:
       # here as a diff and fails the job, so kerstel.dev can never go stale.
       # Stage all changes to docs/ first to catch newly-created files too.
       - run: git add -A -- docs/ && git diff --cached --exit-code -- docs/
+      - run: shellcheck apps/website/src/static/install.sh
       - run: bun test apps/website
