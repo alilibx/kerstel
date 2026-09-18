@@ -19,9 +19,16 @@ export const macosBackend: KeychainBackend = {
     // means the keychain itself is reachable, so only that or success counts
     // as available; a locked/missing keychain (e.g. interaction-not-allowed)
     // reports some other exit code and correctly falls through to `false`.
+    //
+    // Deliberately WITHOUT `-w`: that flag makes `security` print the password
+    // itself, which would pull the vault's master key through a subprocess
+    // pipe on every auto-selected vault open purely to learn whether the
+    // keychain answers. Without it the command still queries the same item and
+    // still exits 0 / 44 / something-else, so the reachability test is
+    // unchanged -- only the needless copy of the key is gone.
     const probe = await run([
       "security", "find-generic-password",
-      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME, "-w",
+      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
     ]);
     return probe.code === 0 || probe.code === ITEM_NOT_FOUND_EXIT;
   },

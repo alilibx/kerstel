@@ -133,6 +133,26 @@ test("an unhooked grandchild still gets the resolved value, not the reference", 
   expect(stdout).toBe("child-value");
 });
 
+// The test above spawns with an explicit `{ ...process.env }` spread, which
+// goes through the proxy's getOwnPropertyDescriptor trap. The far more common
+// case is passing no `env` option at all and letting Node copy the environment
+// itself -- a different code path through the same proxy, and the one spec
+// §6.1's claim actually rests on. The grandchild here is `sh`, not Node: it
+// cannot load a preload and cannot resolve anything, so a correct value can
+// only have come from the plaintext already being in its real envp.
+test.skipIf(process.platform === "win32")(
+  "a grandchild spawned with no env option inherits the resolved plaintext",
+  async () => {
+    const { sock, vault } = await boot();
+    vault.setSecret({ scope: "global", key: "CHILD_KEY" }, "implicit-envp-value");
+
+    const { stdout } = await runHooked("node", sock, join(FIXTURES, "spawn-implicit.cjs"), ["CHILD_KEY"], {
+      CHILD_KEY: "kerstel://global/CHILD_KEY",
+    });
+    expect(stdout).toBe("implicit-envp-value");
+  },
+);
+
 test("the hook marks itself active for doctor", async () => {
   const { sock } = await boot();
   const { stdout } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["KERSTEL_ACTIVE"], {});

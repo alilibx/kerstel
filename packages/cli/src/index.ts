@@ -7,7 +7,9 @@ import { bold, fail } from "./output";
 const USAGE = `${bold("kerstel")} — local-first secrets for your projects
 
 Usage:
-  kerstel set <scope>/<KEY> [--value <value>]   Store a secret (or pipe it on stdin)
+  ... | kerstel set <scope>/<KEY>               Store a secret piped on stdin
+  kerstel set <scope>/<KEY> --value <value>     Same, but the value lands in your
+                                                shell history and in \`ps\` output
   kerstel get <scope>/<KEY> [--reveal]          Read a secret
   kerstel ls [--scope <scope>]                  List stored references
   kerstel rm <scope>/<KEY> --yes                Remove a secret

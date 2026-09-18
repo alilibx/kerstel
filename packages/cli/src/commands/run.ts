@@ -30,6 +30,18 @@ export async function runCommand(args: string[]): Promise<number> {
         fail(`No secret at kerstel://${ref.scope}/${ref.key} (referenced by ${name})`);
         return 1;
       }
+      // One row per reference resolved. This path hands plaintext to a child
+      // process without the daemon seeing it, so the audit row the daemon
+      // would have written has to be written here -- otherwise the log claims
+      // these secrets were never read.
+      ctx.vault.appendAudit({
+        ts: Date.now(),
+        event: "run",
+        scope: ref.scope,
+        key: ref.key,
+        pid: process.pid,
+        processName: "kerstel",
+      });
       env[name] = resolved;
     }
   } finally {

@@ -55,7 +55,13 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
   // umask default (typically 0644); re-asserting here every time makes a
   // stranded vault repair itself on its next open instead of staying wrong
   // forever. Do not gate this behind an "isNew" check.
-  if (process.platform !== "win32") chmodSync(target, 0o600);
+  //
+  // Guarded on existence for the same reason the sidecar loop below is: this
+  // assumes SQLite materialized the file during `new Database(..., {create:
+  // true})`, which it does today but is not contractually obliged to do (a
+  // deferred first write would leave nothing to chmod and throw ENOENT here,
+  // failing every command on a fresh machine).
+  if (process.platform !== "win32" && existsSync(target)) chmodSync(target, 0o600);
   migrate(db);
   if (process.platform !== "win32") {
     // WAL mode (set inside migrate()) creates these sidecar files. They never

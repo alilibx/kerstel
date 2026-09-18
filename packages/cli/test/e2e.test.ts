@@ -55,14 +55,28 @@ test("the compiled binary stores and lists a secret", async () => {
 
 test("a node app reads the real secret from a reference-only .env", async () => {
   home = mkdtempSync(join(tmpdir(), "kerstel-e2e-node-"));
-  await kerstel(["set", "global/OPENAI_API_KEY", "--value", "sk-end-to-end"]);
-  await kerstel(["daemon", "start"]);
+  expect((await kerstel(["set", "global/OPENAI_API_KEY", "--value", "sk-end-to-end"])).code).toBe(0);
+  // Assert the daemon actually came up before spawning the child: without this
+  // a failed start surfaces as an opaque resolution error from the Node
+  // process, several steps away from the thing that broke.
+  const started = await kerstel(["daemon", "start"]);
+  if (started.code !== 0) console.error(started.stdout + started.stderr);
+  expect(started.code).toBe(0);
 
   const project = mkdtempSync(join(tmpdir(), "kerstel-project-"));
   const app = join(project, "app.cjs");
   await Bun.write(app, "process.stdout.write(process.env.OPENAI_API_KEY);");
 
-  const preload = join(REPO, "packages/hook/dist/preload.cjs");
+  // The hook the binary INSTALLED, under this test's KERSTEL_HOME -- never the
+  // one in the repo checkout. The point of this suite is that the compiled
+  // binary stands alone on a machine that has no Kerstel source tree, so
+  // reaching back into packages/hook/dist here would hide exactly the bug it
+  // exists to catch.
+  const installedHookDir = join(home, "hook");
+  const preload = join(installedHookDir, "preload.cjs");
+  expect(existsSync(preload)).toBe(true);
+  expect(existsSync(join(installedHookDir, "worker.cjs"))).toBe(true);
+
   const token = (await Bun.file(join(home, "session.token")).text()).trim();
   const socket = join(home, "kerstel.sock");
 
@@ -72,7 +86,7 @@ test("a node app reads the real secret from a reference-only .env", async () => 
       OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY",
       KERSTEL_SOCKET: socket,
       KERSTEL_TOKEN: token,
-      KERSTEL_HOOK_DIR: join(REPO, "packages/hook/dist"),
+      KERSTEL_HOOK_DIR: installedHookDir,
     }),
     stdout: "pipe",
     stderr: "pipe",
@@ -100,6 +114,42 @@ test("kerstel run resolves references for an unhooked command", async () => {
 
   expect(code).toBe(0);
   expect(stdout).toBe("via-run");
+});
+
+test("the binary installs the runtime hook into KERSTEL_HOME on first use", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-hook-"));
+  // Any vault-opening command is enough -- nothing here mentions the hook.
+  expect((await kerstel(["ls"])).code).toBe(0);
+
+  // The product's central promise is that `curl | bash` puts a working hook on
+  // a machine with no Kerstel source tree anywhere. The binary carries both
+  // files and writes them here; nothing else on the system could have.
+  for (const name of ["preload.cjs", "worker.cjs"]) {
+    const installed = join(home, "hook", name);
+    expect(existsSync(installed)).toBe(true);
+    expect((await Bun.file(installed).text()).length).toBeGreaterThan(0);
+  }
+
+  const doctor = await kerstel(["doctor"]);
+  expect(doctor.stdout).toContain(join(home, "hook"));
+  expect(doctor.stdout).not.toContain("not installed");
+});
+
+test("resolve starts the daemon by itself and audits the resolution", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-autostart-"));
+  expect((await kerstel(["set", "global/AUTO", "--value", "auto-started"])).code).toBe(0);
+
+  // No `daemon start` anywhere: `resolve` goes through the daemon, so it has to
+  // bring one up on its own. This is the only place the spawn-and-poll path in
+  // ensureDaemon() is exercisable -- under `bun test` the runner reaps the
+  // detached child before it can answer.
+  expect((await kerstel(["daemon", "status"])).code).toBe(1);
+
+  const resolved = await kerstel(["resolve", "kerstel://global/AUTO"]);
+  expect(resolved.code).toBe(0);
+  expect(resolved.stdout.trim()).toBe("auto-started");
+
+  expect((await kerstel(["daemon", "status"])).code).toBe(0);
 });
 
 test("the vault file holds no plaintext after a full round trip", async () => {

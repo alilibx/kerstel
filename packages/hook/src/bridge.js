@@ -105,7 +105,16 @@ function createBridge(options) {
       if (message) {
         const payload = JSON.parse(message.payload);
         if (!message.ok) {
-          const error = new Error(`Kerstel: ${payload.message} (kerstel://${scope}/${key})`);
+          // "unreachable" means no daemon answered the socket. Measured on
+          // macOS 26 / Node 24: the worker's failAll settles this in ~14ms for
+          // the whole process, references included, so this is a prompt, honest
+          // failure rather than a stall -- but the message has to say what to
+          // DO about it, or the user is left with a bare connect(2) errno.
+          const hint =
+            payload.code === "unreachable"
+              ? " Is the Kerstel daemon running? Start it with `kerstel daemon start`."
+              : "";
+          const error = new Error(`Kerstel: ${payload.message} (kerstel://${scope}/${key}).${hint}`);
           error.code = payload.code;
           throw error;
         }

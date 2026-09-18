@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_LINE_CHARS } from "../src/daemon/protocol";
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { socketPath } from "../src/paths";
@@ -90,6 +91,69 @@ test("rm deletes and reports a missing key", async () => {
   expect(await runCli(["rm", "global/A", "--yes"])).toBe(1);
 });
 
+test("--value does not swallow the next flag as the secret", async () => {
+  isolate();
+  // `args[indexOf("--value") + 1]` would store the literal string "--reveal".
+  expect(await runCli(["set", "global/OOPS", "--value", "--reveal"])).toBe(2);
+
+  capture();
+  expect(await runCli(["get", "global/OOPS"])).toBe(1);
+  expect(captured.join("\n")).toContain("No secret");
+});
+
+test("a value too large to transport is refused rather than stored", async () => {
+  isolate();
+  const huge = "x".repeat(MAX_LINE_CHARS + 1);
+  expect(await runCli(["set", "global/HUGE", "--value", huge])).toBe(2);
+
+  // A secret the daemon could store but never serve should not be in the vault
+  // at all -- the failure belongs at `set`, not at resolution time.
+  capture();
+  expect(await runCli(["get", "global/HUGE"])).toBe(1);
+});
+
+test("get --reveal writes an audit row", async () => {
+  isolate();
+  await runCli(["set", "global/SEEN", "--value", "peek"]);
+
+  capture();
+  expect(await runCli(["get", "global/SEEN", "--reveal"])).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const vault = openVault(key);
+  try {
+    const rows = vault.listAudit(10).filter((e) => e.event === "reveal");
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.key).toBe("SEEN");
+    expect(rows[0]?.processName).toBe("kerstel");
+  } finally {
+    vault.close();
+  }
+});
+
+test("run writes one audit row per reference it resolves", async () => {
+  isolate();
+  await runCli(["set", "global/RA", "--value", "a"]);
+  await runCli(["set", "global/RB", "--value", "b"]);
+
+  process.env.RA = "kerstel://global/RA";
+  process.env.RB = "kerstel://global/RB";
+  capture();
+  const code = await runCli(["run", "--", "node", "-e", ""]);
+  delete process.env.RA;
+  delete process.env.RB;
+  expect(code).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const vault = openVault(key);
+  try {
+    const rows = vault.listAudit(20).filter((e) => e.event === "run");
+    expect(rows.map((r) => r.key).sort()).toEqual(["RA", "RB"]);
+  } finally {
+    vault.close();
+  }
+});
+
 test("an invalid reference is rejected before touching the vault", async () => {
   isolate();
   expect(await runCli(["set", "Bad-Scope/KEY", "--value", "x"])).toBe(2);
@@ -110,13 +174,51 @@ test("run injects resolved values into the child environment", async () => {
   expect(code).toBe(0);
 });
 
-test("resolve prints one value for scripting", async () => {
+// `resolve` goes through the daemon (see resolveCommand), so this test has to
+// give it one. It cannot exercise the AUTO-START half of that: `bun test`
+// reaps processes its tests spawn, so the detached `daemon serve` child
+// ensureDaemon() starts is killed out from under it ("killed 1 dangling
+// process"). The auto-start path is covered end to end against the compiled
+// binary in e2e.test.ts instead.
+test("resolve prints one value for scripting, through the daemon", async () => {
   isolate();
   await runCli(["set", "global/R", "--value", "resolved"]);
 
-  capture();
-  expect(await runCli(["resolve", "kerstel://global/R"])).toBe(0);
-  expect(captured.join("\n")).toBe("resolved");
+  const token = ensureToken();
+  const { key, backend } = await loadOrCreateDataKey();
+  const vault: Vault = openVault(key);
+  const handle = await startDaemon({ vault, socketPath: socketPath(), token, backendName: backend });
+
+  try {
+    capture();
+    expect(await runCli(["resolve", "kerstel://global/R"])).toBe(0);
+    expect(captured.join("\n")).toBe("resolved");
+
+    // The daemon audits every resolution it serves; routing `resolve` through
+    // it is what gives this command an audit row at all.
+    const audit = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "R");
+    expect(audit.length).toBe(1);
+  } finally {
+    await handle.close();
+    vault.close();
+  }
+});
+
+test("resolve reports a missing key without inventing one", async () => {
+  isolate();
+  const token = ensureToken();
+  const { key, backend } = await loadOrCreateDataKey();
+  const vault: Vault = openVault(key);
+  const handle = await startDaemon({ vault, socketPath: socketPath(), token, backendName: backend });
+
+  try {
+    capture();
+    expect(await runCli(["resolve", "kerstel://global/NOPE"])).toBe(1);
+    expect(captured.join("\n")).toContain("No secret at kerstel://global/NOPE");
+  } finally {
+    await handle.close();
+    vault.close();
+  }
 });
 
 test("daemon status reports when nothing is running", async () => {
