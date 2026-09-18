@@ -65,4 +65,4 @@ kerstel doctor
 
 ## What about a whole project at once?
 
-`kerstel init` scans a project's `.env` files, moves each value into the vault, rewrites the files with references, and wires the hook for you. It is in development and lands in an upcoming release. Until then the steps above are the manual path.
+`kerstel init` will do all of this for a whole project at once, moving every `.env` value into the vault and rewriting the files with references; it is in progress, so until it lands the steps above are the manual path.
