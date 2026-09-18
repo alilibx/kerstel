@@ -57,14 +57,15 @@ cd my-app
 kerstel init
 ```
 
-The wizard walks through six steps and asks before each one:
+The wizard walks through seven steps and asks before each one:
 
 1. **Detect** your runtime and package manager from your lockfile.
 2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found — key names, value sizes and shapes, never the values themselves. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
 3. **Back up** the originals, encrypted with your vault key, to `~/.kerstel/backups/<project>/<timestamp>/`.
 4. **Rewrite** the files, changing only the bytes of the values it stored. Comments, blank lines, key order, quoting style and inline comments all survive byte for byte.
 5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped), and Bun projects also get a `preload` entry in `bunfig.toml`. You see the diff first.
-6. **Self-check** by running a probe through the wiring and confirming a reference resolves.
+6. **Offer to update `.gitignore`**, as a separate confirmation that defaults to **no**: if it currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the now reference-only files can be committed. Decline and it leaves `.gitignore` untouched.
+7. **Self-check** by running a probe through the wiring and confirming a reference resolves.
 
 Afterwards `npm run dev` is still `npm run dev`.
 
