@@ -37,6 +37,10 @@ export interface Vault {
   listProjects(): ProjectRecord[];
   appendAudit(entry: AuditEntry): void;
   listAudit(limit: number): AuditEntry[];
+  /** Reads a `vault_meta` row. Not secret -- see meta.ts. */
+  getMeta(key: string): string | null;
+  /** Writes a `vault_meta` row, replacing any existing value. */
+  setMeta(key: string, value: string): void;
   close(): void;
 }
 
@@ -173,6 +177,20 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
           pid: r.pid,
           processName: r.process_name,
         }));
+    },
+
+    getMeta(key: string): string | null {
+      const row = db
+        .query<{ value: string }, { $key: string }>("SELECT value FROM vault_meta WHERE key = $key")
+        .get({ $key: key });
+      return row?.value ?? null;
+    },
+
+    setMeta(key: string, value: string): void {
+      db.query(
+        `INSERT INTO vault_meta (key, value) VALUES ($key, $value)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      ).run({ $key: key, $value: value });
     },
 
     close(): void {

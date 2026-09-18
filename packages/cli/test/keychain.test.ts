@@ -1,7 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, statSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openContext } from "../src/context";
+import { generateDataKey } from "../src/vault/crypto";
+import {
+  META_KEYCHAIN_BACKEND,
+  META_KEY_CHECK,
+  readVaultMeta,
+} from "../src/vault/meta";
 import {
   loadOrCreateDataKey,
   selectBackend,
@@ -247,3 +255,90 @@ test.if(
     expect(await backend.exists()).toBe(false);
   },
 );
+
+// --- the vault remembers which credential store holds its key (Finding 2) ---
+
+test("a fresh vault records the backend that minted its key", async () => {
+  const dir = isolate();
+  const ctx = await openContext();
+  try {
+    expect(ctx.firstRun).toBe(true);
+    expect(ctx.backend).toBe("file");
+    expect(ctx.vault.getMeta(META_KEYCHAIN_BACKEND)).toBe("file");
+    expect(ctx.vault.getMeta(META_KEY_CHECK)).toBeTruthy();
+  } finally {
+    ctx.vault.close();
+  }
+  expect(readVaultMeta(join(dir, "vault.db"))[META_KEYCHAIN_BACKEND]).toBe("file");
+});
+
+test("a backend mismatch refuses to open and mints no second key", async () => {
+  const dir = isolate();
+
+  // Establish a vault whose key was minted by the macOS Keychain. This is the
+  // state a developer's machine is in after any normal GUI session.
+  const ctx = await openContext();
+  ctx.vault.setMeta(META_KEYCHAIN_BACKEND, "macos");
+  ctx.vault.close();
+  rmSync(join(dir, "vault.key"));
+
+  // Now the SSH session: the native backend reports unavailable, selection
+  // falls through to the file backend, and nothing at all is stored there.
+  // Before this guard, that minted a SECOND key and every existing secret
+  // began failing GCM authentication with "Could not decrypt the stored value".
+  await expect(openContext()).rejects.toThrow(/macOS Keychain/);
+
+  // The critical assertion: it refused rather than creating.
+  expect(existsSync(join(dir, "vault.key"))).toBe(false);
+});
+
+test("the mismatch error names both backends and leaks no key material", async () => {
+  isolate();
+  const ctx = await openContext();
+  ctx.vault.setMeta(META_KEYCHAIN_BACKEND, "macos");
+  ctx.vault.close();
+
+  const error = await openContext().then(
+    (opened) => {
+      opened.vault.close();
+      return null;
+    },
+    (caught: Error) => caught,
+  );
+  expect(error?.message).toContain("macOS Keychain");
+  expect(error?.message).toContain('"file"');
+  expect(error?.message).toContain("will not create a second key");
+});
+
+test("a wrong key is caught by the key check before any secret is touched", async () => {
+  const dir = isolate();
+
+  const ctx = await openContext();
+  ctx.vault.setSecret({ scope: "global", key: "K" }, "the-original-value");
+  ctx.vault.close();
+
+  // Swap the stored key for a different one, keeping the same backend, so the
+  // backend guard above cannot be what catches this. This is the shape of a
+  // restored-from-backup vault paired with the wrong keychain entry.
+  writeFileSync(join(dir, "vault.key"), generateDataKey().toString("base64"), { mode: 0o600 });
+
+  await expect(openContext()).rejects.toThrow(/does not match the vault/);
+});
+
+test("an existing vault with secrets refuses a newly minted key", async () => {
+  const dir = isolate();
+
+  // A v1 vault: secrets present, nothing recorded in vault_meta, so there is
+  // no recorded backend to compare against. The tell is that a key was just
+  // CREATED, and a brand-new key cannot decrypt secrets that were already here.
+  const ctx = await openContext();
+  ctx.vault.setSecret({ scope: "global", key: "K" }, "pre-existing");
+  ctx.vault.close();
+
+  const db = new Database(join(dir, "vault.db"));
+  db.exec("DELETE FROM vault_meta");
+  db.close();
+  rmSync(join(dir, "vault.key"));
+
+  await expect(openContext()).rejects.toThrow(/will not create a second key/);
+});
