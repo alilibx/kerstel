@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,8 +10,18 @@ import {
   isEnvFileName,
 } from "../src/init/detect";
 
+const createdRoots: string[] = [];
+
+afterEach(() => {
+  while (createdRoots.length > 0) {
+    const root = createdRoots.pop();
+    if (root) rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function project(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "kerstel-detect-"));
+  createdRoots.push(root);
   for (const [name, contents] of Object.entries(files)) {
     writeFileSync(join(root, name), contents);
   }
