@@ -22,6 +22,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] See which projects reference which keys
 - [ ] Audit log view
 - [ ] Lock and unlock the vault
+- [ ] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall`
 
 ## Next: access gating
 
