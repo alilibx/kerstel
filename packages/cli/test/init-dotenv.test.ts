@@ -58,10 +58,60 @@ test("values decode per quoting style", () => {
   expect(lookup(file, "MISSING")).toBeNull();
 });
 
-test("escape sequences decode inside double quotes only", () => {
-  const file = parseDotenv(['DQ="line1\\nline2\\t\\"quoted\\""', "SQ='line1\\nline2'"].join("\n"));
-  expect(lookup(file, "DQ")).toBe('line1\nline2\t"quoted"');
+/**
+ * The decoded value is what the app would have received, so the only authority
+ * is what the runtimes that read a `.env` actually do. Observed 2026-09-18 with
+ * bun 1.3.10 and node v24.19.0 `--env-file`, one key per escape:
+ *
+ *   escape | bun            | node --env-file
+ *   \\n     | newline        | newline
+ *   \\r     | carriage ret.  | literal \\r
+ *   \\t     | literal \\t     | literal \\t
+ *   \\$     | $              | literal \\$
+ *   \\"     | literal \\"     | ends the value at the quote
+ *   \\\\     | literal \\\\     | literal \\\\
+ *   \\U \\x  | literal        | literal
+ *
+ * Only `\\n` is decoded by both, so only `\\n` is decoded here. Everything else
+ * keeps the bytes the developer typed, which is the answer that cannot turn
+ * `C:\\Users\\x` into `C:Usersx` behind their back.
+ */
+test("a newline escape decodes inside double quotes only", () => {
+  const file = parseDotenv(['DQ="line1\\nline2"', "SQ='line1\\nline2'"].join("\n"));
+  expect(lookup(file, "DQ")).toBe("line1\nline2");
   expect(lookup(file, "SQ")).toBe("line1\\nline2");
+});
+
+test("every escape neither runtime decodes keeps its backslash", () => {
+  const file = parseDotenv(
+    [
+      'WINDOWS_PATH="C:\\Users\\x"',
+      'UNC="\\\\server\\share"',
+      'TAB="a\\tb"',
+      'DOLLAR="a\\$b"',
+      'DOUBLE_BACKSLASH="a\\\\b"',
+      'CARRIAGE="a\\rb"',
+      'QUOTED="a\\"b"',
+      'UNKNOWN="a\\Ub"',
+    ].join("\n"),
+  );
+  expect(lookup(file, "WINDOWS_PATH")).toBe("C:\\Users\\x");
+  expect(lookup(file, "UNC")).toBe("\\\\server\\share");
+  expect(lookup(file, "TAB")).toBe("a\\tb");
+  expect(lookup(file, "DOLLAR")).toBe("a\\$b");
+  expect(lookup(file, "DOUBLE_BACKSLASH")).toBe("a\\\\b");
+  expect(lookup(file, "CARRIAGE")).toBe("a\\rb");
+  // The escaped quote does not close the value (bun agrees; node truncates).
+  expect(lookup(file, "QUOTED")).toBe('a\\"b');
+  expect(lookup(file, "UNKNOWN")).toBe("a\\Ub");
+});
+
+test("a rewritten value re-reads as itself, backslashes and all", () => {
+  for (const value of ["C:\\Users\\x", "a\\tb", "line1\nline2", "has spaces", "plain"]) {
+    const file = parseDotenv('A="old"\n');
+    setValue(file, "A", value);
+    expect(lookup(parseDotenv(serializeDotenv(file)), "A")).toBe(value);
+  }
 });
 
 test("entries keeps key order and every occurrence", () => {

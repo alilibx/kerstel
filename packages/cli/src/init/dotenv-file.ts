@@ -26,7 +26,7 @@ export interface DotenvPair {
   text: string;
   eol: string;
   key: string;
-  /** Decoded value: quotes stripped, double-quoted escapes expanded. */
+  /** Decoded value: quotes stripped, and `\n` expanded inside double quotes. */
   value: string;
   quote: Quote;
   /** Offsets into `text` of the value token, including its quotes. */
@@ -52,13 +52,29 @@ export interface DotenvFile {
 /** Group 1 is the whole prefix up to and including `=`, so offsets are exact. */
 const PAIR = /^((\s*)(export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=)(.*)$/;
 
+/**
+ * Decodes the escapes BOTH runtimes that may read this file decode, and not
+ * one more. Measured on 2026-09-18 (bun 1.3.10 auto-load and `--env-file`,
+ * node v24.19.0 `--env-file`), reading one key per escape:
+ *
+ *   escape | bun           | node --env-file
+ *   \n     | newline       | newline
+ *   \r     | carriage ret. | literal `\r`
+ *   \t     | literal `\t`  | literal `\t`
+ *   \$     | `$`           | literal `\$`
+ *   \"     | literal `\"`  | value ends at the quote
+ *   \\     | literal `\\`  | literal `\\`
+ *   \U, \x | literal       | literal
+ *
+ * Only `\n` is decoded by both, so only `\n` is decoded here. Dropping the
+ * backslash from anything else would store `C:\Users\x` as `C:Usersx` and
+ * `\\server\share` as `\server\share` -- a Windows path the app would then get
+ * back mangled, which is worse than leaving the escape alone.
+ */
 function decodeDoubleQuoted(body: string): string {
-  return body.replace(/\\(.)/g, (_match, char: string) => {
-    if (char === "n") return "\n";
-    if (char === "r") return "\r";
-    if (char === "t") return "\t";
-    return char;
-  });
+  // The pair form matters: it consumes `\\` as one unit, so the `n` in `\\n`
+  // is a plain letter and not a newline.
+  return body.replace(/\\(.)/g, (match, char: string) => (char === "n" ? "\n" : match));
 }
 
 /** Index of the closing quote, or -1 when the line ends first. */
@@ -246,20 +262,32 @@ export function lookup(file: DotenvFile, key: string): string | null {
   return found;
 }
 
+/**
+ * Characters a double-quoted value cannot spell now that a backslash means
+ * itself: `\` because `a\nb` would read back as a newline, `"` because the
+ * reader stops at it, `\r` because `\r` no longer decodes to one.
+ */
+const DOUBLE_HOSTILE = /["\\\r]/;
+/** Single quotes have no escapes at all, so only a line of literal bytes fits. */
+const SINGLE_HOSTILE = /['\n\r]/;
+
 function renderValue(value: string, quote: Quote): string {
-  if (quote === '"') {
+  if (quote === "'" || quote === '"') {
+    // The asked-for style first, then the other one, so a value keeps its
+    // quoting whenever that quoting can hold it.
+    if (quote === "'" && !SINGLE_HOSTILE.test(value)) return `'${value}'`;
+    if (!DOUBLE_HOSTILE.test(value)) return `"${value.replace(/\n/g, "\\n")}"`;
+    if (!SINGLE_HOSTILE.test(value)) return `'${value}'`;
+    // Neither style can hold it: a value carrying a single quote AND a
+    // backslash, double quote or carriage return. No dotenv spelling exists,
+    // so this escapes and accepts that the reader will see the backslashes.
+    // `init` never lands here -- it writes `kerstel://scope/KEY` references.
     const escaped = value
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
       .replace(/\r/g, "\\r")
       .replace(/\n/g, "\\n");
     return `"${escaped}"`;
-  }
-  if (quote === "'") {
-    // Single quotes have no escape mechanism, so a value containing one has to
-    // change style rather than produce a file that no longer parses.
-    if (!value.includes("'") && !value.includes("\n") && !value.includes("\r")) return `'${value}'`;
-    return renderValue(value, '"');
   }
   if (value === "") return "";
   if (/[\s#"'\\]/.test(value)) return renderValue(value, '"');
