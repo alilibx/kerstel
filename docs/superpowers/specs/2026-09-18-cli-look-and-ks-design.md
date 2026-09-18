@@ -27,7 +27,7 @@ Out of scope: changing `set`'s `scope/KEY` syntax, colour themes, localisation, 
 
 - `install.sh` installs `kerstel` as it does now, then creates `ks` in the same directory as a symlink to `kerstel`. One binary means an upgrade updates both names at once.
 - **Never replace someone else's `ks`.** Before linking, the installer checks `command -v ks`. If it finds a `ks` that is not a symlink to the installed `kerstel`, it skips the link and prints `ks is already taken by <path>, so use kerstel`. If `<install dir>/ks` is already a symlink to `kerstel`, a re-run refreshes it.
-- **Hints use the name you typed.** Every message that suggests a command (`Run ks doctor`) uses the invoked name: the basename of `process.argv[1]` when the process is the compiled binary and that name is `ks`, otherwise `kerstel`. One helper, `cliName()`, provides it.
+- **Hints use the name you typed.** Every message that suggests a command (`Run ks doctor`) uses the invoked name: the basename of `process.argv0` (which a compiled Bun binary sets to the name it was invoked as, symlink included) when it is `ks`, otherwise `kerstel`. One helper, `cliName()`, provides it.
 - **Scripts keep the full name.** `init` still writes `kerstel exec -- ` into `package.json`. Teammates and CI may not have the shortcut.
 - **`uninstall`** removes `<binary dir>/ks` when it is a symlink whose target is the binary being removed, and leaves anything else alone.
 - **Docs.** The README and Getting started use `ks` as the everyday command. The CLI reference keeps `kerstel` and says `ks` works everywhere it does.
@@ -138,14 +138,20 @@ The menus use these words everywhere, with these hints:
 
 ### 5.3 Why a suggestion was made
 
-`classify.ts` returns a reason with each suggestion, shown in one-by-one mode:
+`classify.ts` gains `explain(key, value)`, which walks the same branches as `suggest()` in the same order and returns the suggestion with a reason, shown in one-by-one mode. `suggest()` becomes `explain(...).suggestion`, so the two cannot disagree.
 
-| Rule | Reason |
+| Branch in `suggest()` | Reason |
 | --- | --- |
-| Known shared-service key (`GLOBAL_KEYS`) | You probably use this account in every project |
-| Name announces a credential (`SECRET_KEYS`) | The name says it's a secret |
-| Known config key (`PLAINTEXT_KEYS`) | A setting, not a credential |
-| Boolean, number, or URL without credentials | Looks like a setting, not a credential |
+| Empty value | It's empty, so there's nothing to protect |
+| Boolean or number | An on/off switch or a number, not a credential |
+| URL with `user:pass@` | The URL has a username and password in it |
+| URL with a credential in the query | The URL carries a key or token |
+| Known config name (`PLAINTEXT_KEYS`) | A setting, not a credential |
+| Credential name, known shared service (`GLOBAL_KEYS`) | You probably use this account in every project |
+| Credential name (`SECRET_KEYS`) | The name says it's a secret |
+| URL with no credentials | A plain URL with no credentials in it |
+| Short lowercase word | A short word, like a mode or a name |
+| Anything else, known shared service | You probably use this account in every project |
 | Anything else | Might be a secret, so it's safer in the vault |
 
 The rules themselves do not change.
