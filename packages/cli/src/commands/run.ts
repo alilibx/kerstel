@@ -1,6 +1,7 @@
 import { openContext } from "../context";
 import { fail } from "../output";
 import { parseReference } from "../reference";
+import { cliName } from "../ui/cli-name";
 
 /**
  * Universal fallback: resolves every reference in the current environment up
@@ -11,7 +12,7 @@ export async function runCommand(args: string[]): Promise<number> {
   const separator = args.indexOf("--");
   const command = separator === -1 ? args : args.slice(separator + 1);
   if (command.length === 0) {
-    fail("Usage: kerstel run -- <command> [args...]");
+    fail(`Usage: ${cliName()} run -- <command> [args...]`);
     return 2;
   }
 

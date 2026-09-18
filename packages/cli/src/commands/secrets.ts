@@ -36,7 +36,7 @@ function valueFlag(args: string[]): { present: boolean; value: string | undefine
 export async function setCommand(args: string[]): Promise<number> {
   const target = args[0];
   if (!target) {
-    fail("Usage: kerstel set <scope>/<KEY>   (pipe the secret on stdin)");
+    fail(`Usage: ${cliName()} set <scope>/<KEY>   (pipe the secret on stdin)`);
     return 2;
   }
 
@@ -55,15 +55,14 @@ export async function setCommand(args: string[]): Promise<number> {
     // non-interactive scripting needs it.
     console.error(
       "warning: --value puts the secret in your shell history and in `ps` output. " +
-        "Pipe it on stdin instead: printf %s \"$SECRET\" | kerstel set " +
-        `${ref.scope}/${ref.key}`,
+        `Pipe it on stdin instead: printf %s "$SECRET" | ${cliName()} set ${ref.scope}/${ref.key}`,
     );
     value = flag.value;
   } else if (process.stdin.isTTY === true) {
     // Reading stdin from a terminal blocks forever with no output, which looks
     // exactly like a hang. Say what to do instead.
     fail(
-      `No value supplied. Pipe the secret on stdin, e.g. printf %s "$SECRET" | kerstel set ${ref.scope}/${ref.key}`,
+      `No value supplied. Pipe the secret on stdin, e.g. printf %s "$SECRET" | ${cliName()} set ${ref.scope}/${ref.key}`,
     );
     return 2;
   } else {
@@ -102,7 +101,7 @@ export async function setCommand(args: string[]): Promise<number> {
 export async function getCommand(args: string[]): Promise<number> {
   const target = args[0];
   if (!target) {
-    fail("Usage: kerstel get <scope>/<KEY> [--reveal]");
+    fail(`Usage: ${cliName()} get <scope>/<KEY> [--reveal]`);
     return 2;
   }
 
@@ -167,7 +166,7 @@ export async function lsCommand(args: string[]): Promise<number> {
 export async function rmCommand(args: string[]): Promise<number> {
   const target = args[0];
   if (!target) {
-    fail("Usage: kerstel rm <scope>/<KEY> --yes");
+    fail(`Usage: ${cliName()} rm <scope>/<KEY> --yes`);
     return 2;
   }
 
@@ -211,7 +210,7 @@ export async function resolveCommand(args: string[]): Promise<number> {
   const target = args[0];
   const ref = target ? parseTarget(target) : null;
   if (!ref) {
-    fail("Usage: kerstel resolve kerstel://<scope>/<KEY>");
+    fail(`Usage: ${cliName()} resolve kerstel://<scope>/<KEY>`);
     return 2;
   }
 

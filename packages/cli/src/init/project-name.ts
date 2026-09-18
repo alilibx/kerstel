@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { isValidScope } from "../reference";
+import { cliName } from "../ui/cli-name";
 
 const MAX_SCOPE_CHARS = 64;
 
@@ -56,6 +57,6 @@ export function deriveScope(options: { packageName: string | null; rootPath: str
 
   throw new Error(
     `Kerstel could not derive a project name from "${options.packageName ?? ""}" or the directory ` +
-      `"${options.rootPath}". Pass one explicitly: kerstel init --scope <name>`,
+      `"${options.rootPath}". Pass one explicitly: ${cliName()} init --scope <name>`,
   );
 }

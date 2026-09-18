@@ -92,7 +92,7 @@ export async function execCommand(args: string[]): Promise<number> {
   const separator = args.indexOf("--");
   const command = separator === -1 ? args : args.slice(separator + 1);
   if (command.length === 0) {
-    fail("Usage: kerstel exec -- <command> [args...]");
+    fail(`Usage: ${cliName()} exec -- <command> [args...]`);
     return 2;
   }
 

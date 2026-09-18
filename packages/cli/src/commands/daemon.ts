@@ -146,6 +146,6 @@ export async function daemonCommand(args: string[]): Promise<number> {
   if (sub === "stop") return stopCommand();
   if (sub === "status") return statusCommand();
 
-  fail("Usage: kerstel daemon <serve|start|stop|status>");
+  fail(`Usage: ${cliName()} daemon <serve|start|stop|status>`);
   return 2;
 }
