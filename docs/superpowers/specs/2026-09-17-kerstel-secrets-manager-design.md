@@ -85,7 +85,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 
 ### 6.2 Wiring (owned by the wizard, never by the user's fingers)
 
-- **Bun projects:** `preload` entry in `bunfig.toml`.
+- **Bun projects:** wired through `kerstel exec`, which passes `--preload <hook>` on the `bun` command line because Bun ignores `NODE_OPTIONS`.
 - **Node projects:** the wizard rewrites `package.json` scripts to inject the preload (approach: prefix scripts through a `kerstel exec` shim that sets `NODE_OPTIONS=--require <hook>` and execs the original command verbatim). The user approves the diff.
 - **Universal fallback:** `kerstel run -- <cmd>` resolves all references up front and injects plaintext into the child env — for anything outside package scripts (IDE runners, other languages).
 
@@ -113,11 +113,13 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 1. Detect runtime + package manager (npm/pnpm/yarn/bun).
 2. Parse `.env`, `.env.local` (and variants). Show findings. Per key: → project scope / → existing or new global key / leave plaintext (fine for non-secret URLs).
 3. Encrypted backup of originals to `~/.kerstel/backups/<project>/<ts>/`, then rewrite files with references.
-4. Wire the hook (§6.2); show the `package.json` / `bunfig.toml` diff for approval.
+4. Wire the hook (§6.2); show the `package.json` diff for approval.
 5. Offer `.gitignore` update (making committing `.env` possible — user's call).
 6. Run a self-check: spawn a probe process through the wired scripts, confirm resolution works.
 
-**Teammate flow:** clone → `kerstel init` reads committed references, lists keys the local vault lacks, prompts for values. References double as a living `.env.example`.
+When one key appears in several files with different values, `init` stores the highest-precedence one (`.env.<x>.local` > `.env.local` > `.env.<x>` > `.env`), rewrites every occurrence to that single reference, keeps the losing values only in the encrypted backup, and names the affected files — v1 has no environments, so one key resolves to exactly one value.
+
+**Teammate flow:** clone → `kerstel init` reads committed references, lists keys the local vault lacks, prompts for values. References double as a living `.env.example`. Each value is stored in the vault as it is entered, before the apply confirmation — the confirmation governs the writes to the project's own files, and a value supplied for a reference the repository already carries needs no further approval.
 
 Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plaintext), `ui`, `run`, `doctor` (wiring + daemon + keychain diagnostics), `daemon start|stop|status`, `uninstall` (restores plaintext `.env` from vault before removing itself, with confirmation).
 

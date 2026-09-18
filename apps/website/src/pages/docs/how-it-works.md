@@ -42,21 +42,21 @@ kerstel run -- next build
 
 The hook is a small, dependency-free preload that runs before your app code. It replaces `process.env` with a proxy. When code reads a key whose value starts with `kerstel://`, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun's native `.env` loader, Next.js env loading, or your shell.
 
-No command wires this up for you today; you add it by hand. Kerstel writes the hook's files to `~/.kerstel/hook` the first time any `kerstel` command runs, and the file to point at is `~/.kerstel/hook/preload.cjs`.
+`kerstel init` wires this up for you. Every script in `package.json` becomes `kerstel exec -- <your original command>` — npm lifecycle scripts such as `postinstall` and `prepare` are never wrapped, because that would make `npm install` itself depend on Kerstel . A Bun project is wired the same way: `kerstel exec` passes `--preload` to `bun` itself, so nothing per-machine is written into the project. Kerstel writes the hook's files to `~/.kerstel/hook` the first time any `kerstel` command runs, and the file everything points at is `~/.kerstel/hook/preload.cjs`.
 
-For a Bun project, add it to `preload` in `bunfig.toml`:
+### What `kerstel exec` does
 
-```toml
-preload = ["/Users/you/.kerstel/hook/preload.cjs"]
-```
+`kerstel exec -- <command>` is the whole wrapper, and it resolves nothing itself. It sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN` and `KERSTEL_HOOK_DIR` for the child, appends `--require <the hook>` to `NODE_OPTIONS`, and starts the command. When the command it is about to run is `bun` or `bunx`, it also inserts `--preload=<the hook>` directly after the executable, because Bun does not honour `NODE_OPTIONS=--require`. Then the hook takes over and resolves each reference lazily, on the read.
 
-`bunfig.toml` does not expand `~`, so write the full path (on Linux it is under `/home/you`).
+### Wiring it by hand
 
-For a Node project, set `NODE_OPTIONS` for the scripts that need it:
+A project with no `package.json` scripts to wrap runs its command through the wrapper directly:
 
 ```bash
-NODE_OPTIONS="--require ~/.kerstel/hook/preload.cjs" npm run dev
+kerstel exec -- <your command>
 ```
+
+That is the same wiring `init` writes into a script, and it works for Node and Bun alike. The hook only activates when `KERSTEL_SOCKET` and `KERSTEL_TOKEN` are in the environment, and `kerstel exec` is what sets them — preloading the hook by hand, through `bunfig.toml` or `NODE_OPTIONS`, resolves nothing on its own. For a command the hook cannot reach at all, such as an IDE run configuration, `kerstel run -- <your command>` resolves every reference up front and passes plaintext values to the child.
 
 Child processes are covered: the hook injects itself into the environment it exposes, so a `node` or `bun` child resolves its own references. Variables handed to any child are handed already resolved. A child that is not Node or Bun, such as `python` or `git`, could not resolve a reference anyway.
 

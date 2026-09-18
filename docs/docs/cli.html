@@ -29,7 +29,62 @@
 <nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/cli" aria-current="page">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li></ul></nav>
 <main class="wrap">
 <h1>CLI reference</h1>
-<p class="lede">All commands take a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p><h2>Secrets</h2>
+<p class="lede">Every command that names a secret takes a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p><h2>Setting up a project</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel init [--yes] [--dry-run]</code></td>
+<td>Migrate this project&#39;s <code>.env</code> files: store each value in the vault, rewrite the files with references, and wire the runtime hook into your scripts. Run it from the project root; it needs a readable <code>package.json</code>.</td>
+</tr>
+<tr>
+<td><code>kerstel exec -- &lt;command&gt;</code></td>
+<td>Run one command with the runtime hook wired in. It resolves nothing itself: it sets <code>KERSTEL_SOCKET</code>, <code>KERSTEL_TOKEN</code> and <code>KERSTEL_HOOK_DIR</code>, appends <code>--require &lt;the hook&gt;</code> to <code>NODE_OPTIONS</code>, and adds <code>--preload=&lt;the hook&gt;</code> for a <code>bun</code> or <code>bunx</code> command, which <code>NODE_OPTIONS</code> does not reach. This is what <code>init</code> writes into your scripts.</td>
+</tr>
+</tbody></table>
+</div><h3><code>kerstel init</code> flags</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--dry-run</code></td>
+<td>Prints the plan and every diff, then stops before the first write. Nothing reaches your project or your vault.</td>
+</tr>
+<tr>
+<td><code>--yes</code></td>
+<td>Takes every suggestion and every default, asking nothing.</td>
+</tr>
+<tr>
+<td><code>--scope &lt;name&gt;</code></td>
+<td>Use this scope instead of the one derived from your <code>package.json</code> name. Lowercase letters, digits, <code>.</code>, <code>_</code> and <code>-</code>.</td>
+</tr>
+<tr>
+<td><code>--global KEY[,KEY]</code></td>
+<td>Put those keys in the <code>global</code> scope without asking.</td>
+</tr>
+<tr>
+<td><code>--keep KEY[,KEY]</code></td>
+<td>Leave those keys as plaintext without asking.</td>
+</tr>
+<tr>
+<td><code>--non-interactive</code></td>
+<td>Never asks. Applies the suggested plan like <code>--yes</code>, and on any question no flag can answer — a value this machine is missing, for instance — exits <code>2</code> naming the flag that would have supplied it.</td>
+</tr>
+<tr>
+<td><code>--from-stdin</code></td>
+<td>Reads <code>{&quot;KEY&quot;: &quot;value&quot;}</code> JSON from stdin for references whose values this vault does not have yet. Pair it with <code>--non-interactive</code> in a script.</td>
+</tr>
+</tbody></table>
+</div><p>When the same key appears in several files, the highest-precedence one is stored: <code>.env.&lt;x&gt;.local</code>, then <code>.env.local</code>, then <code>.env.&lt;x&gt;</code>, then <code>.env</code>. Every occurrence points at that single reference.</p>
+<h2>Secrets</h2>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -67,6 +122,10 @@
 <td>Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook.</td>
 </tr>
 <tr>
+<td><code>kerstel exec -- &lt;command&gt;</code></td>
+<td>Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read. See above.</td>
+</tr>
+<tr>
 <td><code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code></td>
 <td>Print one resolved value. Useful in scripts.</td>
 </tr>
@@ -97,7 +156,7 @@
 </tr>
 <tr>
 <td><code>kerstel doctor</code></td>
-<td>Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running.</td>
+<td>Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. Run inside a project with a <code>package.json</code>, it adds a <strong>Project</strong> section: the project root, its scope, the runtime and package manager, how many of the wrappable scripts are wired through <code>kerstel exec</code>, how many of the references in your <code>.env*</code> files this vault can resolve, and any env file it could not read.</td>
 </tr>
 </tbody></table>
 </div><h2>Environment variables</h2>

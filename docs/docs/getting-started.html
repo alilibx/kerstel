@@ -53,13 +53,30 @@ OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 <pre><code class="language-bash">set -a; . ./.env; set +a
 kerstel run -- npm run dev
 </code></pre>
-<p>Projects wired with the runtime hook skip both steps: the hook resolves <code>kerstel://</code> references wherever they come from, including a <code>.env</code> loader, so your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <a href="/docs/how-it-works">How resolution works</a> covers how to wire a project for the hook.</p>
+<p>Projects wired with the runtime hook skip both steps: the hook resolves <code>kerstel://</code> references wherever they come from, including a <code>.env</code> loader, so your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <code>kerstel init</code> does that wiring for you, once, and <a href="/docs/how-it-works">how resolution works</a> covers what it writes.</p>
 <h2>5. Check the setup</h2>
 <pre><code class="language-bash">kerstel doctor
 </code></pre>
-<p><code>doctor</code> prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under <code>~/.kerstel</code>, and whether the daemon is running.</p>
-<h2>What about a whole project at once?</h2>
-<p><code>kerstel init</code> will do all of this for a whole project at once, moving every <code>.env</code> value into the vault and rewriting the files with references; it is in progress, so until it lands the steps above are the manual path.</p>
+<p><code>doctor</code> prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under <code>~/.kerstel</code>, and whether the daemon is running. Run inside a project with a <code>package.json</code> and it adds a <strong>Project</strong> section covering the wiring: see the <a href="/docs/cli">CLI reference</a> for what that section reports.</p>
+<h2>Set up a project</h2>
+<p>Everything above, for a whole project, in one command:</p>
+<pre><code class="language-bash">cd my-app
+kerstel init
+</code></pre>
+<p>Run it from the project root — it needs a readable <code>package.json</code>, because it wires your scripts. It detects your runtime and package manager from your lockfile, derives the project&#39;s scope from the <code>package.json</code> name, and reads every <code>.env</code> / <code>.env.*</code> file in the root (templates like <code>.env.example</code> are skipped).</p>
+<p>You are asked three kinds of question, and no more:</p>
+<ol>
+<li><strong>One choice per key</strong>, before any plan is drawn: store the value in this <strong>project</strong>&#39;s scope, point it at a <strong>global</strong> key shared across all your projects, or leave it as <strong>plaintext</strong>. Kerstel suggests one; you decide. Key names, value sizes and value shapes are printed — never the values.</li>
+<li><strong>One confirmation</strong>, under the full plan and a line-for-line diff of every file it means to change, covering all of it at once: the backup, the vault entries, the <code>.env</code> rewrites, and the wiring. Values are masked in that diff too.</li>
+<li><strong>One question about <code>.gitignore</code></strong>, afterwards, defaulting to <strong>no</strong>: if <code>.gitignore</code> currently hides your env files, Kerstel offers to remove those lines and leave a note instead, so the now reference-only files can be committed. It re-reads the rewritten files first and names any key that still holds a plaintext value rather than calling the files safe.</li>
+</ol>
+<p>Before its first write it puts your original files, encrypted with your vault key, in <code>~/.kerstel/backups/&lt;scope&gt;/&lt;timestamp&gt;/</code>. Then it rewrites the values, wires every <code>package.json</code> script as <code>kerstel exec -- &lt;your original command&gt;</code>, and finishes by running a probe through the wiring to prove a reference resolves.</p>
+<p>To see all of that without writing anything, add <code>--dry-run</code>: it prints every diff and stops before the first write.</p>
+<pre><code class="language-bash">kerstel init --dry-run
+</code></pre>
+<p><code>init</code> is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed.</p>
+<p>If the same key appears in more than one file with different values, the highest-precedence file wins: <code>.env.&lt;x&gt;.local</code>, then <code>.env.local</code>, then <code>.env.&lt;x&gt;</code>, then <code>.env</code>. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.</p>
+<p>Afterwards, <code>npm run dev</code> is still <code>npm run dev</code>. Run <code>kerstel doctor</code> in the project to confirm the wiring.</p>
 
 </main>
 <footer class="site-footer">

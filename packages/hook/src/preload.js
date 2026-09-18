@@ -5,7 +5,7 @@ const { createBridge } = require("./bridge.js");
 const { locateHook } = require("./locate.js");
 const { parseReference } = require("./protocol.js");
 
-// Guard against double installation (for example --require plus a bunfig preload).
+// Guard against double installation (for example NODE_OPTIONS=--require plus bun's --preload).
 if (!process.env.KERSTEL_ACTIVE) {
   install();
 }

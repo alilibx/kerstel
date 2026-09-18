@@ -6,7 +6,28 @@ order: 2
 ---
 # CLI reference
 
-<p class="lede">All commands take a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p>
+<p class="lede">Every command that names a secret takes a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p>
+
+## Setting up a project
+
+| Command | What it does |
+| --- | --- |
+| `kerstel init [--yes] [--dry-run]` | Migrate this project's `.env` files: store each value in the vault, rewrite the files with references, and wire the runtime hook into your scripts. Run it from the project root; it needs a readable `package.json`. |
+| `kerstel exec -- <command>` | Run one command with the runtime hook wired in. It resolves nothing itself: it sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN` and `KERSTEL_HOOK_DIR`, appends `--require <the hook>` to `NODE_OPTIONS`, and adds `--preload=<the hook>` for a `bun` or `bunx` command, which `NODE_OPTIONS` does not reach. This is what `init` writes into your scripts. |
+
+### `kerstel init` flags
+
+| Flag | What it does |
+| --- | --- |
+| `--dry-run` | Prints the plan and every diff, then stops before the first write. Nothing reaches your project or your vault. |
+| `--yes` | Takes every suggestion and every default, asking nothing. |
+| `--scope <name>` | Use this scope instead of the one derived from your `package.json` name. Lowercase letters, digits, `.`, `_` and `-`. |
+| `--global KEY[,KEY]` | Put those keys in the `global` scope without asking. |
+| `--keep KEY[,KEY]` | Leave those keys as plaintext without asking. |
+| `--non-interactive` | Never asks. Applies the suggested plan like `--yes`, and on any question no flag can answer — a value this machine is missing, for instance — exits `2` naming the flag that would have supplied it. |
+| `--from-stdin` | Reads `{"KEY": "value"}` JSON from stdin for references whose values this vault does not have yet. Pair it with `--non-interactive` in a script. |
+
+When the same key appears in several files, the highest-precedence one is stored: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence points at that single reference.
 
 ## Secrets
 
@@ -22,6 +43,7 @@ order: 2
 | Command | What it does |
 | --- | --- |
 | `kerstel run -- <command>` | Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook. |
+| `kerstel exec -- <command>` | Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read. See above. |
 | `kerstel resolve kerstel://<scope>/<KEY>` | Print one resolved value. Useful in scripts. |
 
 ## Daemon and diagnostics
@@ -32,7 +54,7 @@ order: 2
 | `kerstel daemon stop` | Stop it. |
 | `kerstel daemon status` | Report whether it is running and where its socket is. |
 | `kerstel daemon serve` | Run the daemon in the foreground. Used by `start`; handy for debugging. |
-| `kerstel doctor` | Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. |
+| `kerstel doctor` | Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. Run inside a project with a `package.json`, it adds a **Project** section: the project root, its scope, the runtime and package manager, how many of the wrappable scripts are wired through `kerstel exec`, how many of the references in your `.env*` files this vault can resolve, and any env file it could not read. |
 
 ## Environment variables
 
