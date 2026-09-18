@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { lookup, parseDotenv, restoreLineValue, serializeDotenv, setValue } from "../src/init/dotenv-file";
 import { hasLoss, planUninstall } from "../src/uninstall/plan";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
@@ -133,4 +134,57 @@ test("duplicate keys on reference and plaintext lines preserve the plaintext", a
   const env = plan.files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe("API_KEY=restored-value\nAPI_KEY=local-plaintext-value\n");
   expect(hasLoss(plan)).toBe(false);
+});
+
+// Each line as a developer wrote it. init rewrites it to a reference with
+// setValue; uninstall must put back these exact bytes, not a re-quoted copy.
+const QUOTING_CASES = [
+  'B="with \\"escape\\""',
+  'E=a"b',
+  'H="tab\\there"',
+  "I=back\\slash",
+];
+
+test.each(QUOTING_CASES)("restoring %s keeps its original quoting byte for byte", (line) => {
+  const original = `# c\r\nexport ${line} # note\r\n`;
+  const parsed = parseDotenv(original);
+  const key = parsed.lines[1]!.kind === "pair" ? parsed.lines[1]!.key : "";
+  const value = lookup(parsed, key)!;
+
+  // init-style rewrite
+  const wired = parseDotenv(original);
+  setValue(wired, key, `kerstel://demo-app/${key}`);
+  const wiredText = serializeDotenv(wired);
+  expect(wiredText).not.toContain(value);
+
+  // uninstall-style restore
+  const restored = parseDotenv(wiredText);
+  restoreLineValue(restored, 1, value);
+  expect(serializeDotenv(restored)).toBe(original);
+});
+
+test("restoreLineValue falls back to a quoting that holds the value", () => {
+  const file = parseDotenv("A=kerstel://demo-app/A # note\n");
+  restoreLineValue(file, 0, "has space #hash");
+  const text = serializeDotenv(file);
+  expect(text).toBe('A="has space #hash" # note\n');
+  expect(lookup(parseDotenv(text), "A")).toBe("has space #hash");
+});
+
+test("the plan restores values in their original quoting", async () => {
+  const v = await freshVault();
+  const originals = parseDotenv(QUOTING_CASES.join("\n") + "\n");
+  let wiredEnv = QUOTING_CASES.join("\n") + "\n";
+  const wired = parseDotenv(wiredEnv);
+  for (const pair of originals.lines) {
+    if (pair.kind !== "pair") continue;
+    v.setSecret({ scope: "demo-app", key: pair.key }, pair.value);
+    setValue(wired, pair.key, `kerstel://demo-app/${pair.key}`);
+  }
+  wiredEnv = serializeDotenv(wired);
+  const root = project({ "package.json": WIRED, ".env": wiredEnv });
+  v.registerProject("demo-app", root);
+
+  const env = planUninstall(v).files.find((f) => f.path === join(root, ".env"))!;
+  expect(env.after).toBe(QUOTING_CASES.join("\n") + "\n");
 });

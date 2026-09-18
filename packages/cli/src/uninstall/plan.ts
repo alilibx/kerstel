@@ -3,8 +3,7 @@ import { join } from "node:path";
 import { loadEnvFiles } from "../init/collect";
 import { detectProject } from "../init/detect";
 import { maskForDisplay } from "../init/display";
-import { parseDotenv, serializeDotenv, setLineValue } from "../init/dotenv-file";
-import type { DotenvPair } from "../init/dotenv-file";
+import { parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
 import { formatReference, parseReference } from "../reference";
 import type { Vault } from "../vault/store";
 import { restoreGitignore, unwirePackageJson } from "./unwire";
@@ -87,7 +86,7 @@ export function planUninstall(vault: Vault): UninstallPlan {
           continue;
         }
         used.add(reference);
-        setLineValue(copy, i, value);
+        restoreLineValue(copy, i, value);
       }
       const after = serializeDotenv(copy);
       if (after === loaded.original) continue;

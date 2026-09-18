@@ -319,6 +319,44 @@ export function setLineValue(file: DotenvFile, index: number, value: string): vo
 }
 
 /**
+ * `uninstall`'s inverse of `init`'s rewrite: puts a plaintext value back on a
+ * line that holds a reference, keeping the line's ORIGINAL spelling.
+ *
+ * `setLineValue` re-renders through `renderValue`, which is right for `init`
+ * (it writes references, which fit any quoting) but wrong for a restore:
+ * `B="with \"escape\""` would come back as `B='with \"escape\"'`, and `E=a"b`
+ * as `E='a"b'`. Both read back the same, but the file is no longer the one the
+ * developer wrote. So the line's own quote style is tried verbatim first --
+ * `quote + value + quote`, or the raw value when unquoted -- and kept whenever
+ * the parser reads that line back to the same value. Only a value its original
+ * quoting cannot hold falls back to `renderValue`.
+ */
+export function restoreLineValue(file: DotenvFile, index: number, value: string): void {
+  const line = file.lines[index];
+  if (!line || line.kind !== "pair") {
+    throw new Error(`Cannot rewrite value at line ${index}: line is not a pair`);
+  }
+
+  const verbatim = `${line.quote}${value}${line.quote}`;
+  const text = line.text.slice(0, line.valueStart) + verbatim + line.text.slice(line.valueEnd);
+  const reread = parseDotenv(text);
+  const pair = reread.lines[0];
+  if (
+    reread.lines.length === 1 &&
+    reread.unsupported.length === 0 &&
+    pair?.kind === "pair" &&
+    pair.key === line.key &&
+    pair.value === value &&
+    pair.valueStart === line.valueStart &&
+    pair.valueEnd === line.valueStart + verbatim.length
+  ) {
+    file.lines[index] = { ...pair, eol: line.eol };
+    return;
+  }
+  setLineValue(file, index, value);
+}
+
+/**
  * Replaces the value of EVERY assignment of `key` and returns how many were
  * rewritten. Every occurrence, not just the effective one: a key assigned
  * twice in one file would otherwise keep plaintext on the losing line, which
