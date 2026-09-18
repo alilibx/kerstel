@@ -24,7 +24,7 @@ Values live in `~/.kerstel/vault.db`, encrypted per value with AES-256-GCM. The 
 
 ## The daemon
 
-A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (`~/.kerstel/kerstel.sock`, or a named pipe on Windows). Each request carries a session token, so only processes running as you can ask. The daemon records an audit row for each resolution.
+A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (`~/.kerstel/kerstel.sock`). Each request carries a session token, so only processes running as you can ask. The daemon records an audit row for each resolution.
 
 `kerstel run` never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need a running daemon, and if none answers it tells you to run `kerstel daemon start`. Only `kerstel resolve` starts the daemon on demand, on first use. `kerstel daemon status` shows whether it is up at any time.
 

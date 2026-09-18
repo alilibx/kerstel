@@ -33,7 +33,7 @@ Your `.env` file then holds a reference instead of the value:
 OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 ```
 
-A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
+A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
 
 ## Usage
 
