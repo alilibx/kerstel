@@ -7,6 +7,14 @@ function keyFile(): string {
   return join(kerstelHome(), "vault.key");
 }
 
+function alreadyStored(): Error {
+  return new Error(
+    "A Kerstel vault key is already stored at this location. Refusing to " +
+      "replace it: the stored key is the only copy, and overwriting it would make " +
+      "every secret in the vault permanently unreadable.",
+  );
+}
+
 /**
  * Last-resort backend: the data key sits in a 0600 file inside the 0700 home.
  * Weaker than an OS credential store, so callers warn when this is selected
@@ -34,15 +42,26 @@ export const fileBackend: KeychainBackend = {
   },
 
   async set(key: Buffer, options: SetOptions = {}): Promise<void> {
-    if (!options.rotate && existsSync(keyFile())) {
-      throw new Error(
-        "A Kerstel vault key is already stored at this location. Refusing to " +
-          "replace it: the stored key is the only copy, and overwriting it would make " +
-          "every secret in the vault permanently unreadable.",
-      );
-    }
+    // The pre-check is kept only for the friendlier message. It cannot be what
+    // enforces the rule: between this existsSync and the write below, another
+    // Kerstel process racing the same first run can create the key file, and
+    // this one would then overwrite the only copy of it -- the exact outcome
+    // the refusal exists to prevent. The "wx" flag below is the enforcement:
+    // O_EXCL makes "create only if absent" one atomic step in the kernel.
+    if (!options.rotate && existsSync(keyFile())) throw alreadyStored();
     ensureHome();
-    writeFileSync(keyFile(), key.toString("base64"), { encoding: "utf8", mode: 0o600 });
+    try {
+      writeFileSync(keyFile(), key.toString("base64"), {
+        flag: options.rotate ? "w" : "wx",
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    } catch (error) {
+      // Lost the race: someone created the file after our pre-check. Same
+      // refusal, reached atomically.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw alreadyStored();
+      throw error;
+    }
   },
 
   async delete(): Promise<void> {

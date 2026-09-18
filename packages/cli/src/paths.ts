@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -43,5 +43,15 @@ export function socketPath(): string {
 export function ensureHome(): string {
   const home = kerstelHome();
   mkdirSync(home, { recursive: true, mode: 0o700 });
+  // Mode 0700 is asserted on every call, not only on creation -- the same
+  // rule store.ts applies to the vault file, for the same reason. mkdirSync's
+  // `mode` applies only when it creates the directory, and it is masked by the
+  // umask even then, so a home that already exists keeps whatever mode it has:
+  // 0755 from a permissive umask, or from a user who made ~/.kerstel by hand.
+  // Every protection Kerstel claims rests on this directory being private (the
+  // token, the socket and the file-backend key are all "0600 inside a 0700
+  // home"), so re-assert it rather than trusting the one call that created it.
+  // Do not gate this behind an "isNew" check.
+  if (process.platform !== "win32") chmodSync(home, 0o700);
   return home;
 }

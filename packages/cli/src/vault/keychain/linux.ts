@@ -39,8 +39,20 @@ export const linuxBackend: KeychainBackend = {
   },
 
   async set(key: Buffer, options: SetOptions = {}): Promise<void> {
-    // `secret-tool store` overwrites a matching item silently, so the refusal
-    // has to be an explicit pre-check rather than a failure we can catch.
+    // UNCLOSEABLE RACE, documented rather than papered over.
+    //
+    // `secret-tool store` overwrites a matching item silently and offers no
+    // create-if-absent mode, so unlike file.ts and windows.ts -- which get
+    // atomicity from O_EXCL via the "wx" flag -- there is no single operation
+    // here that both checks and writes. A concurrent Kerstel racing this one
+    // can still have its key replaced. Closing it properly needs the
+    // libsecret API (SECRET_SCHEMA + a create-only call), which means a native
+    // module, which the single-self-contained-binary constraint rules out.
+    //
+    // What is done instead: the window is narrowed to the gap between the
+    // check immediately below and the store on the next line, rather than
+    // spanning the caller's own decision-making. Best effort, and honest about
+    // being only that.
     if (!options.rotate && (await this.exists())) {
       throw new Error(
         "A Kerstel vault key is already stored in the Secret Service. Refusing to " +

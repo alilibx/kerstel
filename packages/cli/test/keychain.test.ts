@@ -6,16 +6,12 @@ import { join } from "node:path";
 import { openContext } from "../src/context";
 import { generateDataKey } from "../src/vault/crypto";
 import {
-  META_KEYCHAIN_BACKEND,
-  META_KEY_CHECK,
-  readVaultMeta,
-} from "../src/vault/meta";
-import {
   loadOrCreateDataKey,
   selectBackend,
   serviceName,
   type KeychainBackend,
 } from "../src/vault/keychain";
+import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, readVaultMeta } from "../src/vault/meta";
 
 const originalHome = process.env.KERSTEL_HOME;
 const originalBackend = process.env.KERSTEL_KEYCHAIN_BACKEND;
@@ -341,4 +337,32 @@ test("an existing vault with secrets refuses a newly minted key", async () => {
   rmSync(join(dir, "vault.key"));
 
   await expect(openContext()).rejects.toThrow(/will not create a second key/);
+});
+
+// --- exclusive create, not check-then-write (Finding 5) --------------------
+
+test("the file backend refuses an overwrite even when the pre-check is bypassed", async () => {
+  const dir = isolate();
+  const backend = await selectBackend();
+
+  // Write the key file directly, standing in for a concurrent process that
+  // created it in the window between set()'s existsSync and its write. The
+  // pre-check cannot see this; only the O_EXCL on the write can.
+  const original = Buffer.alloc(32, 9);
+  writeFileSync(join(dir, "vault.key"), original.toString("base64"), { mode: 0o600 });
+
+  await expect(backend.set(Buffer.alloc(32, 1))).rejects.toThrow(/Refusing to/);
+
+  // The decisive assertion: the original key is still the one on disk.
+  expect((await backend.get())?.equals(original)).toBe(true);
+});
+
+test("an explicit rotate is still allowed to replace the key", async () => {
+  isolate();
+  const backend = await selectBackend();
+  await backend.set(Buffer.alloc(32, 3));
+
+  const rotated = Buffer.alloc(32, 4);
+  await backend.set(rotated, { rotate: true });
+  expect((await backend.get())?.equals(rotated)).toBe(true);
 });

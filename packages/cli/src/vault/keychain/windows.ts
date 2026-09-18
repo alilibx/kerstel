@@ -14,6 +14,14 @@ function blobFile(): string {
   return join(kerstelHome(), "vault.key.dpapi");
 }
 
+function alreadyStored(): Error {
+  return new Error(
+    "A Kerstel vault key is already stored for this Windows user. Refusing to " +
+      "replace it: the stored key is the only copy, and overwriting it would make " +
+      "every secret in the vault permanently unreadable.",
+  );
+}
+
 async function powershell(
   script: string,
   stdin?: string,
@@ -60,13 +68,11 @@ export const windowsBackend: KeychainBackend = {
   },
 
   async set(key: Buffer, options: SetOptions = {}): Promise<void> {
-    if (!options.rotate && existsSync(blobFile())) {
-      throw new Error(
-        "A Kerstel vault key is already stored for this Windows user. Refusing to " +
-          "replace it: the stored key is the only copy, and overwriting it would make " +
-          "every secret in the vault permanently unreadable.",
-      );
-    }
+    // Kept for the friendlier early message only; the "wx" flag on the write
+    // below is what actually enforces the refusal. See file.ts -- between this
+    // check and the write, a racing process can create the blob, and the
+    // sealed key here would replace the only copy of theirs.
+    if (!options.rotate && existsSync(blobFile())) throw alreadyStored();
     ensureHome();
     // Same stdin-only rule as get(): the raw data key is piped in via stdin
     // and read with [Console]::In.ReadToEnd(), so it never appears as a
@@ -81,7 +87,16 @@ export const windowsBackend: KeychainBackend = {
       `${key.toString("base64")}\n`,
     );
     if (res.code !== 0) throw new Error(`DPAPI seal failed: ${res.stderr.trim()}`);
-    writeFileSync(blobFile(), res.stdout.trim(), { encoding: "utf8", mode: 0o600 });
+    try {
+      writeFileSync(blobFile(), res.stdout.trim(), {
+        flag: options.rotate ? "w" : "wx",
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw alreadyStored();
+      throw error;
+    }
   },
 
   async delete(): Promise<void> {

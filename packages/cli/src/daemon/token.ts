@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { ensureHome, tokenPath } from "../paths";
 
 export function createToken(): string {
@@ -9,6 +9,13 @@ export function createToken(): string {
 export function readToken(): string | null {
   const file = tokenPath();
   if (!existsSync(file)) return null;
+  // Re-asserted on every read, not only at write time. This token IS the
+  // access boundary -- anyone who can read it can ask the daemon for every
+  // secret in the vault -- and writeFileSync's `mode` applies only when it
+  // creates the file. A token written by an older build, restored from a
+  // backup, or copied with `cp` keeps whatever mode it arrived with, and
+  // nothing else would ever notice.
+  if (process.platform !== "win32") chmodSync(file, 0o600);
   const token = readFileSync(file, "utf8").trim();
   return token.length > 0 ? token : null;
 }

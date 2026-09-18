@@ -82,16 +82,3 @@ export function installHookAssets(): HookInstallResult {
 
   return { dir, installed: true };
 }
-
-/** True when both hook files are present and match what this binary carries. */
-export function hookAssetsInstalled(): boolean {
-  const dir = hookDir();
-  for (const [name, source] of ASSETS) {
-    try {
-      if (!readFileSync(join(dir, name)).equals(readFileSync(source))) return false;
-    } catch {
-      return false;
-    }
-  }
-  return true;
-}
