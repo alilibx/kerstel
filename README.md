@@ -33,24 +33,36 @@ Your `.env` file then holds a reference instead of the value:
 OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 ```
 
-A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
+A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
 
 ## Usage
 
 ```bash
-kerstel init [--yes] [--dry-run]              # Migrate this project's .env files
-kerstel set <scope>/<KEY> [--value <value>]   # Store a secret (or pipe it on stdin)
-kerstel get <scope>/<KEY> [--reveal]          # Read a secret
-kerstel ls [--scope <scope>]                  # List stored references
-kerstel rm <scope>/<KEY> --yes                # Remove a secret
-kerstel run -- <command>                      # Run a command with references resolved
-kerstel exec -- <command>                     # Run a command with the hook wired in
-kerstel resolve kerstel://<scope>/<KEY>       # Print one resolved value
-kerstel daemon <serve|start|stop|status>      # Manage the resolver daemon
-kerstel doctor                                # Diagnose this machine's setup
+kerstel init [--yes] [--dry-run]                 # Migrate this project's .env files
+kerstel set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
+kerstel get <scope>/<KEY> [--reveal]             # Read a secret
+kerstel ls [--scope <scope>]                     # List stored references
+kerstel rm <scope>/<KEY> --yes                   # Remove a secret
+kerstel run -- <command>                         # Run a command with references resolved
+kerstel exec -- <command>                        # Run a command with the hook wired in
+kerstel resolve kerstel://<scope>/<KEY>          # Print one resolved value
+kerstel daemon <serve|start|stop|status>         # Manage the resolver daemon
+kerstel doctor                                   # Diagnose this machine's setup
+kerstel uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
+kerstel --version                                # Print the version
 ```
 
 `kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
+
+## Install
+
+```bash
+curl -fsSL https://kerstel.dev/install.sh | bash
+```
+
+macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Re-run it to upgrade, or set `KERSTEL_VERSION=0.1.0` to pin a version.
+
+To remove Kerstel, run `kerstel uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, and the binary, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 

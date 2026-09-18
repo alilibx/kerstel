@@ -11,9 +11,9 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] `kerstel doctor`
 - [x] [kerstel.dev](https://kerstel.dev) with docs, changelog, and roadmap
 - [x] Setup wizard: `kerstel init` and `kerstel exec`
-- [ ] Release binaries for macOS, Linux, and Windows, with checksums
-- [ ] Working `install.sh`
-- [ ] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel
+- [x] Release binaries for macOS and Linux, with checksums
+- [x] Working `install.sh`
+- [x] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel
 
 ## 0.2.0: local portal
 
@@ -22,6 +22,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] See which projects reference which keys
 - [ ] Audit log view
 - [ ] Lock and unlock the vault
+- [ ] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall`
 
 ## Next: access gating
 
@@ -31,6 +32,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## Later: sync and teams
 
+- [ ] Windows binaries and a PowerShell installer
 - [ ] Optional end-to-end encrypted sync, with keys that stay on your devices
 - [ ] Environments (dev, staging, prod)
 - [ ] Shared vaults

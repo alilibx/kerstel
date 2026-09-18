@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.2"
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.2"
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -51,11 +51,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.2"
       - run: bun install --frozen-lockfile
       - run: bun run --cwd apps/website build
       # docs/ is committed build output. A page edit without a rebuild shows up
       # here as a diff and fails the job, so kerstel.dev can never go stale.
       # Stage all changes to docs/ first to catch newly-created files too.
       - run: git add -A -- docs/ && git diff --cached --exit-code -- docs/
+      - run: shellcheck apps/website/src/static/install.sh
       - run: bun test apps/website

@@ -4,7 +4,9 @@ import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
+import { uninstallCommand } from "./commands/uninstall";
 import { bold, fail } from "./output";
+import { VERSION } from "./version";
 
 const USAGE = `${bold("kerstel")} — local-first secrets for your projects
 
@@ -21,6 +23,9 @@ Usage:
   kerstel resolve kerstel://<scope>/<KEY>       Print one resolved value
   kerstel daemon <serve|start|stop|status>      Manage the resolver daemon
   kerstel doctor                                Diagnose this machine's setup
+  kerstel uninstall [--dry-run] [--yes] [--force]
+                                                Restore every project and remove Kerstel
+  kerstel --version                             Print the version
 
 Scopes are explicit: "global" or a project name. A reference resolves in exactly
 one scope — there is no fallback.`;
@@ -31,6 +36,11 @@ export async function runCli(argv: string[]): Promise<number> {
   if (!command || command === "--help" || command === "-h" || command === "help") {
     console.log(USAGE);
     return command ? 0 : 2;
+  }
+
+  if (command === "--version" || command === "version") {
+    console.log(VERSION);
+    return 0;
   }
 
   try {
@@ -57,6 +67,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await daemonCommand(args);
       case "doctor":
         return await doctorCommand();
+      case "uninstall":
+        return await uninstallCommand(args);
       default:
         fail(`Unknown command "${command}".`);
         console.log(USAGE);

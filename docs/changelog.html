@@ -48,6 +48,10 @@
 <li><code>kerstel init</code> flags for scripts and CI: <code>--dry-run</code> (writes nothing, not even to <code>~/.kerstel</code>), <code>--yes</code>, <code>--scope</code>, <code>--global</code>, <code>--keep</code>, <code>--non-interactive</code>, and <code>--from-stdin</code>. <code>--keep</code> or <code>--global</code> naming a key no env file defines gets a warning.</li>
 <li><code>kerstel exec -- &lt;command&gt;</code>, which runs one command with the runtime hook wired in. <code>kerstel init</code> writes it into your scripts.</li>
 <li><a href="https://kerstel.dev">kerstel.dev</a> with getting-started, CLI, resolution, teams, and security docs, plus the changelog and the <a href="https://kerstel.dev/roadmap">roadmap</a>.</li>
+<li><code>kerstel --version</code>.</li>
+<li><code>kerstel uninstall</code>, which restores every project&#39;s <code>.env</code> values in their original quoting, package scripts, and <code>.gitignore</code>, then removes <code>~/.kerstel</code>, the vault key, and the binary. It refuses, naming each one, if any secret would be lost, including a value <code>init</code> kept only in its encrypted backup. Afterwards it names every restored <code>.env</code> file git still tracks.</li>
+<li>Release binaries for macOS and Linux (x64 and arm64), with SHA-256 checksums.</li>
+<li><code>curl -fsSL https://kerstel.dev/install.sh | bash</code>, which verifies the checksum and installs to <code>~/.local/bin</code> without <code>sudo</code>.</li>
 </ul>
 
 </main>

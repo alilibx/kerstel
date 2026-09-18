@@ -22,9 +22,8 @@ The 256-bit data key is generated on first run and stored only in your operating
 | --- | --- |
 | macOS | Keychain |
 | Linux | Secret Service (libsecret) |
-| Windows | Credential Manager (DPAPI) |
 
-The key is never written to the vault file, never logged, and never printed. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with `0600` permissions and warns you every time it does.
+The key is never written to the vault file, never logged, and never printed. Windows is not supported yet. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with `0600` permissions and warns you every time it does.
 
 ## Where plaintext appears
 

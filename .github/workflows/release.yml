@@ -1,0 +1,136 @@
+name: Release
+# Plan-5 spec §4. Push a v* tag to release. A pre-release tag (v0.1.0-rc.1)
+# runs the same pipeline and publishes a GitHub pre-release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      prerelease: ${{ steps.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - id: verify
+        run: bun scripts/release-verify.ts "$GITHUB_REF_NAME" release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd packages/hook build
+      - name: Cross-compile
+        run: |
+          mkdir -p release
+          for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            bun build packages/cli/src/index.ts --compile --target="bun-$target" --outfile "release/kerstel-$target"
+          done
+          cd release && sha256sum kerstel-* > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: release/
+
+  smoke:
+    # No checkout: the binary must work with no source tree on the machine.
+    needs: [verify, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, asset: kerstel-darwin-arm64 }
+          - { runner: macos-15-intel, asset: kerstel-darwin-x64 }
+          - { runner: ubuntu-latest, asset: kerstel-linux-x64 }
+          - { runner: ubuntu-24.04-arm, asset: kerstel-linux-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: ${{ runner.temp }}/release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Smoke test ${{ matrix.asset }}
+        env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/smoke"
+          mkdir -p "$work" && cd "$work"
+          cp "$RUNNER_TEMP/release/${{ matrix.asset }}" ./kerstel
+          chmod +x ./kerstel
+          export KERSTEL_HOME="$work/home" KERSTEL_KEYCHAIN_BACKEND=file
+
+          test "$(./kerstel --version)" = "$EXPECTED_VERSION"
+
+          printf 'smoke-value' | ./kerstel set global/SMOKE_KEY
+          test "$(./kerstel get global/SMOKE_KEY --reveal)" = "smoke-value"
+
+          ./kerstel daemon start
+          printf 'process.stdout.write(String(process.env.SMOKE_KEY))' > app.cjs
+          out="$(SMOKE_KEY=kerstel://global/SMOKE_KEY ./kerstel exec -- node app.cjs)"
+          ./kerstel daemon stop
+          test "$out" = "smoke-value"
+
+  publish:
+    needs: [verify, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          flag=""
+          if [ "$PRERELEASE" = "true" ]; then flag="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Kerstel ${GITHUB_REF_NAME#v}" \
+            --notes-file notes/release-notes.md \
+            $flag
+
+  installer:
+    # The real one-liner against the release just published. Pinned to this
+    # tag, because "latest" never points at a pre-release.
+    needs: [verify, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          export KERSTEL_VERSION="${GITHUB_REF_NAME#v}" KERSTEL_INSTALL_DIR="$RUNNER_TEMP/bin"
+          curl -fsSL https://kerstel.dev/install.sh | bash
+          test "$("$KERSTEL_INSTALL_DIR/kerstel" --version)" = "$EXPECTED_VERSION"
