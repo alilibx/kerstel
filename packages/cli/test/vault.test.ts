@@ -200,7 +200,7 @@ test("the key check never stores the data key or the constant in the clear", () 
   expect(sealed).not.toContain("kerstel/key-check");
 });
 
-test("readVaultMeta answers empty for a missing vault and a v1 vault", () => {
+test("readVaultMeta answers empty for a missing vault and a vault that predates vault_meta", () => {
   const dir = tempDir();
   // Nothing on disk at all.
   expect(readVaultMeta(join(dir, "vault.db"))).toEqual({});

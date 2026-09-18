@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { collectPages } from "./pages";
+import { changelogPage, collectPages } from "./pages";
 import { renderPage } from "./render";
 
 export const SITE_URL = "https://kerstel.dev";
@@ -64,7 +64,7 @@ export function cleanOutput(outDir: string): void {
 /** Renders every page and copies static files. Returns the page paths written, relative to outDir. */
 export function build({ outDir }: BuildOptions): string[] {
   const layout = readFileSync(join(SRC, "layout.html"), "utf8");
-  const pages = collectPages(join(SRC, "pages"));
+  const pages = [...collectPages(join(SRC, "pages")), changelogPage(join(REPO_ROOT, "CHANGELOG.md"))];
 
   cleanOutput(outDir);
 

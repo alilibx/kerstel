@@ -102,6 +102,6 @@ Please keep PRs focused — one feature or fix per PR.
 
 <div align="center">
 
-**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security)
+**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security) · [Changelog](CHANGELOG.md)
 
 </div>

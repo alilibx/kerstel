@@ -305,7 +305,7 @@ test("a wrong key is caught by the key check before any secret is touched", asyn
 test("an existing vault with secrets refuses a newly minted key", async () => {
   const dir = isolate();
 
-  // A v1 vault: secrets present, nothing recorded in vault_meta, so there is
+  // An older vault: secrets present, nothing recorded in vault_meta, so there is
   // no recorded backend to compare against. The tell is that a key was just
   // CREATED, and a brand-new key cannot decrypt secrets that were already here.
   const ctx = await openContext();

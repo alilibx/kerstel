@@ -33,7 +33,7 @@ export interface ResolveRequest extends Envelope {
   op: "resolve";
   scope: string;
   key: string;
-  /** Caller metadata, recorded in the audit log. v2 gates on these. */
+  /** Caller metadata, recorded in the audit log. Access gating will key on these. */
   pid: number | null;
   processName: string | null;
 }

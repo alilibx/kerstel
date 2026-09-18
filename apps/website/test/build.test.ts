@@ -13,6 +13,7 @@ const EXPECTED_PAGES = [
   "docs/cli.html",
   "docs/how-it-works.html",
   "docs/teams.html",
+  "changelog.html",
 ];
 
 const FORBIDDEN = [/menu bar/i, /macOS 14/i, /AI usage/i, /system metrics/i, /\bports\b/i];
@@ -85,6 +86,17 @@ describe("build output", () => {
     expect(html).toContain('href="/docs/getting-started"');
     expect(html).not.toContain("version-badge");
     expect(html).not.toContain("api.github.com");
+  });
+
+  test("changelog page renders the repo-root CHANGELOG.md and is linked from every page", () => {
+    const changelog = readFileSync(resolve(REPO_ROOT, "CHANGELOG.md"), "utf8");
+    const version = changelog.match(/^## (\d+\.\d+\.\d+)/m)?.[1];
+    expect(version).toBeDefined();
+    const html = readFileSync(join(out, "changelog.html"), "utf8");
+    expect(html).toContain(`<h2>${version}`);
+    for (const file of htmlFiles) {
+      expect(readFileSync(join(out, file), "utf8"), file).toContain('href="/changelog"');
+    }
   });
 
   test("no page mentions the retired product", () => {
