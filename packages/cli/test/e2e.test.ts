@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dir, "../../..");
 const BINARY = join(REPO, "dist", process.platform === "win32" ? "kerstel.exe" : "kerstel");
@@ -159,3 +159,68 @@ test("the vault file holds no plaintext after a full round trip", async () => {
   const raw = await Bun.file(join(home, "vault.db")).arrayBuffer();
   expect(Buffer.from(raw).includes(Buffer.from("PLAINTEXT_CANARY_E2E"))).toBe(false);
 });
+
+// Windows has no `sh`, and this test's whole point is running the rewritten
+// script the way a package manager would -- through a shell.
+test.if(process.platform !== "win32")(
+  "the binary migrates a project and the rewritten script still resolves the secret",
+  async () => {
+    home = mkdtempSync(join(tmpdir(), "kerstel-e2e-init-"));
+    const project = mkdtempSync(join(tmpdir(), "kerstel-e2e-init-project-"));
+
+    const printScript = 'node -e "process.stdout.write(String(process.env.APP_KEY))"';
+    await Bun.write(
+      join(project, "package.json"),
+      `${JSON.stringify({ name: "e2e-demo", scripts: { printkey: printScript } }, null, 2)}\n`,
+    );
+    // Presence is all the detector needs; nothing here runs npm.
+    await Bun.write(join(project, "package-lock.json"), "{}\n");
+    await Bun.write(join(project, ".env"), "APP_KEY=super-secret-e2e\n");
+
+    const init = Bun.spawn([BINARY, "init", "--yes", "--non-interactive"], {
+      cwd: project,
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [initOut, initErr, initCode] = await Promise.all([
+      new Response(init.stdout).text(),
+      new Response(init.stderr).text(),
+      init.exited,
+    ]);
+    if (initCode !== 0) console.error(initOut + initErr);
+    expect(initCode).toBe(0);
+    // The wizard prints a plan, a diff and a self-check result -- and never the
+    // secret it is migrating.
+    expect(initOut).not.toContain("super-secret-e2e");
+
+    expect(await Bun.file(join(project, ".env")).text()).toBe("APP_KEY=kerstel://e2e-demo/APP_KEY\n");
+
+    const rewritten = JSON.parse(await Bun.file(join(project, "package.json")).text()) as {
+      scripts: Record<string, string>;
+    };
+    expect(rewritten.scripts.printkey).toBe(`kerstel exec -- ${printScript}`);
+
+    // Run it exactly as npm would: the script text through a shell, in the
+    // project directory, with the binary's directory on PATH and the .env
+    // reference in the environment.
+    const run = Bun.spawn(["sh", "-c", rewritten.scripts.printkey as string], {
+      cwd: project,
+      env: env({
+        APP_KEY: "kerstel://e2e-demo/APP_KEY",
+        PATH: `${dirname(BINARY)}:${process.env.PATH ?? ""}`,
+      }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(run.stdout).text(),
+      new Response(run.stderr).text(),
+      run.exited,
+    ]);
+    if (code !== 0) console.error(stdout + stderr);
+
+    expect(code).toBe(0);
+    expect(stdout).toBe("super-secret-e2e");
+  },
+);

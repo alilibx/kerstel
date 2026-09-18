@@ -19,21 +19,31 @@ OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
 ```
 
-If `.env` is in `.gitignore`, remove it there only after every value is a reference. `git grep "=sk-"` and similar checks stay useful as a guard.
+If `.env` is in `.gitignore`, remove it there only after every value is a reference. `kerstel init` offers to do exactly that at the end of a migration — it defaults to no, and it names any key that still holds a plaintext value instead of calling the files safe to commit. `git grep "=sk-"` and similar checks stay useful as a guard.
 
 ## Onboard a teammate
 
-A new clone has the references but an empty vault for that project. The committed `.env` is already the list of what the project needs; each missing key is set once, piping the value on stdin so it never lands in shell history:
+A new clone has the references but an empty vault for that project. `kerstel init` is the whole onboarding:
 
 ```bash
 git clone git@github.com:acme/myapp.git && cd myapp
-printf %s "$DATABASE_URL" | kerstel set myapp/DATABASE_URL
-printf %s "$STRIPE_SECRET_KEY" | kerstel set myapp/STRIPE_SECRET_KEY
-kerstel ls --scope myapp
-kerstel run -- npm run dev
+kerstel init
 ```
 
-`kerstel ls --scope myapp` now shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.
+The committed `.env` is already the list of what the project needs, so `init` lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. To supply the values from a script instead:
+
+```bash
+echo '{"DATABASE_URL":"kerstel-demo-value","STRIPE_SECRET_KEY":"kerstel-demo-value"}' | kerstel init --from-stdin --non-interactive
+```
+
+Setting keys one at a time still works, piping each value on stdin so it never lands in shell history:
+
+```bash
+printf %s "$DATABASE_URL" | kerstel set myapp/DATABASE_URL
+kerstel ls --scope myapp
+```
+
+`kerstel ls --scope myapp` shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.
 
 ## Share values out of band
 

@@ -21,22 +21,27 @@ export function isCompiledBinary(): boolean {
 }
 
 /**
- * The argv that starts a detached resolver daemon.
+ * The argv that runs THIS CLI with the given arguments.
  *
  * THE CONSTRAINT: `process.execPath` means two different things depending on
  * how this process was started. Compiled, it is the `kerstel` binary and
- * `[execPath, "daemon", "serve"]` is exactly right. From source it is the `bun`
- * binary, and that same argv asks Bun to execute a file called `daemon` --
- * which fails in a way that looks like the daemon crashed rather than like the
- * caller built the wrong command. From source we therefore have to name the CLI
- * entry point explicitly.
+ * `[execPath, ...args]` is exactly right. From source it is the `bun` binary,
+ * and that same argv asks Bun to execute a file called `daemon` -- which fails
+ * in a way that looks like the child crashed rather than like the caller built
+ * the wrong command. From source we therefore have to name the CLI entry point
+ * explicitly.
  *
- * Both spawn sites (`kerstel daemon start` and `ensureDaemon`) go through here
- * so the two can never drift apart.
+ * Every site that spawns Kerstel from inside Kerstel (`daemon start`,
+ * `ensureDaemon`, `init`'s self-check) goes through here so they cannot drift.
  */
-export function daemonServeCommand(): string[] {
-  if (isCompiledBinary()) return [process.execPath, "daemon", "serve"];
+export function cliCommand(args: string[]): string[] {
+  if (isCompiledBinary()) return [process.execPath, ...args];
   // src/daemon/spawn.ts -> src/index.ts
   const entry = resolve(dirname(import.meta.path), "..", "index.ts");
-  return [process.execPath, "run", entry, "daemon", "serve"];
+  return [process.execPath, "run", entry, ...args];
+}
+
+/** The argv that starts a detached resolver daemon. */
+export function daemonServeCommand(): string[] {
+  return cliCommand(["daemon", "serve"]);
 }

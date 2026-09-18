@@ -1,5 +1,7 @@
 import { daemonCommand } from "./commands/daemon";
 import { doctorCommand } from "./commands/doctor";
+import { execCommand } from "./commands/exec";
+import { initCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { bold, fail } from "./output";
@@ -7,6 +9,7 @@ import { bold, fail } from "./output";
 const USAGE = `${bold("kerstel")} — local-first secrets for your projects
 
 Usage:
+  kerstel init [--yes] [--dry-run]              Migrate this project's .env files
   ... | kerstel set <scope>/<KEY>               Store a secret piped on stdin
   kerstel set <scope>/<KEY> --value <value>     Same, but the value lands in your
                                                 shell history and in \`ps\` output
@@ -14,6 +17,7 @@ Usage:
   kerstel ls [--scope <scope>]                  List stored references
   kerstel rm <scope>/<KEY> --yes                Remove a secret
   kerstel run -- <command>                      Run a command with references resolved
+  kerstel exec -- <command>                     Run a command with the hook wired in
   kerstel resolve kerstel://<scope>/<KEY>       Print one resolved value
   kerstel daemon <serve|start|stop|status>      Manage the resolver daemon
   kerstel doctor                                Diagnose this machine's setup
@@ -31,6 +35,8 @@ export async function runCli(argv: string[]): Promise<number> {
 
   try {
     switch (command) {
+      case "init":
+        return await initCommand(args);
       case "set":
         return await setCommand(args);
       case "get":
@@ -43,6 +49,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await rmCommand(args);
       case "run":
         return await runCommand(args);
+      case "exec":
+        return await execCommand(args);
       case "resolve":
         return await resolveCommand(args);
       case "daemon":
