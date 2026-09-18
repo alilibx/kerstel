@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { renderChangeSummary, renderOverview, type OverviewRow } from "../src/init/overview";
 
 const rows: OverviewRow[] = [
-  { key: "DATABASE_URL", value: "postgres://u:hunter2@db/app", source: ".env.local", conflicts: [], target: "project" },
-  { key: "OPENAI_API_KEY", value: "sk-live-abcdef0123456789", source: ".env", conflicts: [], target: "global" },
-  { key: "PORT", value: "3000", source: ".env", conflicts: [], target: "plaintext" },
-  { key: "API_TOKEN", value: "tok-local-bbbb", source: ".env.local", conflicts: [".env"], target: "project" },
+  { key: "DATABASE_URL", value: "postgres://u:hunter2@db/app", source: ".env.local", conflicts: [], target: "project", showValue: false },
+  { key: "OPENAI_API_KEY", value: "sk-live-abcdef0123456789", source: ".env", conflicts: [], target: "global", showValue: false },
+  { key: "PORT", value: "3000", source: ".env", conflicts: [], target: "plaintext", showValue: true },
+  { key: "API_TOKEN", value: "tok-local-bbbb", source: ".env.local", conflicts: [".env"], target: "project", showValue: false },
 ];
 
 test("groups by destination, in the spec's order, with counts", () => {
@@ -26,8 +26,12 @@ test("never prints a value headed for the vault, only its length", () => {
   expect(text).toContain("•••• 27 chars");
 });
 
-test("prints a plain-text value in full", () => {
+test("prints a plain-text value in full only when the caller allows it", () => {
   expect(renderOverview(rows, "whasal", [".env"]).join("\n")).toContain("3000");
+  const kept: OverviewRow = { ...rows[1]!, target: "plaintext", showValue: false };
+  const text = renderOverview([kept], "whasal", [".env"]).join("\n");
+  expect(text).not.toContain("sk-live");
+  expect(text).toContain("•••• 24 chars");
 });
 
 test("names a conflicting key's files and which one wins, without values", () => {

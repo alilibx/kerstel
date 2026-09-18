@@ -459,10 +459,7 @@ test("the diff masks every value it is not migrating, parsed or not", async () =
   const output = captured.join("\n");
   expect(output).not.toContain("MIIEowIBAAKCAQEAsecretkeymaterial");
   expect(output).not.toContain("BEGIN RSA PRIVATE KEY");
-  // A kept value is printed in full on the overview's plain-text rows (spec
-  // §5.1 step 2: it stays readable in the file anyway), and nowhere else. The
-  // diff still masks it.
-  expect(onlyInOverviewRows(output, "KEEP_ME", "kept-plaintext-value")).toBe(true);
+  expect(output).not.toContain("kept-plaintext-value");
   expect(output).not.toContain("pw@localhost");
   expect(output).not.toContain("sk-a-real-looking-key");
   // The diff is still a diff: it names what changed, and masks what did not.
@@ -536,8 +533,7 @@ test("the .gitignore offer names the keys that still hold plaintext", async () =
   const output = captured.join("\n");
   expect(output).toContain("1 key still holds a plaintext value: KEEP_ME");
   expect(output).toContain("committing these files would expose");
-  // Printed on the overview's plain-text row only; never by the offer.
-  expect(onlyInOverviewRows(output, "KEEP_ME", "kept-plaintext-value")).toBe(true);
+  expect(output).not.toContain("kept-plaintext-value");
   // The reassuring sentence is a claim, and here it would be a false one.
   expect(output).not.toContain("they now hold references, not secrets");
 });
@@ -628,9 +624,8 @@ test("a rerun names the keys still in plaintext instead of claiming migration", 
   expect(out).toContain("Nothing to change");
   expect(out).toContain("KEEP_ME");
   expect(out).not.toContain("Already migrated");
-  // The key is named in the summary line. Its value appears on the
-  // overview's plain-text row, and nowhere else.
-  expect(onlyInOverviewRows(out, "KEEP_ME", "keep-this-value")).toBe(true);
+  // Rule 1 holds even here: the key is named, the value never is.
+  expect(out).not.toContain("keep-this-value");
   expect(readFileSync(join(root, ".env"), "utf8")).toContain("KEEP_ME=keep-this-value");
 });
 
@@ -657,15 +652,6 @@ test("a rerun of a fully migrated project still reports it as migrated", async (
   expect(code).toBe(0);
   expect(captured.join("\n")).toContain("Already migrated");
 });
-
-/**
- * True when `value` is printed, and only ever on an overview row for `key`
- * (the overview is shown again after "one by one", so it may appear twice).
- */
-function onlyInOverviewRows(output: string, key: string, value: string): boolean {
-  const lines = output.split("\n").filter((line) => line.includes(value));
-  return lines.length > 0 && lines.every((line) => new RegExp(`^\\s+${key}\\s+${value}\\s`).test(line));
-}
 
 /** Runs `body` with console.log captured, and returns everything it printed. */
 async function captureLog(body: () => Promise<unknown>): Promise<string> {
@@ -913,4 +899,18 @@ test("the .gitignore answer is only written once the changes are applied", async
   ]);
   expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(gitignore);
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("SERVICE_TOKEN=a-secret-value\n");
+});
+
+test("the overview shows a config value in full, but a secret moved to plain text only as its length", async () => {
+  isolateEnv({ prefix: "init-moved-plain" });
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "PORT=3000\nAPI_TOKEN=moved-to-plaintext-secret\n",
+  });
+  const out = await captureLog(() =>
+    runInit(options(root, ["--dry-run"]), new ScriptedPrompter(["change", ["API_TOKEN"], "plaintext", "accept"])),
+  );
+  expect(out).not.toContain("moved-to-plaintext-secret");
+  expect(out).toMatch(/^\s+API_TOKEN\s+•••• 25 chars\s/m);
+  expect(out).toMatch(/^\s+PORT\s+3000\s/m);
 });

@@ -114,15 +114,15 @@ No banner, spinners, redrawn lines, or colour. Each step prints as one plain, st
    - `Vault, shared by all your projects (n)`
    - `Stays in <files> as plain text (n)`
 
-   Each row shows the key, a value column, and its source file. A value headed for the vault is never printed, only its length (`•••• 64 chars`). A value staying in plain text is printed in full, because it stays readable in the file anyway. After the groups, one line per key with different values in several files names the files and says which one wins and that the others are kept in the encrypted backup.
+   Each row shows the key, a value column, and its source file. A value is printed in full only when it stays in plain text, the suggestion for it was also plain text, and `--keep` did not put it there: a config value like `PORT=3000`. Every other value is shown only as its length (`•••• 64 chars`): anything headed for the vault, a secret-looking value the user moved to plain text, and every `--keep` key, since `--keep` can keep a real secret in the file and `init --yes` in CI would print it into build logs. The same rule applies to the value column in one-by-one mode. After the groups, one line per key with different values in several files names the files and says which one wins and that the others are kept in the encrypted backup.
 3. **"Look right?"** A `select`:
    - **Yes, use these** (default): accept every suggestion.
    - **Let me change some**: a `multiselect` of every variable, then a `select` for each ticked one, with its suggestion pre-selected.
    - **Go through them one by one**: a `select` per variable, titled `KEY · 3 of 12`, with its value column and source under the title, a one-line reason for the suggestion, and the suggestion pre-selected and labelled `(suggested)`.
 
    After changing some or going one by one, the overview is shown again with the new destinations, and the same question is asked. **Yes** ends the loop.
-4. **What will change.** One line per file (`.env.local: 7 values become references`, `package.json: 3 scripts go through Kerstel`), then a `select`: **Apply** (default), **Show the full diff first** (prints the existing masked diff, then asks again without that option), or **Cancel**.
-5. **`.gitignore`.** The existing question, as a `select` with a hint per option.
+4. **`.gitignore`.** The existing question, as a `select` with a hint per option, asked before anything is written. Which keys still hold plain text is worked out from the planned file contents, and the answer is written during apply. `--dry-run` skips this question.
+5. **What will change.** One line per file (`.env.local: 7 values become references`, `package.json: 3 scripts go through Kerstel`, and `.gitignore` if its lines are being removed), then a `select`: **Apply** (default), **Show the full diff first** (prints the existing masked diff, then asks again without that option), or **Cancel**. `--dry-run` prints the masked diffs here and stops.
 6. **Apply.** A spinner per step, each finishing as `✓`: backup, vault, env files, `package.json`, `.gitignore`, then the self-check.
 7. **Outro.** A `note`: `whasal is ready. Run bun run dev as usual.`, then `ks doctor` to check the setup, and a reminder that the `.env` files now hold only references and are safe to commit.
 

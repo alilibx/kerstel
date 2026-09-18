@@ -37,13 +37,13 @@ import type { Vault } from "../vault/store";
  * an overview of every variable, "Look right?", a change summary, then apply.
  *
  * Three rules shape every line below:
- *   1. NO VAULT-BOUND VALUE IS EVER PRINTED. Not in the overview, not in a
- *      diff, not in an error, not in the self-check. The user is told its
- *      length and shape and nothing else; the value itself only ever moves
- *      between the file, the vault and the encrypted backup. The one
- *      exception is deliberate (spec §5.1 step 2): the overview prints a value
- *      that STAYS in plain text, because it stays readable in the file anyway.
- *      Diffs still mask every value.
+ *   1. NO SECRET IS EVER PRINTED. Not in the overview, not in a diff, not in
+ *      an error, not in the self-check. The user is told a value's length and
+ *      shape and nothing else; the value itself only ever moves between the
+ *      file, the vault and the encrypted backup. The one exception (spec §5.1
+ *      step 2, `showValue` below): the overview prints a config value that
+ *      stays in plain text on the suggester's own say-so, like PORT=3000.
+ *      Diffs mask every value.
  *   2. NOTHING IS WRITTEN BEFORE THE USER SAYS YES, and the backup is written
  *      before anything else, so every step has an undo. That includes values
  *      a teammate types in: they are held in memory until the plan is applied.
@@ -207,6 +207,16 @@ interface Decision {
   fixed: boolean;
 }
 
+/**
+ * Rule 1 for the overview: a value is printed in full only when it stays in
+ * plain text, the suggester itself called it plain text, and `--keep` did not
+ * force it there. Everything else -- vault-bound, a secret-looking value the
+ * user moved to plain text, every `--keep` key -- is shown as its length.
+ */
+function showValue(decision: Decision): boolean {
+  return decision.target === "plaintext" && decision.suggestion === "plaintext" && !decision.fixed;
+}
+
 function destinationLabel(target: Suggestion, scope: string): string {
   return DESTINATION_CHOICES(scope).find((choice) => choice.value === target)!.label;
 }
@@ -239,6 +249,7 @@ async function decideTargets(
           source: d.key.source,
           conflicts: d.key.conflicts,
           target: d.target,
+          showValue: showValue(d),
         })),
         scope,
         fileNames,
@@ -285,7 +296,7 @@ async function decideTargets(
         );
         decision.target = await prompter.select(
           `${decision.key.key} · ${i + 1} of ${open.length}\n` +
-            `${valueColumn(decision.key.value, decision.target)} · from ${decision.key.source}\n` +
+            `${valueColumn(decision.key.value, showValue(decision))} · from ${decision.key.source}\n` +
             dim(decision.reason),
           choices,
           decision.target,
@@ -369,7 +380,7 @@ interface GitignoreChange {
 }
 
 /**
- * Spec §5.1 step 5, asked before anything is written; `runInitSteps` writes
+ * Spec §5.1 step 4, asked before anything is written; `runInitSteps` writes
  * the answer during apply. Default NO: committing `.env` is the user's call,
  * not ours.
  */

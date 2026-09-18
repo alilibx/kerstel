@@ -8,17 +8,24 @@ export interface OverviewRow {
   source: string;
   conflicts: string[];
   target: Suggestion;
+  /**
+   * May the value be printed in full? The caller decides, and only for a
+   * config value that stays in the file on the suggester's own say-so:
+   * see `valueColumn`.
+   */
+  showValue: boolean;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * What the overview and the one-by-one prompt show for a value. A value
- * headed for the vault is shown as its length and nothing else; a value
- * staying in plain text stays readable in the file anyway. Spec §5.1 step 2.
+ * What the overview and the one-by-one prompt show for a value: its length
+ * and nothing else, unless `showValue` says it is a config value (plaintext,
+ * suggested plaintext, and not kept by `--keep`, which can keep a real secret
+ * in the file and would print it into CI logs under `--yes`). Spec §5.1 step 2.
  */
-export function valueColumn(value: string, target: Suggestion): string {
-  return target === "plaintext" ? value : `•••• ${value.length} chars`;
+export function valueColumn(value: string, showValue: boolean): string {
+  return showValue ? value : `•••• ${value.length} chars`;
 }
 
 /** Spec §5.1 step 2. */
@@ -35,7 +42,7 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
     lines.push(`${title} (${members.length})`);
     lines.push(
       ...renderTable(
-        members.map((row) => [row.key, valueColumn(row.value, target), dim(row.source)]),
+        members.map((row) => [row.key, valueColumn(row.value, row.showValue), dim(row.source)]),
         { indent: 2 },
       ),
     );
@@ -50,7 +57,7 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
   return lines;
 }
 
-/** Spec §5.1 step 4. */
+/** Spec §5.1 step 5. */
 export function renderChangeSummary(
   changes: { label: string; kind: "env" | "package" | "gitignore"; count: number }[],
 ): string[] {
