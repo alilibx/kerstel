@@ -5,7 +5,7 @@ import { extname, join, relative } from "node:path";
 import { build } from "../src/build";
 
 /** Every page the site must ship. Later tasks append to this list. */
-const EXPECTED_PAGES = ["index.html"];
+const EXPECTED_PAGES = ["index.html", "security.html"];
 
 const FORBIDDEN = [/menu bar/i, /macOS 14/i, /AI usage/i, /system metrics/i, /\bports\b/i];
 
