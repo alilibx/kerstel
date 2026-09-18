@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall"
 import { createBackup } from "../src/init/backup";
 import { ScriptedPrompter } from "../src/init/prompts";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
+import { fileBackend } from "../src/vault/keychain/file";
 import { openVault } from "../src/vault/store";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
@@ -216,4 +217,21 @@ test("with no vault, a real run deletes a key orphaned in the credential store",
   expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(0);
   expect(await backend.exists()).toBe(false);
   expect(output.join("\n")).toContain("Deleted the orphaned vault key");
+});
+
+test("a key delete that silently fails is reported instead of claimed", async () => {
+  const { home } = await setup();
+  // The native backends ignore the delete tool's exit code, so a denied
+  // Keychain prompt looks like success. Fake a key that survives the delete.
+  const denied = spyOn(fileBackend, "delete").mockResolvedValue(undefined);
+  const survives = spyOn(fileBackend, "exists").mockResolvedValue(true);
+  capture();
+  try {
+    expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
+  } finally {
+    denied.mockRestore();
+    survives.mockRestore();
+  }
+  expect(existsSync(home)).toBe(false);
+  expect(output.join("\n")).not.toContain("Deleted the vault key");
 });

@@ -212,6 +212,15 @@ export async function uninstallCommand(
   ok(`Deleted ${home}.`);
   if (existing.vault || orphanedKey) {
     await existing.backend.delete();
+    // The backends run the platform's delete tool without checking its exit
+    // code, so a denied Keychain prompt would pass silently. Check the result.
+    if (await existing.backend.exists()) {
+      fail(
+        `Could not delete the vault key from the ${existing.backend.name} credential store. ` +
+          "Everything else is gone; run `kerstel uninstall` again to retry, or delete the key by hand.",
+      );
+      return 1;
+    }
     ok(
       existing.vault
         ? `Deleted the vault key from the ${existing.backend.name} credential store.`

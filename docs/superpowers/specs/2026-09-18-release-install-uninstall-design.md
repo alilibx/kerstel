@@ -109,7 +109,7 @@ Open the vault without creating anything: no home, hook, token, or key is writte
 
 Then compute **unused secrets**: every `scope/KEY` in the vault that no reachable project's `.env` files refer to. These include `global` keys used by repositories that never ran `init`, and keys added with `kerstel set` alone.
 
-Finally compute **backup-only values**. `init` collapses a key defined in several env files, or assigned twice with different values in one file, into one vault entry; the other values survive only in its encrypted backup, which uninstall deletes with the key that opens it. For each reachable project, decrypt its latest backup in memory (never to disk) with the vault data key, and record every key with cross-file conflicts (`collectKeys(...).conflicts`) or with differing values inside one backed-up file, by key, file names, and backup directory. A project with no backup contributes nothing.
+Finally compute **backup-only values**. `init` collapses a key defined in several env files, or assigned twice with different values in one file, into one vault entry; the other values survive only in its encrypted backup, which uninstall deletes with the key that opens it. For each reachable project, decrypt its latest backup in memory (never to disk) with the vault data key, and take every key with cross-file conflicts (`collectKeys(...).conflicts`) or with differing values inside one backed-up file. Record it, by key, file names, and backup directory, only for the files where a backed-up value will not be back after the restore; a key `init` left in plaintext keeps every value in the live files and loses nothing. A project with no backup contributes nothing.
 
 ### 6.2 Show and confirm
 
@@ -124,7 +124,7 @@ Finally compute **backup-only values**. `init` collapses a key defined in severa
 1. Write every planned file. On the first failure, stop, exit 1, name the file, and list which files were already written. Nothing below runs.
 2. Stop the daemon if it is running.
 3. Delete `~/.kerstel` (`KERSTEL_HOME`): the vault, backups, hook, token, and socket.
-4. Delete the data key with the credential-store backend the vault was opened with. It goes after the home so a failure here leaves a harmless orphaned key rather than a vault no key can open.
+4. Delete the data key with the credential-store backend the vault was opened with. It goes after the home so a failure here leaves a harmless orphaned key rather than a vault no key can open. The backends do not check the delete tool's exit code, so check `exists()` afterwards; if the key is still there, say so and exit 1 before removing the binary, so a re-run can delete the orphaned key.
 5. Delete the binary, only when running as the compiled executable (`process.execPath`'s file name is `kerstel` and the process is not the `bun` runtime). Otherwise print where the binary is.
 6. Print each restored project, and a warning that its `.env` files now hold plaintext and must stay out of git. For each restored `.env` file that `git -C <root> ls-files` reports as tracked, name it and say to run `git rm --cached <file>` before the next commit, since a `.gitignore` entry does not untrack it. Without git, or outside a repository, only the generic warning is printed.
 
