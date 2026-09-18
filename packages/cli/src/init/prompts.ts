@@ -48,7 +48,10 @@ export class TtyPrompter implements Prompter {
   // dropped. Queueing every `line` event here and resolving pending readers
   // FIFO makes reads order-safe regardless of how the input arrives.
   private readonly lineQueue: string[] = [];
-  private readonly waiters: Array<(line: string) => void> = [];
+  private readonly waiters: Array<{ resolve: (line: string) => void; reject: (error: Error) => void }> = [];
+  // Set once the input stream ends (EOF, a closed pipe, Ctrl-D). No secret
+  // value is ever put on this -- it only records that reading is over.
+  private ended = false;
 
   constructor(
     private readonly input: NodeJS.ReadableStream = process.stdin,
@@ -60,8 +63,18 @@ export class TtyPrompter implements Prompter {
       this.rl = createInterface({ input: this.input, output: this.output, terminal: true });
       this.rl.on("line", (line: string) => {
         const waiter = this.waiters.shift();
-        if (waiter) waiter(line);
+        if (waiter) waiter.resolve(line);
         else this.lineQueue.push(line);
+      });
+      // `close` fires when the input stream ends (EOF/closed pipe/Ctrl-D) or
+      // after an explicit `close()`. Either way, no more lines are coming:
+      // reject every pending reader instead of leaving it unsettled forever.
+      this.rl.on("close", () => {
+        this.ended = true;
+        while (this.waiters.length > 0) {
+          const waiter = this.waiters.shift();
+          waiter?.reject(new Error("Kerstel could not read an answer: the input stream ended."));
+        }
       });
     }
     return this.rl;
@@ -71,7 +84,10 @@ export class TtyPrompter implements Prompter {
     this.interface();
     const queued = this.lineQueue.shift();
     if (queued !== undefined) return Promise.resolve(queued);
-    return new Promise((resolve) => this.waiters.push(resolve));
+    if (this.ended) {
+      return Promise.reject(new Error("Kerstel could not read an answer: the input stream ended."));
+    }
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 
   private async ask(prompt: string, secret: boolean): Promise<string> {

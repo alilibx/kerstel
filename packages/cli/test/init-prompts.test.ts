@@ -89,3 +89,23 @@ test("TtyPrompter never echoes a secret", async () => {
   expect(printed).toContain("Value for OPENAI_API_KEY?");
   expect(printed).not.toContain("sk-super-secret");
 });
+
+test("TtyPrompter rejects a pending question when the input stream ends", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const prompter = new TtyPrompter(input, output);
+
+  const answer = prompter.confirm("Continue?", true);
+  input.end();
+
+  await expect(answer).rejects.toThrow(/input (stream )?(ended|closed)/i);
+});
+
+test("TtyPrompter rejects a question asked after the input stream already ended", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const prompter = new TtyPrompter(input, output);
+  input.end();
+
+  await expect(prompter.confirm("Continue?", true)).rejects.toThrow(/input (stream )?(ended|closed)/i);
+});
