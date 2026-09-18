@@ -80,6 +80,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 - A `get` whose stored value matches `^kerstel://` resolves through the daemon and returns the plaintext. Resolved values are memoized per process.
 - It never cares how the reference entered the env — dotenv, Next.js env loading, Bun's native `.env` loader, or the parent shell. It intercepts the *read*.
 - **Child processes:** the hook injects the preload into `NODE_OPTIONS` (and Bun equivalents) in the env it exposes, so spawned node/bun children are covered and can resolve references of their own. Variables already present in the environment are handed to any child already resolved: building a child's envp reads `process.env` through the same trap application code uses, so the hook cannot tell the two apart, and a non-Node child (python, git, curl, ...) could not resolve a reference anyway. This matches level 1's stated boundary — a child is a process that runs code.
+  - **Consequence, today, not a future concern:** envp construction enumerates *every* variable, so a single spawn resolves **every reference in the environment**, not only the ones the app actually reads — one audit row per secret, whether or not that secret was ever used. A `git` invocation in a dev server's file watcher resolves the whole vault slice the project references. v2's per-process approval gate has to account for this directly: an approval prompt per key per spawn is unusable, so the gate needs either resolution that is lazy *across* the envp boundary (a child env that still carries references, with the child's own hook resolving on read) or approvals scoped to a process tree rather than a single read.
 - Resolution failure (daemon unreachable, key missing, locked vault) throws a clear, actionable error naming the reference and the fix (`kerstel doctor`). It never silently returns the reference string to app code.
 
 ### 6.2 Wiring (owned by the wizard, never by the user's fingers)
@@ -95,8 +96,10 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 
 ## 7. The daemon
 
-- One per user, auto-started by the hook/CLI on first use; socket at `~/.kerstel/kerstel.sock` (Windows: named pipe), `0600`.
-- Verifies peer UID (`SO_PEERCRED` / equivalent). Unlocks the vault once per session via the OS keychain.
+- One per user, auto-started by the CLI on first use; socket at `~/.kerstel/kerstel.sock` (Windows: named pipe), `0600`. Hook-side auto-start arrives with the setup wizard, which is what teaches the hook where the `kerstel` binary lives.
+- **Access boundary:** a per-session bearer token, generated at `~/.kerstel/session.token` (`0600`) and compared in constant time on every request. Combined with the `0600` socket inside the `0700` home, that means only the owning user can read the token and only a caller holding it is served. The daemon does **not** verify peer UID: `node:net` exposes no peer credentials, and obtaining them would require a native module, which the single-self-contained-binary constraint rules out.
+- Unlocks the vault once per session via the OS keychain.
+- **Windows:** the POSIX mode bits above are inert on NTFS — Node does not translate them into ACLs, so `0700`/`0600` are no-ops there. What protects `~/.kerstel` on Windows is the user profile directory's inherited ACL, and the named pipe carries libuv's default security descriptor. `kerstel doctor` prints this caveat on `win32`. Tightening it (an explicit pipe DACL, an explicit directory ACL) is open work, not something v1 claims.
 - Protocol: newline-delimited JSON — `resolve`, `status`, `lock`, `shutdown`. Versioned envelope so v2 can add `approve`.
 - Writes an `audit_log` row per resolution (key, pid, process name, project).
 - Idles out after a configurable period and relocks.
@@ -146,7 +149,7 @@ docs/   (this spec, roadmap, SECURITY.md threat model, CONTRIBUTING.md)
 - **Vault:** unit tests for crypto round-trips, wrong-key failure, schema migration, concurrent access.
 - **Hook:** integration tests spawning real Node and Bun processes — dotenv load, Bun native env, child-process propagation, Next.js-style build-time reads, failure modes.
 - **Wizard:** fixture projects (npm/pnpm/yarn/bun, messy multi-file `.env`s) run through `init` non-interactively; assert file rewrites, backups, wiring, and self-check pass.
-- **Daemon:** protocol tests, peer-UID rejection, relock-on-idle.
+- **Daemon:** protocol tests, bad-token rejection, relock-on-idle.
 - **E2E:** install-script smoke test in CI containers.
 
 ## 13. Risks
