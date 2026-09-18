@@ -50,6 +50,69 @@ kerstel doctor                                # Diagnose this machine's setup
 
 `kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`, with no wrapper command needed.
 
+## Set up a project
+
+```bash
+cd my-app
+kerstel init
+```
+
+The wizard walks through six steps and asks before each one:
+
+1. **Detect** your runtime and package manager from your lockfile.
+2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found — key names, value sizes and shapes, never the values themselves. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
+3. **Back up** the originals, encrypted with your vault key, to `~/.kerstel/backups/<project>/<timestamp>/`.
+4. **Rewrite** the files, changing only the bytes of the values it stored. Comments, blank lines, key order, quoting style and inline comments all survive byte for byte.
+5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped), and Bun projects also get a `preload` entry in `bunfig.toml`. You see the diff first.
+6. **Self-check** by running a probe through the wiring and confirming a reference resolves.
+
+Afterwards `npm run dev` is still `npm run dev`.
+
+Useful flags:
+
+| Flag | What it does |
+|---|---|
+| `--dry-run` | Prints every diff and writes nothing. Run this first. |
+| `--yes` | Accepts every suggestion, asks nothing. |
+| `--scope <name>` | Overrides the project scope (default: your `package.json` name). |
+| `--global KEY[,KEY]` | Forces those keys into the `global` scope. |
+| `--keep KEY[,KEY]` | Forces those keys to stay plaintext. |
+| `--non-interactive` | Fails loudly instead of asking; use in scripts. |
+| `--from-stdin` | Reads `{"KEY": "value"}` JSON for keys this machine is missing. |
+
+`kerstel init` is idempotent: run it again after adding a key and it migrates only what is new.
+
+### One key, several files
+
+If the same key appears in more than one file with different values, Kerstel stores the highest-precedence one — `.env.<x>.local` beats `.env.local` beats `.env.<x>` beats `.env` — points **every** occurrence at that one reference, and tells you which files it collapsed. The other values remain in the encrypted backup. v1 has no environments (that is on the roadmap), so one key resolves to one value.
+
+### Joining a project that already uses Kerstel
+
+```bash
+git clone git@github.com:acme/my-app.git && cd my-app
+kerstel init
+```
+
+The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. The references double as a living `.env.example`. To supply them from a script instead:
+
+```bash
+echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | kerstel init --from-stdin --non-interactive
+```
+
+Secrets are never accepted as command-line arguments — anything on argv is in your shell history and in `ps` output.
+
+### `kerstel exec` vs `kerstel run`
+
+| | `kerstel exec -- <cmd>` | `kerstel run -- <cmd>` |
+|---|---|---|
+| What the child's environment holds | references, untouched | resolved plaintext |
+| When values are resolved | lazily, on each `process.env` read, through the daemon | all at once, before the command starts |
+| What it needs | the runtime hook (Node or Bun) | nothing |
+| Audit log | one row per key the app actually reads | one row per reference in the environment |
+| Used by | your wired `package.json` scripts | IDE run configurations, other languages, anything the hook cannot reach |
+
+`exec` is what the wizard writes into your scripts; `run` is the universal fallback that always works.
+
 ## Security model
 
 - No plaintext secret ever sits in a project file. Reading, committing, or grepping `.env` yields only references.
