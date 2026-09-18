@@ -14,12 +14,11 @@ import {
   TtyPrompter,
   type Prompter,
 } from "../init/prompts";
-import { renderDiff, wireBunfig, wirePackageJson } from "../init/wiring";
+import { renderDiff, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference } from "../reference";
 import { loadOrCreateDataKey } from "../vault/keychain";
 import type { Vault } from "../vault/store";
-import { preloadPathFor } from "./exec";
 
 /**
  * Spec §8's setup wizard.
@@ -569,20 +568,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const packageSource = readFileSync(detected.packageJsonPath, "utf8");
     const packageWiring = wirePackageJson(packageSource);
 
-    const bunfigPath = join(detected.root, "bunfig.toml");
-    const bunfigSource = existsSync(bunfigPath) ? readFileSync(bunfigPath, "utf8") : null;
-    let bunfigWiring: { changed: boolean; created: boolean; contents: string } | null = null;
-    if (detected.runtime === "bun") {
-      try {
-        bunfigWiring = wireBunfig(bunfigSource, preloadPathFor(ctx.hookDir));
-      } catch (error) {
-        fail((error as Error).message);
-        return 1;
-      }
-    }
-
-    const nothingToDo =
-      envChanges.length === 0 && !packageWiring.changed && !(bunfigWiring?.changed ?? false);
+    const nothingToDo = envChanges.length === 0 && !packageWiring.changed;
     if (nothingToDo) {
       // "Already migrated" is a claim about the FILE. A project where keys were
       // kept in plaintext on purpose also has nothing to change, and telling
@@ -632,9 +618,6 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       console.log(renderDiff(change.label, change.diffBefore, change.diffAfter));
     }
     if (packageWiring.changed) console.log(renderDiff("package.json", packageSource, packageWiring.contents));
-    if (bunfigWiring?.changed) {
-      console.log(renderDiff("bunfig.toml", bunfigSource ?? "", bunfigWiring.contents));
-    }
 
     // --- Step 4: --dry-run stops here, before the first write ---------------
     if (options.dryRun) {
@@ -679,10 +662,6 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     if (packageWiring.changed) {
       writeFileSync(detected.packageJsonPath, packageWiring.contents);
       ok(`Wired ${packageWiring.rewrites.length} package.json script${packageWiring.rewrites.length === 1 ? "" : "s"} through \`kerstel exec\`.`);
-    }
-    if (bunfigWiring?.changed) {
-      writeFileSync(bunfigPath, bunfigWiring.contents);
-      ok(`${bunfigWiring.created ? "Created" : "Updated"} bunfig.toml with the Kerstel preload.`);
     }
 
     await offerGitignore(detected.root, detected.envFiles, prompter);

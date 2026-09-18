@@ -1,12 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { preloadPathFor } from "../commands/exec";
+import { readFileSync } from "node:fs";
 import { formatReference, type SecretRef } from "../reference";
 import { collectKeys, type LoadedEnvFile } from "./collect";
 import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } from "./detect";
 import { parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
-import { wireBunfig, wirePackageJson } from "./wiring";
+import { wirePackageJson } from "./wiring";
 
 export interface ProjectStatus {
   root: string;
@@ -17,7 +15,6 @@ export interface ProjectStatus {
   envFiles: string[];
   /** `wrappable` counts scripts `init` would wire; `wired` those already wired. */
   scripts: { wrappable: number; wired: number };
-  bunfig: "not-applicable" | "present" | "missing" | "unknown";
   references: { total: number; resolvable: number; unresolved: string[] };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
@@ -60,7 +57,6 @@ function readEnvFiles(files: EnvFileInfo[]): { loaded: LoadedEnvFile[]; unreadab
 export function projectStatus(
   root: string,
   vault: { getSecret(ref: SecretRef): string | null },
-  hookDir: string,
 ): ProjectStatus | null {
   const detected = detectProject(root);
   if (!detected.packageJson) return null;
@@ -75,18 +71,6 @@ export function projectStatus(
   const packageSource = readFileSync(detected.packageJsonPath, "utf8");
   const wiring = wirePackageJson(packageSource);
   const wired = wiring.skipped.filter((skip) => skip.reason === "already-wired").length;
-
-  let bunfig: ProjectStatus["bunfig"] = "not-applicable";
-  if (detected.runtime === "bun") {
-    const path = join(root, "bunfig.toml");
-    const source = existsSync(path) ? readFileSync(path, "utf8") : null;
-    try {
-      bunfig = wireBunfig(source, preloadPathFor(hookDir)).changed ? "missing" : "present";
-    } catch {
-      // A multi-line preload array: present or not, this cannot say which.
-      bunfig = "unknown";
-    }
-  }
 
   const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
@@ -106,7 +90,6 @@ export function projectStatus(
     packageManager: detected.packageManager,
     envFiles: detected.envFiles.map((file) => file.name),
     scripts: { wrappable: wired + wiring.rewrites.length, wired },
-    bunfig,
     references: { total, resolvable, unresolved },
     unreadable,
   };

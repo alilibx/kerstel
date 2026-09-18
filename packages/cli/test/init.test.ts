@@ -240,7 +240,7 @@ test("--dry-run prints the plan and leaves every file byte-identical", async () 
   });
 });
 
-test("a bun project also gets a bunfig preload", async () => {
+test("a bun project is wired through package scripts alone", async () => {
   isolateEnv({ prefix: "init-bun" });
   await bootLocalDaemon();
 
@@ -252,12 +252,12 @@ test("a bun project also gets a bunfig preload", async () => {
 
   expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
 
-  const bunfig = readFileSync(join(root, "bunfig.toml"), "utf8");
-  expect(bunfig).toContain("preload = [");
-  expect(bunfig).toContain("preload.cjs");
   expect(readFileSync(join(root, "package.json"), "utf8")).toContain(
     '"dev": "kerstel exec -- bun run index.ts"',
   );
+  // `kerstel exec` passes --preload to bun itself, so init leaves no per-machine
+  // absolute path behind in a committed config file.
+  expect(existsSync(join(root, "bunfig.toml"))).toBe(false);
 });
 
 test("a second run reports an already-migrated project and changes nothing", async () => {

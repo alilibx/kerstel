@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { renderDiff, wireBunfig, wirePackageJson, wrapScript } from "../src/init/wiring";
+import { renderDiff, wirePackageJson, wrapScript } from "../src/init/wiring";
 
 const strip = (text: string): string => text.replace(/\[[0-9;]*m/g, "");
 
@@ -103,58 +103,6 @@ test("wirePackageJson skips a non-string script value instead of mangling it", (
   expect(result.contents).toContain('"weird": null');
 });
 
-test("wireBunfig creates the file when there is none", () => {
-  const result = wireBunfig(null, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.created).toBe(true);
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
-});
-
-test("wireBunfig adds a top-level preload above the first section", () => {
-  const source = '# project config\n\n[test]\ncoverage = false\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.created).toBe(false);
-  expect(result.contents).toBe(
-    '# project config\n\npreload = ["/hook/preload.cjs"]\n[test]\ncoverage = false\n',
-  );
-});
-
-test("wireBunfig appends when the file has no sections", () => {
-  const result = wireBunfig("telemetry = false\n", "/hook/preload.cjs");
-  expect(result.contents).toBe('telemetry = false\npreload = ["/hook/preload.cjs"]\n');
-});
-
-test("wireBunfig merges into an existing preload array", () => {
-  const source = 'preload = ["./setup.ts"]\n\n[test]\npreload = ["./test-setup.ts"]\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.contents).toBe(
-    'preload = ["./setup.ts", "/hook/preload.cjs"]\n\n[test]\npreload = ["./test-setup.ts"]\n',
-  );
-});
-
-test("wireBunfig is idempotent", () => {
-  const source = 'preload = ["/hook/preload.cjs"]\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.changed).toBe(false);
-  expect(result.contents).toBe(source);
-});
-
-test("wireBunfig fills an empty preload array", () => {
-  expect(wireBunfig("preload = []\n", "/hook/preload.cjs").contents).toBe(
-    'preload = ["/hook/preload.cjs"]\n',
-  );
-});
-
-test("wireBunfig refuses a multi-line preload array rather than corrupting it", () => {
-  const source = 'preload = [\n  "./setup.ts"\n]\n';
-  expect(() => wireBunfig(source, "/hook/preload.cjs")).toThrow(/by hand/);
-});
-
-test("wireBunfig preserves CRLF line endings", () => {
-  const result = wireBunfig("telemetry = false\r\n", "/hook/preload.cjs");
-  expect(result.contents).toBe('telemetry = false\r\npreload = ["/hook/preload.cjs"]\r\n');
-});
-
 test("renderDiff shows the changed lines with context", () => {
   const before = "a\nb\nc\nd\ne\n";
   const after = "a\nb\nCHANGED\nd\ne\n";
@@ -169,120 +117,8 @@ test("renderDiff shows the changed lines with context", () => {
 });
 
 test("renderDiff handles pure insertion", () => {
-  const out = strip(renderDiff("bunfig.toml", "", 'preload = ["/hook/preload.cjs"]\n'));
-  expect(out).toContain('+ preload = ["/hook/preload.cjs"]');
+  const out = strip(renderDiff("package.json", "", '{\n  "name": "site"\n}\n'));
+  expect(out).toContain('+   "name": "site"');
   expect(out).not.toContain("- ");
 });
 
-test("wireBunfig replaces a stale hook path from another machine", () => {
-  const source = 'preload = ["/Users/ali/.kerstel/hook/preload.cjs"]\n';
-  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
-});
-
-test("wireBunfig replaces a stale hook path without disturbing its neighbours", () => {
-  const source =
-    'preload = ["./setup.ts",  "/Users/ali/.kerstel/hook/preload.cjs",\t"./after.ts"]\n[test]\npreload = ["./test-setup.ts"]\n';
-  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.contents).toBe(
-    'preload = ["./setup.ts",  "/home/dev/.kerstel/hook/preload.cjs",\t"./after.ts"]\n[test]\npreload = ["./test-setup.ts"]\n',
-  );
-});
-
-test("wireBunfig leaves an exact match alone even beside a stale one", () => {
-  const source = 'preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n';
-  expect(wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs").changed).toBe(false);
-});
-
-test("wireBunfig does not mistake a longer path for the hook", () => {
-  const source = 'preload = ["/hook/preload.cjs.disabled"]\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = ["/hook/preload.cjs.disabled", "/hook/preload.cjs"]\n');
-});
-
-test("wireBunfig replaces a stale Windows hook path", () => {
-  const source = 'preload = ["C:\\\\Users\\\\Ali\\\\.kerstel\\\\hook\\\\preload.cjs"]\n';
-  const result = wireBunfig(source, "C:\\Users\\Dev\\.kerstel\\hook\\preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = ["C:\\\\Users\\\\Dev\\\\.kerstel\\\\hook\\\\preload.cjs"]\n');
-});
-
-test("wireBunfig replaces a stale entry written as a TOML literal string", () => {
-  const source = "preload = ['/Users/ali/.kerstel/hook/preload.cjs']\n";
-  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
-});
-
-/**
- * `preload = "./setup.ts"` is as valid as the array form, and appending a
- * second top-level `preload` key to a file that has one makes bun refuse to
- * start at all ("Cannot redefine key 'preload'"), which would break every
- * command in the project rather than just Kerstel's hook.
- */
-test("wireBunfig promotes a string preload to an array", () => {
-  const result = wireBunfig('preload = "./setup.ts"\n', "/hook/preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = ["./setup.ts", "/hook/preload.cjs"]\n');
-});
-
-test("wireBunfig keeps the quoting style and comment of a string preload", () => {
-  const source = "preload = './setup.ts'  # our own\n[test]\npreload = './test-setup.ts'\n";
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.contents).toBe(
-    "preload = ['./setup.ts', \"/hook/preload.cjs\"]  # our own\n[test]\npreload = './test-setup.ts'\n",
-  );
-});
-
-test("wireBunfig leaves a string preload that already is the hook alone", () => {
-  const source = 'preload = "/hook/preload.cjs"\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.changed).toBe(false);
-  expect(result.contents).toBe(source);
-});
-
-test("wireBunfig replaces a stale hook path in a string preload", () => {
-  const source = "preload = '/Users/ali/.kerstel/hook/preload.cjs' # kerstel\n";
-  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe('preload = "/home/dev/.kerstel/hook/preload.cjs" # kerstel\n');
-});
-
-test("wireBunfig is not fooled by a hash inside a string preload path", () => {
-  const result = wireBunfig('preload = "./set#up.ts"\n', "/hook/preload.cjs");
-  expect(result.contents).toBe('preload = ["./set#up.ts", "/hook/preload.cjs"]\n');
-});
-
-/**
- * A trailing comment after the closing bracket used to miss the single-line
- * matcher, fall into the multi-line branch and abort `init` with an error
- * about an array that is not multi-line at all.
- */
-test("wireBunfig merges into a single-line preload array with a trailing comment", () => {
-  const source = 'preload = ["./setup.ts"] # bun runs this first\n';
-  const result = wireBunfig(source, "/hook/preload.cjs");
-  expect(result.changed).toBe(true);
-  expect(result.contents).toBe(
-    'preload = ["./setup.ts", "/hook/preload.cjs"] # bun runs this first\n',
-  );
-});
-
-test("wireBunfig replaces a stale entry on a commented single-line array", () => {
-  const source = 'preload = ["/Users/ali/.kerstel/hook/preload.cjs"]\t#kerstel\n';
-  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
-  expect(result.contents).toBe(
-    'preload = ["/home/dev/.kerstel/hook/preload.cjs"]\t#kerstel\n',
-  );
-});
-
-test("wireBunfig fills an empty commented preload array", () => {
-  expect(wireBunfig("preload = [] # nothing yet\n", "/hook/preload.cjs").contents).toBe(
-    'preload = ["/hook/preload.cjs"] # nothing yet\n',
-  );
-});
-
-test("wireBunfig still refuses a multi-line array that carries a comment", () => {
-  const source = 'preload = [ # paths\n  "./setup.ts"\n]\n';
-  expect(() => wireBunfig(source, "/hook/preload.cjs")).toThrow(/by hand/);
-});

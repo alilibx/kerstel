@@ -79,7 +79,7 @@ export async function doctorCommand(cwd: string = process.cwd()): Promise<number
     // Spec §6.3: wiring problems are diagnosed here, in the project, because
     // that is where they are: a machine can be perfectly set up and a project
     // still unwired.
-    const project = projectStatus(cwd, ctx.vault, ctx.hookDir);
+    const project = projectStatus(cwd, ctx.vault);
     if (project) {
       console.log("");
       console.log(bold("Project"));
@@ -92,12 +92,6 @@ export async function doctorCommand(cwd: string = process.cwd()): Promise<number
         `Scripts:    ${project.scripts.wired} of ${project.scripts.wrappable} script${project.scripts.wrappable === 1 ? "" : "s"} wired through \`kerstel exec\`` +
           (project.scripts.wired < project.scripts.wrappable ? yellow("  (run `kerstel init`)") : ""),
       );
-      if (project.bunfig !== "not-applicable") {
-        info(
-          `bunfig:     preload ${project.bunfig}` +
-            (project.bunfig === "present" ? "" : yellow("  (run `kerstel init`)")),
-        );
-      }
       info(
         `References: ${project.references.resolvable} of ${project.references.total} reference${project.references.total === 1 ? "" : "s"} in ${project.envFiles.join(", ") || "no env files"} resolve here`,
       );

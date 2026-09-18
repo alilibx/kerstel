@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { doctorCommand } from "../src/commands/doctor";
 import { projectStatus } from "../src/init/status";
 import { runCli } from "../src/index";
-import { hookDir } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault } from "../src/vault/store";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
@@ -30,7 +29,7 @@ const emptyVault = { getSecret: () => null };
 
 test("projectStatus returns null outside a project", () => {
   const root = makeProject({ ".env": "A=1\n" });
-  expect(projectStatus(root, emptyVault, "/hook")).toBeNull();
+  expect(projectStatus(root, emptyVault)).toBeNull();
 });
 
 test("projectStatus returns null against a malformed package.json", () => {
@@ -38,7 +37,7 @@ test("projectStatus returns null against a malformed package.json", () => {
     "package.json": '{ "name": "broken",',
     ".env": "A=1\n",
   });
-  expect(projectStatus(root, emptyVault, "/hook")).toBeNull();
+  expect(projectStatus(root, emptyVault)).toBeNull();
 });
 
 test("doctor exits 0 against a malformed package.json", async () => {
@@ -64,11 +63,10 @@ test("projectStatus reports an unwired project", () => {
     "package.json": '{\n  "name": "@acme/site",\n  "scripts": {\n    "dev": "next dev",\n    "postinstall": "x"\n  }\n}\n',
     ".env": "A=plain\n",
   });
-  const status = projectStatus(root, emptyVault, "/hook");
+  const status = projectStatus(root, emptyVault);
   expect(status?.scope).toBe("site");
   expect(status?.runtime).toBe("node");
   expect(status?.scripts).toEqual({ wrappable: 1, wired: 0 });
-  expect(status?.bunfig).toBe("not-applicable");
   expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [] });
   expect(status?.envFiles).toEqual([".env"]);
 });
@@ -85,7 +83,7 @@ test("projectStatus reports a wired project and which references resolve", async
   const { key } = await loadOrCreateDataKey();
   const vault = openVault(key);
   try {
-    const status = projectStatus(root, vault, hookDir());
+    const status = projectStatus(root, vault);
     expect(status?.scripts).toEqual({ wrappable: 1, wired: 1 });
     expect(status?.references.total).toBe(2);
     expect(status?.references.resolvable).toBe(1);
@@ -93,23 +91,6 @@ test("projectStatus reports a wired project and which references resolve", async
   } finally {
     vault.close();
   }
-});
-
-test("projectStatus checks the bunfig preload for bun projects", () => {
-  const preload = join("/hook", "preload.cjs");
-  const wired = makeProject({
-    "package.json": '{\n  "name": "bunny"\n}\n',
-    "bun.lock": "",
-    "bunfig.toml": `preload = ["${preload}"]\n`,
-  });
-  const unwired = makeProject({
-    "package.json": '{\n  "name": "bunny"\n}\n',
-    "bun.lock": "",
-    "bunfig.toml": "[test]\ncoverage = false\n",
-  });
-
-  expect(projectStatus(wired, emptyVault, "/hook")?.bunfig).toBe("present");
-  expect(projectStatus(unwired, emptyVault, "/hook")?.bunfig).toBe("missing");
 });
 
 test("doctor prints the project section when run inside a project", async () => {
@@ -168,7 +149,7 @@ test.skipIf(asRoot)("projectStatus reports an unreadable env file instead of thr
   });
   chmodSync(join(root, ".env.production"), 0o000);
 
-  const status = projectStatus(root, emptyVault, "/hook");
+  const status = projectStatus(root, emptyVault);
   expect(status?.unreadable).toEqual([".env.production"]);
   // The readable file is still read.
   expect(status?.references.total).toBe(1);
