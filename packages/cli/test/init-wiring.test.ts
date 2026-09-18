@@ -173,3 +173,44 @@ test("renderDiff handles pure insertion", () => {
   expect(out).toContain('+ preload = ["/hook/preload.cjs"]');
   expect(out).not.toContain("- ");
 });
+
+test("wireBunfig replaces a stale hook path from another machine", () => {
+  const source = 'preload = ["/Users/ali/.kerstel/hook/preload.cjs"]\n';
+  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
+});
+
+test("wireBunfig replaces a stale hook path without disturbing its neighbours", () => {
+  const source =
+    'preload = ["./setup.ts",  "/Users/ali/.kerstel/hook/preload.cjs",\t"./after.ts"]\n[test]\npreload = ["./test-setup.ts"]\n';
+  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
+  expect(result.contents).toBe(
+    'preload = ["./setup.ts",  "/home/dev/.kerstel/hook/preload.cjs",\t"./after.ts"]\n[test]\npreload = ["./test-setup.ts"]\n',
+  );
+});
+
+test("wireBunfig leaves an exact match alone even beside a stale one", () => {
+  const source = 'preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n';
+  expect(wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs").changed).toBe(false);
+});
+
+test("wireBunfig does not mistake a longer path for the hook", () => {
+  const source = 'preload = ["/hook/preload.cjs.disabled"]\n';
+  const result = wireBunfig(source, "/hook/preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe('preload = ["/hook/preload.cjs.disabled", "/hook/preload.cjs"]\n');
+});
+
+test("wireBunfig replaces a stale Windows hook path", () => {
+  const source = 'preload = ["C:\\\\Users\\\\Ali\\\\.kerstel\\\\hook\\\\preload.cjs"]\n';
+  const result = wireBunfig(source, "C:\\Users\\Dev\\.kerstel\\hook\\preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe('preload = ["C:\\\\Users\\\\Dev\\\\.kerstel\\\\hook\\\\preload.cjs"]\n');
+});
+
+test("wireBunfig replaces a stale entry written as a TOML literal string", () => {
+  const source = "preload = ['/Users/ali/.kerstel/hook/preload.cjs']\n";
+  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
+  expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
+});

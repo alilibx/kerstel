@@ -115,6 +115,49 @@ const SECTION_HEADER = /^\s*\[/;
 const PRELOAD_LINE = /^(\s*preload\s*=\s*)\[([^\]]*)\](\s*)$/;
 const PRELOAD_OPEN = /^\s*preload\s*=\s*\[/;
 
+/** A TOML basic ("...") or literal ('...') string, captured with its offsets. */
+const TOML_STRING = /"(?:[^"\\]|\\.)*"|'[^']*'/g;
+
+/**
+ * Any machine's copy of the hook, POSIX or Windows. `~/.kerstel` is derived
+ * from the running user's home directory, so the path a teammate finds in a
+ * committed `bunfig.toml` is almost never the one that works here.
+ */
+const HOOK_PRELOAD_PATH = /[\\/]\.kerstel[\\/]hook[\\/]preload\.cjs$/;
+
+interface BunfigEntry {
+  /** Offset of the token within the array body. */
+  start: number;
+  end: number;
+  /** The path the token denotes, with TOML's quoting undone. */
+  path: string;
+}
+
+/**
+ * The entries of a single-line TOML array, or null when the body holds
+ * anything this deliberately small reader cannot account for (a bare value, a
+ * nested array, an inline table). Null means "do not reason about this line",
+ * which is the only honest answer for a file Kerstel does not own.
+ */
+function readBunfigEntries(body: string): BunfigEntry[] | null {
+  const found: BunfigEntry[] = [];
+  TOML_STRING.lastIndex = 0;
+  let remainder = body;
+  for (let match = TOML_STRING.exec(body); match !== null; match = TOML_STRING.exec(body)) {
+    const token = match[0];
+    const start = match.index;
+    const path =
+      token.startsWith("'")
+        ? token.slice(1, -1)
+        : (JSON.parse(token) as string);
+    found.push({ start, end: start + token.length, path });
+    remainder = remainder.replace(token, " ".repeat(token.length));
+  }
+  // Whatever the tokens did not cover has to be pure array punctuation.
+  if (!/^[\s,]*$/.test(remainder)) return null;
+  return found;
+}
+
 /**
  * Ensures the TOP-LEVEL `preload` array contains the hook.
  *
@@ -149,9 +192,27 @@ export function wireBunfig(source: string | null, preloadPath: string): BunfigWi
       const head = match[1] ?? "";
       const body = match[2] ?? "";
       const tail = match[3] ?? "";
-      if (body.includes(preloadPath)) {
+      const existing = readBunfigEntries(body);
+
+      // EXACT match, not a substring: "/hook/preload.cjs.disabled" contains
+      // "/hook/preload.cjs" and is a different file entirely.
+      if (existing?.some((item) => item.path === preloadPath)) {
         return { changed: false, created: false, contents: source };
       }
+
+      // A hook path from ANOTHER machine is REPLACED, never joined. `bunfig.toml`
+      // is committed and `~/.kerstel` is per-user, so a teammate who clones
+      // inherits a path that does not exist here -- and every `bun` invocation
+      // fails on it. Appending would leave the broken one behind forever.
+      const stale = existing?.find((item) => HOOK_PRELOAD_PATH.test(item.path));
+      if (stale) {
+        // Spliced by offset so every other entry, its quoting style, the
+        // spacing between them and any trailing comment survive byte for byte.
+        const patched = body.slice(0, stale.start) + entry + body.slice(stale.end);
+        parts[i] = `${head}[${patched}]${tail}`;
+        return { changed: true, created: false, contents: parts.join("") };
+      }
+
       const items = body.trim().replace(/,$/, "");
       parts[i] = `${head}[${items.length === 0 ? entry : `${items}, ${entry}`}]${tail}`;
       return { changed: true, created: false, contents: parts.join("") };
