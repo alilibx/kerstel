@@ -2,162 +2,78 @@
 
 <img src="docs/logo-dark.png" alt="Kerstel" width="200">
 
-**The Mac toolbar for developers**
+**Local-first secrets for Node and Bun projects**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)](https://www.apple.com/macos/sonoma/)
-[![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
-[![GitHub release](https://img.shields.io/github/v/release/alilibx/kerstel)](https://github.com/alilibx/kerstel/releases)
 
-System metrics, port management, and AI usage tracking — all from your menu bar. No Electron. No web views. No telemetry. Just Swift.
+Your `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. The real values live in an encrypted vault on your machine. No account, no cloud, no telemetry.
 
-[Install](#install) · [Features](#features) · [AI Usage](#ai-usage) · [CLI](#cli) · [Build from source](#build-from-source) · [Contributing](#contributing)
+[Problem](#the-problem) · [How it works](#how-it-works) · [Usage](#usage) · [Security](#security-model) · [Build from source](#build-from-source)
 
 </div>
 
 ---
 
-## Install
+## The problem
+
+`.env` and `.env.local` files hold secrets in plaintext. Anything that can read files — AI coding agents, editor plugins, accidental commits, backup tools — can read those secrets too. Existing solutions solve this with cloud accounts and explicit wrapper commands. Kerstel doesn't ask for either.
+
+## How it works
+
+Secrets are stored once, encrypted, in a local vault:
 
 ```bash
-curl -fsSL https://kerstel.dev/install.sh | bash
+kerstel set global/OPENAI_API_KEY --value sk-...
 ```
 
-Clones the repo, builds a release binary, creates a `.app` bundle in `~/Applications`, and sets up a launch agent to start on login. The **K** icon appears in your menu bar immediately — and Kerstel shows up in Spotlight.
-
-> **Requirements:** macOS 14 (Sonoma) or later · Swift (ships with [Xcode Command Line Tools](https://developer.apple.com/xcode/resources/))
-
-## Features
-
-| | Feature | Details |
-|---|---------|---------|
-| 🧠 | **Memory** | Total, used, free, active, wired, compressed, cached — with a usage bar |
-| ⚡ | **CPU** | User / system / idle %, 1/5/15 min load averages, chip name |
-| 💾 | **Disk** | Total / used / free GB, capacity percentage |
-| 🎮 | **GPU** | Chip name, core count, Metal version, VRAM |
-| 🔋 | **Battery** | Charge %, power source, charging state, time remaining |
-| 📊 | **Processes** | Top 5 by CPU or memory — name, PID, usage. Kill with one click |
-| 🌐 | **Ports** | Listening TCP ports — port, process name, full path, PID. Kill with one click |
-| 🧹 | **Cleanup** | Purge memory, clear user caches, flush DNS (requests admin) |
-| 🤖 | **AI Usage** | Track Claude, Cursor, and Codex quotas — plan, usage %, reset date |
-
-Four tabs: **Overview** (dashboard), **System** (detailed metrics), **Ports**, and **AI Usage**. System metrics refresh every 4 seconds. AI usage refreshes every 60 seconds.
-
-## AI Usage
-
-Kerstel tracks your AI coding tool quotas so you always know where you stand:
-
-- **Claude** — reads `~/.claude/.credentials.json`, calls the Anthropic usage API
-- **Cursor** — reads Cursor's session from Application Support, calls the Cursor usage API
-- **Codex** — reads `~/.codex/auth.json`, calls the OpenAI usage API
-
-Each provider shows: plan name, usage percentage with a color-coded progress bar, request counts, and reset date. Providers that aren't installed or authenticated are shown with a dimmed status.
-
-## CLI
-
-The installer adds a `kerstel` command to your PATH:
+Your `.env` file then holds a reference instead of the value:
 
 ```bash
-kerstel open          # Launch the menu bar app
-kerstel stop          # Stop the app
-kerstel restart       # Restart the app
-kerstel status        # Check if it's running
-kerstel update        # Pull latest version, rebuild, restart
-kerstel version       # Show installed version
-kerstel uninstall     # Remove everything
-kerstel help          # Show all commands
+# .env — safe to commit
+OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 ```
 
-> Closed the app by accident? Just run `kerstel open` or search "Kerstel" in Spotlight.
+A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
+
+## Usage
+
+```bash
+kerstel set <scope>/<KEY> [--value <value>]   # Store a secret (or pipe it on stdin)
+kerstel get <scope>/<KEY> [--reveal]          # Read a secret
+kerstel ls [--scope <scope>]                  # List stored references
+kerstel rm <scope>/<KEY> --yes                # Remove a secret
+kerstel run -- <command>                      # Run a command with references resolved
+kerstel resolve kerstel://<scope>/<KEY>       # Print one resolved value
+kerstel daemon <serve|start|stop|status>      # Manage the resolver daemon
+kerstel doctor                                # Diagnose this machine's setup
+```
+
+`kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`, with no wrapper command needed.
+
+## Security model
+
+- No plaintext secret ever sits in a project file. Reading, committing, or grepping `.env` yields only references.
+- Secrets are encrypted at rest with AES-256-GCM, one random nonce per value. The data key lives only in your OS credential store, never on disk in the clear.
+- A process that runs code in the project can still read resolved values from `process.env` — that's the boundary Kerstel draws today. See the [design spec](docs/superpowers/specs/2026-09-17-kerstel-secrets-manager-design.md) for the full threat model and the access-level protection planned on top of it.
 
 ## Build from source
+
+Requires [Bun](https://bun.sh).
 
 ```bash
 git clone https://github.com/alilibx/kerstel.git
 cd kerstel
-swift build -c release
-.build/release/Kerstel
+bun install
+bun run --cwd packages/cli build
 ```
 
-## Run tests
+This produces a single compiled binary at `dist/kerstel` — no Node or Bun runtime required to run it.
+
+### Run tests
 
 ```bash
-swift test
-```
-
-<details>
-<summary>Command Line Tools only (no Xcode)?</summary>
-
-```bash
-DYLD_FRAMEWORK_PATH=/Library/Developer/CommandLineTools/Library/Developer/Frameworks \
-swift test \
-  -Xswiftc -F/Library/Developer/CommandLineTools/Library/Developer/Frameworks \
-  -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks
-```
-
-</details>
-
-## Project structure
-
-```
-Sources/
-├── Kerstel/                  # Executable entry point
-│   └── main.swift
-├── KerstelCore/              # Library — all app logic
-│   ├── AppDelegate.swift     # Menu bar setup, popover, timers
-│   ├── IconGenerator.swift   # Draws the "K" icon
-│   ├── Models/
-│   │   ├── SystemMetrics.swift   # System data structs, AppTab enum
-│   │   └── AIUsageModels.swift   # AI provider models and state
-│   ├── Services/
-│   │   ├── ShellExecutor.swift   # Shell command abstraction
-│   │   ├── MetricsCollector.swift
-│   │   ├── PortManager.swift
-│   │   ├── CleanupService.swift
-│   │   ├── ProcessManager.swift
-│   │   └── AIUsageService.swift  # Claude, Cursor, Codex API client
-│   └── Views/
-│       ├── StatusBarView.swift   # Root view with 4-tab navigation
-│       ├── OverviewView.swift    # Dashboard with metric cards
-│       ├── AIUsageView.swift     # AI provider usage list
-│       ├── CPUView.swift
-│       ├── MemoryView.swift
-│       ├── DiskView.swift
-│       ├── GPUInfoView.swift
-│       ├── BatteryView.swift
-│       ├── ProcessListView.swift
-│       ├── PortsView.swift
-│       ├── CleanupView.swift
-│       └── Components/
-│           ├── TabBarView.swift      # 4-tab icon bar
-│           ├── OverviewCard.swift    # Dashboard metric card
-│           ├── AIProviderCard.swift  # AI provider status card
-│           ├── MetricProgressBar.swift
-│           └── SectionHeader.swift
-Resources/
-├── Info.plist                # App bundle metadata
-└── AppIcon.icns              # App icon for Spotlight/Finder
-Tests/
-└── KerstelTests/             # Tests with mock shell fixtures
-```
-
-## Update
-
-```bash
-kerstel update
-```
-
-Or manually:
-
-```bash
-cd ~/.kerstel && git pull && swift build -c release
-```
-
-## Uninstall
-
-```bash
-kerstel uninstall
-sudo rm /usr/local/bin/kerstel
+bun run typecheck
+bun test
 ```
 
 ## Contributing
@@ -167,7 +83,7 @@ Contributions are welcome! Here's how:
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Run the tests (`swift test`)
+4. Run the tests (`bun test`)
 5. Commit (`git commit -m 'Add my feature'`)
 6. Push (`git push origin feature/my-feature`)
 7. Open a Pull Request
@@ -181,8 +97,6 @@ Please keep PRs focused — one feature or fix per PR.
 ---
 
 <div align="center">
-
-Built with Swift on macOS.
 
 **[kerstel.dev](https://kerstel.dev)**
 
