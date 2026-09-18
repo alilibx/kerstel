@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initCommand, parseInitArgs, runInit, type InitOptions } from "../src/commands/init";
@@ -39,8 +39,18 @@ async function openTestVault<T>(use: (vault: Vault) => T): Promise<T> {
   }
 }
 
+/**
+ * Every throwaway directory this file creates, removed in afterEach.
+ *
+ * It is not tidiness: an abandoned KERSTEL_HOME holds the file backend's data
+ * key, a vault.db with real secrets in it, and an encrypted backup. Leaving
+ * one per test in /tmp is leaving the material to decrypt them next to them.
+ */
+const createdDirs: string[] = [];
+
 function makeProject(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "kerstel-init-"));
+  createdDirs.push(root);
   for (const [name, contents] of Object.entries(files)) writeFileSync(join(root, name), contents);
   return root;
 }
@@ -65,7 +75,21 @@ afterEach(async () => {
   handle = null;
   if (daemonVault) daemonVault.close();
   daemonVault = null;
+
+  // isolateEnv() mints the home itself, so read it back before restoreEnv()
+  // puts the real one back. The tmpdir() guard is what makes this safe to run
+  // unconditionally: a test that never isolated must not delete a developer's
+  // actual ~/.kerstel.
+  const home = process.env.KERSTEL_HOME;
+  if (home && home.startsWith(tmpdir())) createdDirs.push(home);
   restoreEnv();
+
+  // Pop-driven so cleanup still finishes if one rmSync throws, and so a
+  // failing assertion earlier in the test cannot skip it.
+  while (createdDirs.length > 0) {
+    const dir = createdDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("collectKeys applies the documented precedence and records conflicts", () => {
@@ -379,4 +403,58 @@ test("the printed diff masks the plaintext it is about to remove", async () => {
   // The mask tells the user the shape and size and nothing else.
   expect(output).toContain("SECRET_TOKEN=\u00ab22-chars-opaque\u00bb");
   expect(output).toContain("QUOTED_TOKEN=\"\u00ab20-chars-opaque\u00bb\" # note");
+});
+
+test("the diff masks every value it is not migrating, parsed or not", async () => {
+  isolateEnv({ prefix: "init-nokeep-leak" });
+  await bootLocalDaemon();
+
+  // PRIVATE_KEY opens a quote that never closes on its line, so the parser
+  // refuses it: it is never collected and so never appears in the rewrite
+  // map. Its continuation lines are raw lines the parser cannot classify at
+  // all. Both sit BETWEEN two migrated keys, which puts them inside
+  // renderDiff's single hunk.
+  const envSource = [
+    "DATABASE_URL=postgres://u:pw@localhost:5432/app",
+    'PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----',
+    "MIIEowIBAAKCAQEAsecretkeymaterial",
+    '-----END RSA PRIVATE KEY-----"',
+    "KEEP_ME=kept-plaintext-value",
+    "OPENAI_API_KEY=sk-a-real-looking-key",
+    "",
+  ].join("\n");
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": envSource });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(
+      options(root, ["--keep", "KEEP_ME"]),
+      new ScriptedPrompter(["project", "global", true]),
+    );
+  } finally {
+    console.log = realLog;
+  }
+  expect(code).toBe(0);
+
+  const output = captured.join("\n");
+  expect(output).not.toContain("MIIEowIBAAKCAQEAsecretkeymaterial");
+  expect(output).not.toContain("BEGIN RSA PRIVATE KEY");
+  expect(output).not.toContain("kept-plaintext-value");
+  expect(output).not.toContain("pw@localhost");
+  expect(output).not.toContain("sk-a-real-looking-key");
+  // The diff is still a diff: it names what changed, and masks what did not.
+  expect(output).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
+  expect(output).toContain("OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY");
+  expect(output).toContain("KEEP_ME=«20-chars-opaque»");
+
+  // Masking is a DISPLAY concern. The bytes on disk keep the unsupported
+  // value and the kept value exactly as the developer wrote them.
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain('PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAsecretkeymaterial\n-----END RSA PRIVATE KEY-----"');
+  expect(env).toContain("KEEP_ME=kept-plaintext-value");
+  expect(env).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
+  expect(env).toContain("OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY");
 });

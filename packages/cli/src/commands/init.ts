@@ -6,7 +6,7 @@ import { SUGGESTIONS, suggest, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
 import { detectProject, type DetectedProject } from "../init/detect";
-import { lookup, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
+import { parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import {
   DefaultsPrompter,
@@ -205,11 +205,10 @@ interface FileChange {
   /** The bytes to write once the user has said yes. */
   after: string;
   /**
-   * The two sides of the diff the user is shown. Every value this rewrite
-   * REMOVES is replaced by its `describeValue` mask, so the diff is a full,
-   * honest, line-for-line diff of the file without being a printed copy of
-   * the secrets -- rule 1 above. `after` is safe to show as it stands: by
-   * definition it holds references and nothing else.
+   * The two sides of the diff the user is shown: the same file with every
+   * value masked (see `maskForDisplay`), so the diff is a full, honest,
+   * line-for-line diff without being a printed copy of the secrets -- rule 1
+   * above.
    */
   diffBefore: string;
   diffAfter: string;
@@ -224,6 +223,70 @@ function redact(value: string): string {
   return `«${describeValue(value).replace(/,?\s+/g, "-")}»`;
 }
 
+/** Stands in for a line the parser could not classify at all. */
+const UNPARSED_MASK = "«unparsed-line-left-untouched»";
+/** A raw line that cannot be hiding a value: empty, whitespace, or a comment. */
+const BLANK_OR_COMMENT = /^\s*(#.*)?$/;
+
+/**
+ * One `.env` file rendered for DISPLAY: every value that is not already a
+ * `kerstel://` reference is replaced by its `describeValue` mask, keeping the
+ * key, the `export` prefix, the quoting style and any inline comment.
+ *
+ * It masks EVERY value, not only the ones this run migrates. Rule 1 has no
+ * exceptions, and `renderDiff` produces a SINGLE HUNK -- it prints every line
+ * from the first difference to the last verbatim -- so a value the wizard is
+ * deliberately leaving alone still reaches the terminal whenever it happens to
+ * sit between two rewritten keys. That covers `--keep`, a "plaintext" answer,
+ * and a value the parser refused.
+ *
+ * Applied to BOTH sides, which has a second benefit: an untouched key masks to
+ * the same text on each side, so its line is identical and falls out of the
+ * hunk rather than showing up as a spurious edit.
+ *
+ * A raw line is masked unless it is blank or a comment. A `.env` line that is
+ * neither a pair nor a comment is either the opening of a multi-line quoted
+ * value or one of its continuation lines -- precisely the material the parser
+ * has just told us it cannot reason about, and which `DotenvFile.unsupported`
+ * records only the first line of.
+ */
+function maskForDisplay(source: string): string {
+  const file = parseDotenv(source);
+  const unsupportedKeys = new Map(file.unsupported.map((entry) => [entry.line, entry.key]));
+
+  let out = "";
+  for (let i = 0; i < file.lines.length; i += 1) {
+    const line = file.lines[i]!;
+
+    if (line.kind === "pair") {
+      // A value that is ALREADY a reference is not a secret and keeps its own
+      // text -- masking it would invent a diff line for a key nothing touches.
+      if (parseReference(line.value) !== null) {
+        out += line.text + line.eol;
+        continue;
+      }
+      const mask = redact(line.value);
+      // The mask contains no whitespace, quote, `#` or backslash, so wrapping
+      // it in the line's own quotes is all the rendering it needs.
+      const rendered = line.quote === "" ? mask : `${line.quote}${mask}${line.quote}`;
+      out += line.text.slice(0, line.valueStart) + rendered + line.text.slice(line.valueEnd) + line.eol;
+      continue;
+    }
+
+    if (BLANK_OR_COMMENT.test(line.text)) {
+      out += line.text + line.eol;
+      continue;
+    }
+
+    // `unsupported` is 1-based, and naming the key matches the warning the
+    // wizard already printed for this line.
+    const key = unsupportedKeys.get(i + 1);
+    out += (key === undefined ? UNPARSED_MASK : `${key}=${UNPARSED_MASK}`) + line.eol;
+  }
+
+  return out;
+}
+
 function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string>): FileChange[] {
   const changes: FileChange[] = [];
   for (const entry of loaded) {
@@ -234,22 +297,12 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
     const after = serializeDotenv(copy);
     if (after === entry.original) continue;
 
-    const masked = parseDotenv(entry.original);
-    for (const key of references.keys()) {
-      const current = lookup(masked, key);
-      // A value that is ALREADY a reference is not a secret and must keep its
-      // own text: masking it would invent a diff line for a key this run does
-      // not touch.
-      if (current === null || parseReference(current) !== null) continue;
-      setValue(masked, key, redact(current));
-    }
-
     changes.push({
       path: entry.info.path,
       label: entry.info.name,
       after,
-      diffBefore: serializeDotenv(masked),
-      diffAfter: after,
+      diffBefore: maskForDisplay(entry.original),
+      diffAfter: maskForDisplay(after),
     });
   }
   return changes;
