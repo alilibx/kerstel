@@ -35,17 +35,24 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
     ["global", "Vault, shared by all your projects"],
     ["plaintext", `Stays in ${fileNames.join(", ")} as plain text`],
   ];
+  // One table over every row, so the columns line up across groups; the
+  // group titles are slotted in between its lines afterwards.
+  const ordered = groups.map(([target, title]) => ({
+    title,
+    members: rows.filter((row) => row.target === target),
+  }));
+  const table = renderTable(
+    ordered.flatMap(({ members }) =>
+      members.map((row) => [row.key, valueColumn(row.value, row.showValue), dim(row.source)]),
+    ),
+    { indent: 2 },
+  );
   const lines: string[] = [];
-  for (const [target, title] of groups) {
-    const members = rows.filter((row) => row.target === target);
+  let next = 0;
+  for (const { title, members } of ordered) {
     if (members.length === 0) continue;
-    lines.push(`${title} (${members.length})`);
-    lines.push(
-      ...renderTable(
-        members.map((row) => [row.key, valueColumn(row.value, row.showValue), dim(row.source)]),
-        { indent: 2 },
-      ),
-    );
+    lines.push(`${title} (${members.length})`, ...table.slice(next, next + members.length));
+    next += members.length;
   }
   for (const row of rows.filter((r) => r.conflicts.length > 0)) {
     lines.push("");

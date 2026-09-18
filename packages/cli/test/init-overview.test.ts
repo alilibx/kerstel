@@ -58,3 +58,15 @@ test("the change summary is one line per file", () => {
     ".gitignore: 2 lines hiding .env files are removed",
   ]);
 });
+
+test("the key and value columns line up across every group", () => {
+  const lines = renderOverview(rows, "whasal", [".env"]);
+  const column = (key: string, needle: string): number => {
+    const line = lines.find((l) => l.trimStart().startsWith(`${key} `))!;
+    return Bun.stringWidth(line.slice(0, line.indexOf(needle)));
+  };
+  const vault = column("DATABASE_URL", "••••");
+  expect(column("OPENAI_API_KEY", "••••")).toBe(vault);
+  expect(column("PORT", "3000")).toBe(vault);
+  expect(column("PORT", ".env")).toBe(column("OPENAI_API_KEY", ".env"));
+});

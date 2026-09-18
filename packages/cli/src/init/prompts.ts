@@ -1,5 +1,4 @@
 import * as clack from "@clack/prompts";
-import { dim } from "../output";
 
 /**
  * One question-asking interface with three implementations, so the wizard's
@@ -54,15 +53,17 @@ export class CancelledError extends Error {
   }
 }
 
-const MOVE_HINT = dim("↑/↓ to move · Enter to confirm");
-const TOGGLE_HINT = dim("Space to toggle · Enter to confirm");
-
 function settled<T>(value: T | symbol): T {
   if (clack.isCancel(value)) throw new CancelledError();
   return value as T;
 }
 
-/** The interactive default: arrow-key menus, checklists, masked input. Spec §4.4. */
+/**
+ * The interactive default: arrow-key menus, checklists, masked input. Spec §4.4.
+ * The message is the bare question: clack draws its own key-hint footer under
+ * select ("↑/↓ to navigate • Enter: confirm") and multiselect (plus "Space:
+ * select"), and drops it once answered, which is what spec §4.3 asks for.
+ */
 export class ClackPrompter implements Prompter {
   async confirm(question: string, defaultValue: boolean): Promise<boolean> {
     return settled<boolean>(await clack.confirm({ message: question, initialValue: defaultValue }));
@@ -77,7 +78,7 @@ export class ClackPrompter implements Prompter {
     const options = choices.map((choice) => ({ value: choice.value, label: choice.label, hint: choice.hint }));
     return settled<T>(
       await clack.select({
-        message: `${question}\n${MOVE_HINT}`,
+        message: question,
         options: options as unknown as clack.Option<T>[],
         initialValue: defaultValue,
       }),
@@ -88,7 +89,7 @@ export class ClackPrompter implements Prompter {
     const options = choices.map((choice) => ({ value: choice.value, label: choice.label, hint: choice.hint }));
     return settled<T[]>(
       await clack.multiselect({
-        message: `${question}\n${TOGGLE_HINT}`,
+        message: question,
         options: options as unknown as clack.Option<T>[],
         initialValues: initial,
         required: false,
