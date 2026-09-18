@@ -42,7 +42,11 @@ detect_asset() {
     Darwin) os="darwin" ;;
     Linux)
       os="linux"
-      if [ -f /etc/alpine-release ] || (ldd --version 2>&1 | grep -qi musl); then
+      # musl's ldd exits 1 on --version, so capture its output rather than
+      # piping it: under pipefail the pipe would fail even when grep matches.
+      local ldd_out=""
+      if command -v ldd >/dev/null 2>&1; then ldd_out="$(ldd --version 2>&1 || true)"; fi
+      if [ -f /etc/alpine-release ] || printf '%s' "$ldd_out" | grep -qi musl; then
         unsupported "musl-based Linux (such as Alpine)"
       fi
       ;;

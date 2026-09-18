@@ -120,6 +120,15 @@ test("an unsupported platform is refused with a build-from-source link", async (
   expect(existsSync(join(installDir, "kerstel"))).toBe(false);
 });
 
+test("a musl libc is refused even though its ldd --version exits 1", async () => {
+  shim("ldd", 'echo "musl libc (x86_64)" >&2; exit 1');
+  const result = await install({ FAKE_OS: "Linux", FAKE_ARCH: "x86_64" });
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("musl");
+  expect(result.stderr).toContain("not supported yet");
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});
+
 test("prints a PATH hint only when the install directory is not on PATH", async () => {
   const missing = await install({});
   expect(missing.stdout).toContain("is not on your PATH");
