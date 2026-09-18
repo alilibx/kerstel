@@ -488,3 +488,59 @@ test("init warns about a key it cannot parse and never prints its value", async 
   expect(env).toContain("MY-KEY=dash-secret-value");
   expect(env).toContain("GOOD_KEY=kerstel://demo-app/GOOD_KEY");
 });
+
+test("the .gitignore offer names the keys that still hold plaintext", async () => {
+  isolateEnv({ prefix: "init-gitignore-plain" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "KEEP_ME=kept-plaintext-value\nMIGRATE_ME=migrated-secret-value\n",
+    ".gitignore": "node_modules/\n.env\n",
+  });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(
+      options(root, ["--keep", "KEEP_ME"]),
+      new ScriptedPrompter(["project", true, false]),
+    );
+  } finally {
+    console.log = realLog;
+  }
+  expect(code).toBe(0);
+
+  const output = captured.join("\n");
+  expect(output).toContain("1 key still holds a plaintext value: KEEP_ME");
+  expect(output).toContain("committing these files would expose");
+  expect(output).not.toContain("kept-plaintext-value");
+  // The reassuring sentence is a claim, and here it would be a false one.
+  expect(output).not.toContain("they now hold references, not secrets");
+});
+
+test("the .gitignore offer reassures only when every value is a reference", async () => {
+  isolateEnv({ prefix: "init-gitignore-clean" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "MIGRATE_ME=migrated-secret-value\n",
+    ".gitignore": "node_modules/\n.env\n",
+  });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter(["project", true, false]))).toBe(0);
+  } finally {
+    console.log = realLog;
+  }
+
+  const output = captured.join("\n");
+  expect(output).toContain("They now hold references, not secrets");
+  expect(output).not.toContain("still holds a plaintext value");
+});

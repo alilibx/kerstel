@@ -5,8 +5,8 @@ import { cliCommand } from "../daemon/spawn";
 import { SUGGESTIONS, suggest, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
-import { detectProject, type DetectedProject } from "../init/detect";
-import { parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
+import { detectProject, type DetectedProject, type EnvFileInfo } from "../init/detect";
+import { entries, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import {
   DefaultsPrompter,
@@ -308,8 +308,35 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
   return changes;
 }
 
+/**
+ * Every key in the REWRITTEN files whose value is still plaintext.
+ *
+ * Re-read from disk rather than inferred from the plan: `--keep`, a
+ * "plaintext" answer and a line the parser refused all leave a real value
+ * behind, and the question this answers -- "is it safe to commit these
+ * files?" -- may only be answered by what the files actually say.
+ */
+function plaintextKeysRemaining(files: EnvFileInfo[]): string[] {
+  const remaining: string[] = [];
+  for (const entry of loadEnvFiles(files)) {
+    for (const pair of entries(entry.file)) {
+      if (parseReference(pair.value) !== null) continue;
+      if (!remaining.includes(pair.key)) remaining.push(pair.key);
+    }
+    // A line the parser could not read is a line that was never rewritten.
+    for (const unsupported of entry.file.unsupported) {
+      if (!remaining.includes(unsupported.key)) remaining.push(unsupported.key);
+    }
+  }
+  return remaining;
+}
+
 /** Spec §8 step 5. Default NO: committing `.env` is the user's call, not ours. */
-async function offerGitignore(root: string, prompter: Prompter): Promise<void> {
+async function offerGitignore(
+  root: string,
+  envFiles: EnvFileInfo[],
+  prompter: Prompter,
+): Promise<void> {
   const path = join(root, ".gitignore");
   if (!existsSync(path)) return;
 
@@ -324,7 +351,20 @@ async function offerGitignore(root: string, prompter: Prompter): Promise<void> {
 
   console.log("");
   info(`.gitignore hides your env files: ${hidden.join(", ")}`);
-  info("They now hold references, not secrets, so committing them gives teammates a living .env.example.");
+
+  // Names only. `plaintextKeysRemaining` returns keys, never values.
+  const plaintext = plaintextKeysRemaining(envFiles);
+  if (plaintext.length > 0) {
+    console.log(
+      yellow(
+        `!  ${plaintext.length} key${plaintext.length === 1 ? " still holds a plaintext value" : "s still hold plaintext values"}: ` +
+          `${plaintext.join(", ")} — committing these files would expose them.`,
+      ),
+    );
+  } else {
+    info("They now hold references, not secrets, so committing them gives teammates a living .env.example.");
+  }
+
   const remove = await prompter.confirm(
     "Remove those lines from .gitignore so the reference-only files can be committed?",
     false,
@@ -588,7 +628,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       ok(`${bunfigWiring.created ? "Created" : "Updated"} bunfig.toml with the Kerstel preload.`);
     }
 
-    await offerGitignore(detected.root, prompter);
+    await offerGitignore(detected.root, detected.envFiles, prompter);
 
     // --- Step 7: self-check -------------------------------------------------
     const probeDecision = decisions.find((decision) => decision.target !== "plaintext");
