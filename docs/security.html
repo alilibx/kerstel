@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security model · Kerstel</title>
+<meta name="description" content="What Kerstel protects, how values are encrypted, where the key lives, and the boundary it draws today.">
+<link rel="canonical" href="https://kerstel.dev/security">
+<meta property="og:title" content="Security model · Kerstel">
+<meta property="og:description" content="What Kerstel protects, how values are encrypted, where the key lives, and the boundary it draws today.">
+<meta property="og:url" content="https://kerstel.dev/security">
+<meta property="og:image" content="https://kerstel.dev/logo-white.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+
+<main class="wrap">
+<h1>Security model</h1>
+<p class="lede">Kerstel protects secrets at the file level today and is built to add access-level protection next. This page says exactly what that means.</p><h2>What is protected</h2>
+<p>No plaintext secret ever sits in a project file. Your <code>.env</code>, <code>.env.local</code>, and their variants hold references of the form <code>kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.</p>
+<p>The values live in a single vault on your machine at <code>~/.kerstel/vault.db</code>. Nothing is sent anywhere. Kerstel makes no network calls, has no account, and collects no telemetry.</p>
+<h2>Encryption at rest</h2>
+<p>Every value is encrypted with AES-256-GCM using a fresh random 96-bit nonce. The authentication tag is verified on every read, so a tampered ciphertext fails loudly instead of decrypting to garbage.</p>
+<p>The 256-bit data key is generated on first run and stored only in your operating system&#39;s credential store:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Store</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>macOS</td>
+<td>Keychain</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>Secret Service (libsecret)</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>Credential Manager (DPAPI)</td>
+</tr>
+</tbody></table>
+</div><p>The key is never written to the vault file, never logged, and never printed. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with <code>0600</code> permissions and warns you every time it does.</p>
+<h2>Where plaintext appears</h2>
+<p>Plaintext leaves the vault in exactly four places:</p>
+<ol>
+<li>Inside your app&#39;s process, when code reads <code>process.env.SOME_KEY</code> and the runtime hook resolves the reference.</li>
+<li>In the environment of a child process started by <code>kerstel run -- &lt;command&gt;</code>, or spawned by a process already running under the hook.</li>
+<li>On your terminal, only when you ask with <code>kerstel get &lt;scope&gt;/&lt;KEY&gt; --reveal</code>.</li>
+<li>On your terminal, when you run <code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>, which prints the resolved value to stdout.</li>
+</ol>
+<p>Plaintext never appears in log output, error messages, or audit rows.</p>
+<h2>The boundary today</h2>
+<p>A process that runs code inside your project can read resolved values from <code>process.env</code>. That includes your app, its dependencies, and anything you launch through your package scripts. Kerstel does not try to stop code you chose to run from reading a secret you chose to give it.</p>
+<p>This is file-level protection. It closes the most common leaks: agents and tools that read files, and secrets that end up in git history.</p>
+<h2>What comes next</h2>
+<p>The resolver daemon already sees which process asks for which key. The next protection level uses that: an unrecognized process asking for a key triggers an approval prompt, the way macOS asks before an app reads a Keychain item. Allowlists and Touch ID or polkit for sensitive operations follow. The current design keeps resolution lazy and daemon-mediated so this layer can be added without changing how you wire a project.</p>
+<h2>Out of scope</h2>
+<p>Kerstel does not defend against an attacker with root, a compromised OS credential store, or malicious code running after it has been granted a secret.</p>
+<h2>Read more</h2>
+<p>The full threat model, architecture, and roadmap are in the <a href="https://github.com/alilibx/kerstel/blob/main/docs/superpowers/specs/2026-09-17-kerstel-secrets-manager-design.md">design spec on GitHub</a>.</p>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>

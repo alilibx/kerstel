@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Working with a team · Kerstel</title>
+<meta name="description" content="Commit references instead of values, and fill each teammate's local vault from the same file.">
+<link rel="canonical" href="https://kerstel.dev/docs/teams">
+<meta property="og:title" content="Working with a team · Kerstel">
+<meta property="og:description" content="Commit references instead of values, and fill each teammate's local vault from the same file.">
+<meta property="og:url" content="https://kerstel.dev/docs/teams">
+<meta property="og:image" content="https://kerstel.dev/logo-white.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/cli">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams" aria-current="page">Working with a team</a></li></ul></nav>
+<main class="wrap">
+<h1>Working with a team</h1>
+<p class="lede">The committed <code>.env</code> is the contract. Each machine holds its own vault.</p><h2>Commit the references</h2>
+<p>Once every value in <code>.env</code> is a reference, the file contains nothing sensitive. Commit it. It doubles as a living <code>.env.example</code> that can never drift from what the app reads, because it is what the app reads.</p>
+<pre><code class="language-bash"># .env, committed
+DATABASE_URL=kerstel://myapp/DATABASE_URL
+OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
+STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
+</code></pre>
+<p>If <code>.env</code> is in <code>.gitignore</code>, remove it there only after every value is a reference. <code>git grep &quot;=sk-&quot;</code> and similar checks stay useful as a guard.</p>
+<h2>Onboard a teammate</h2>
+<p>A new clone has the references but an empty vault for that project. The committed <code>.env</code> is already the list of what the project needs; each missing key is set once, piping the value on stdin so it never lands in shell history:</p>
+<pre><code class="language-bash">git clone git@github.com:acme/myapp.git &amp;&amp; cd myapp
+printf %s &quot;$DATABASE_URL&quot; | kerstel set myapp/DATABASE_URL
+printf %s &quot;$STRIPE_SECRET_KEY&quot; | kerstel set myapp/STRIPE_SECRET_KEY
+kerstel ls --scope myapp
+kerstel run -- npm run dev
+</code></pre>
+<p><code>kerstel ls --scope myapp</code> now shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.</p>
+<h2>Share values out of band</h2>
+<p>How the value reaches a teammate is up to you: a password manager share, a secure channel, or your cloud provider&#39;s console. Kerstel&#39;s job is that the value lands in a local vault and nowhere else in the repo.</p>
+<h2>Rotate a secret</h2>
+<p>Rotation is a <code>set</code> on each machine:</p>
+<pre><code class="language-bash">printf %s &quot;$NEW_KEY&quot; | kerstel set myapp/STRIPE_SECRET_KEY
+</code></pre>
+<p>No project file changes, no commit, no redeploy of configuration. Restart the app so the hook&#39;s per-process memo refreshes.</p>
+<h2>Coming later</h2>
+<p>The roadmap includes optional end-to-end encrypted sync and shared vaults, with keys that stay on your devices. Until then the workflow above needs nothing beyond git and the CLI.</p>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>
