@@ -85,6 +85,18 @@ describe("renderPage", () => {
     expect(html).toContain('<meta content="&quot;quoted&quot;">');
   });
 
+  test("wraps a rendered table in a scrollable container", () => {
+    const html = renderPage({
+      page: { ...cli, body: "| A | B |\n| --- | --- |\n| 1 | 2 |" },
+      pages: all,
+      layout,
+      siteUrl: "https://kerstel.dev",
+    });
+    expect(html).toContain('<div class="table-wrap"><table>');
+    expect(html).toContain("</table>\n</div>");
+    expect(html).toContain("<th>A</th>");
+  });
+
   test("throws on an unknown slot", () => {
     expect(() => renderPage({ page: home, pages: all, layout: "{{bogus}}", siteUrl: "https://kerstel.dev" })).toThrow(
       "layout uses unknown slot {{bogus}}",

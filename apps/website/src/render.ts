@@ -1,4 +1,5 @@
 import { marked } from "marked";
+import type { Renderer, Tokens } from "marked";
 import type { Page } from "./pages";
 
 export interface RenderInput {
@@ -7,6 +8,18 @@ export interface RenderInput {
   layout: string;
   siteUrl: string;
 }
+
+// Tables overflow the 375px viewport unless every one of them scrolls inside
+// its own box. Wrap the default table HTML rather than reimplementing it, so
+// gfm table features (alignment, inline formatting in cells) keep working.
+const defaultTable = marked.Renderer.prototype.table;
+marked.use({
+  renderer: {
+    table(this: Renderer, token: Tokens.Table): string {
+      return `<div class="table-wrap">${defaultTable.call(this, token)}</div>`;
+    },
+  },
+});
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

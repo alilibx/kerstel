@@ -29,7 +29,6 @@ body {
   display: flex;
   flex-direction: column;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
 }
 
 .wrap {
@@ -149,7 +148,8 @@ main li + li { margin-top: 4px; }
 main .lede { font-size: 18px; color: var(--text-secondary); }
 main hr { border: 0; border-top: 1px solid var(--surface-border); margin: 32px 0; }
 
-main table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14.5px; }
+main .table-wrap { overflow-x: auto; max-width: 100%; margin: 16px 0; }
+main table { min-width: 100%; border-collapse: collapse; margin: 0; font-size: 14.5px; }
 main th, main td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--surface-border); vertical-align: top; }
 main th { color: var(--text-secondary); font-weight: 500; }
 main td code { white-space: nowrap; }
@@ -160,6 +160,8 @@ main td code { white-space: nowrap; }
   position: relative;
   text-align: center;
   padding: 72px 0 40px;
+  overflow-x: clip;
+  overflow-clip-margin: 100vw;
 }
 .hero::before {
   content: "";

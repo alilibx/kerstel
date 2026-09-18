@@ -1,5 +1,5 @@
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { collectPages } from "./pages";
 import { renderPage } from "./render";
 
@@ -20,8 +20,25 @@ export interface BuildOptions {
   outDir: string;
 }
 
-/** Removes everything in outDir except the preserved entries. Creates outDir if needed. */
+/**
+ * Removes everything in outDir except the preserved entries. Creates outDir
+ * if needed.
+ *
+ * Refuses to touch a directory that looks like a source tree rather than a
+ * built site: one that holds a `package.json`, or one that is (or contains)
+ * this package's own `src`. A bad `--out` value -- a typo, a bug in the
+ * caller, or an argument this build script failed to reject -- must not be
+ * able to delete real source.
+ */
 export function cleanOutput(outDir: string): void {
+  if (existsSync(join(outDir, "package.json"))) {
+    throw new Error(`refusing to clean ${outDir}: it contains a package.json, which looks like a source tree`);
+  }
+  const rel = relative(outDir, SRC);
+  if (rel === "" || !rel.startsWith("..")) {
+    throw new Error(`refusing to clean ${outDir}: it is this package's own source tree (or an ancestor of it)`);
+  }
+
   mkdirSync(outDir, { recursive: true });
   for (const entry of readdirSync(outDir)) {
     if (PRESERVE.has(entry)) continue;

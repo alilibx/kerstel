@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { extname, join, relative } from "node:path";
-import { build } from "../src/build";
+import { extname, join, relative, resolve } from "node:path";
+import { build, cleanOutput } from "../src/build";
 
 /** Every page the site must ship. Later tasks append to this list. */
 const EXPECTED_PAGES = [
@@ -126,5 +126,18 @@ describe("build output", () => {
     expect(existsSync(join(dir, "stale.html"))).toBe(false);
     expect(existsSync(join(dir, "old"))).toBe(false);
     expect(existsSync(join(dir, "index.html"))).toBe(true);
+  });
+
+  test("cleanOutput refuses a directory that contains a package.json", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kerstel-guard-"));
+    writeFileSync(join(dir, "package.json"), "{}");
+    expect(() => cleanOutput(dir)).toThrow(/package\.json/);
+  });
+
+  test("cleanOutput refuses the package's own src ancestor", () => {
+    const websiteDir = resolve(import.meta.dir, "..");
+    // websiteDir also has its own package.json, so either guard is enough to
+    // refuse it; what matters is that it refuses, never that it deletes.
+    expect(() => cleanOutput(websiteDir)).toThrow(/source tree/);
   });
 });

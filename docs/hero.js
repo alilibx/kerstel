@@ -5,6 +5,7 @@
   if (!val) return;
 
   var card = val.closest(".terminal");
+  if (!card) return;
   var PLAIN = "sk-live-4f9c1e7b2a8d03e6";
   var REF = "kerstel://global/OPENAI_API_KEY";
 

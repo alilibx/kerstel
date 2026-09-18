@@ -36,4 +36,13 @@ describe("collectPages", () => {
     expect(pages[0]?.meta).toEqual({ title: "CLI", description: "C", section: "docs", order: 2 });
     expect(pages[1]).toMatchObject({ url: "/", outPath: "index.html" });
   });
+
+  test("throws an error naming the offending page's relative source path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kerstel-pages-bad-"));
+    mkdirSync(join(dir, "docs"));
+    writeFileSync(join(dir, "index.md"), "---\ntitle: Home\ndescription: H\n---\nhome");
+    writeFileSync(join(dir, "docs", "broken.md"), "---\ntitle: Broken\nno colon here\n---\nbroken");
+
+    expect(() => collectPages(dir)).toThrow("docs/broken.md");
+  });
 });

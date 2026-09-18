@@ -30,7 +30,7 @@
 <main class="wrap">
 <h1>CLI reference</h1>
 <p class="lede">All commands take a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p><h2>Secrets</h2>
-<table>
+<div class="table-wrap"><table>
 <thead>
 <tr>
 <th>Command</th>
@@ -54,8 +54,8 @@
 <td>Remove a secret. <code>--yes</code> is required; there is no interactive confirmation.</td>
 </tr>
 </tbody></table>
-<h2>Running code</h2>
-<table>
+</div><h2>Running code</h2>
+<div class="table-wrap"><table>
 <thead>
 <tr>
 <th>Command</th>
@@ -71,8 +71,8 @@
 <td>Print one resolved value. Useful in scripts.</td>
 </tr>
 </tbody></table>
-<h2>Daemon and diagnostics</h2>
-<table>
+</div><h2>Daemon and diagnostics</h2>
+<div class="table-wrap"><table>
 <thead>
 <tr>
 <th>Command</th>
@@ -100,8 +100,8 @@
 <td>Diagnose this machine: vault, credential store, daemon, and project wiring.</td>
 </tr>
 </tbody></table>
-<h2>Environment variables</h2>
-<table>
+</div><h2>Environment variables</h2>
+<div class="table-wrap"><table>
 <thead>
 <tr>
 <th>Variable</th>
@@ -117,7 +117,7 @@
 <td>Force a credential store backend. Set to <code>file</code> for a <code>0600</code> key file instead of the OS store. Kerstel warns whenever this fallback is in use.</td>
 </tr>
 </tbody></table>
-<h2>Exit codes</h2>
+</div><h2>Exit codes</h2>
 <p>Commands exit <code>0</code> on success and non-zero on any failure. Errors go to stderr and name the fix, usually <code>kerstel doctor</code>. Plaintext values never appear in error output.</p>
 
 </main>
