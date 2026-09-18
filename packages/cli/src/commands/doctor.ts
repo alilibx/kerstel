@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { openContext } from "../context";
 import { isDaemonRunning } from "../daemon/client";
+import { projectStatus } from "../init/status";
 import { bold, info, ok, yellow } from "../output";
 import { hookDir, kerstelHome, socketPath, tokenPath, vaultPath } from "../paths";
 
@@ -29,7 +30,7 @@ function modeReport(path: string, expected: number): string {
   return `  (mode ${shown})`;
 }
 
-export async function doctorCommand(): Promise<number> {
+export async function doctorCommand(cwd: string = process.cwd()): Promise<number> {
   const ctx = await openContext();
   try {
     console.log(bold("Kerstel doctor"));
@@ -73,6 +74,36 @@ export async function doctorCommand(): Promise<number> {
             "descriptor.",
         ),
       );
+    }
+
+    // Spec §6.3: wiring problems are diagnosed here, in the project, because
+    // that is where they are: a machine can be perfectly set up and a project
+    // still unwired.
+    const project = projectStatus(cwd, ctx.vault, ctx.hookDir);
+    if (project) {
+      console.log("");
+      console.log(bold("Project"));
+      info(`Root:       ${project.root}`);
+      info(
+        `Scope:      ${project.scope ?? yellow("could not be derived — pass --scope to `kerstel init`")}`,
+      );
+      info(`Runtime:    ${project.runtime} (${project.packageManager})`);
+      info(
+        `Scripts:    ${project.scripts.wired} of ${project.scripts.wrappable} script${project.scripts.wrappable === 1 ? "" : "s"} wired through \`kerstel exec\`` +
+          (project.scripts.wired < project.scripts.wrappable ? yellow("  (run `kerstel init`)") : ""),
+      );
+      if (project.bunfig !== "not-applicable") {
+        info(
+          `bunfig:     preload ${project.bunfig}` +
+            (project.bunfig === "present" ? "" : yellow("  (run `kerstel init`)")),
+        );
+      }
+      info(
+        `References: ${project.references.resolvable} of ${project.references.total} reference${project.references.total === 1 ? "" : "s"} in ${project.envFiles.join(", ") || "no env files"} resolve here`,
+      );
+      for (const missing of project.references.unresolved) {
+        console.log(yellow(`!  ${missing} has no value in this vault. Run \`kerstel init\` to supply it.`));
+      }
     }
 
     if (await isDaemonRunning()) ok("Daemon is running.");
