@@ -33,6 +33,32 @@ test("projectStatus returns null outside a project", () => {
   expect(projectStatus(root, emptyVault, "/hook")).toBeNull();
 });
 
+test("projectStatus returns null against a malformed package.json", () => {
+  const root = makeProject({
+    "package.json": '{ "name": "broken",',
+    ".env": "A=1\n",
+  });
+  expect(projectStatus(root, emptyVault, "/hook")).toBeNull();
+});
+
+test("doctor exits 0 against a malformed package.json", async () => {
+  isolateEnv({ prefix: "status-doctor-broken" });
+  const root = makeProject({
+    "package.json": '{ "name": "broken",',
+    ".env": "A=1\n",
+  });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await doctorCommand(root)).toBe(0);
+  } finally {
+    console.log = realLog;
+  }
+  expect(captured.join("\n")).not.toContain("Project");
+});
+
 test("projectStatus reports an unwired project", () => {
   const root = makeProject({
     "package.json": '{\n  "name": "@acme/site",\n  "scripts": {\n    "dev": "next dev",\n    "postinstall": "x"\n  }\n}\n',
