@@ -1,10 +1,14 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const SCRIPT = resolve(import.meta.dir, "../src/static/install.sh");
 const ASSETS = ["kerstel-darwin-arm64", "kerstel-darwin-x64", "kerstel-linux-x64", "kerstel-linux-arm64"];
+
+// Each test spawns bash, curl, and the shimmed tools; the first one on a cold
+// CI runner can take longer than bun's 5-second default.
+setDefaultTimeout(20_000);
 
 let work: string;
 let release: string;
