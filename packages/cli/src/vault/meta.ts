@@ -24,7 +24,7 @@ const KEY_CHECK_PLAINTEXT = "kerstel/key-check/v1/aaaaaaaaaa";
  * SQLite, so a separate read-only handle answers the question before any
  * keychain call happens.
  *
- * Returns an empty map for a vault that does not exist yet, and for a v1 vault
+ * Returns an empty map for a vault that does not exist yet, and for an older vault
  * that predates the table. Both mean "nothing recorded", which the caller
  * handles by recording the current state rather than by refusing.
  */
@@ -43,7 +43,7 @@ export function readVaultMeta(file: string): Record<string, string> {
     for (const row of rows) out[row.key] = row.value;
     return out;
   } catch {
-    // No such table (a v1 vault), or an unreadable file. Either way there is
+    // No such table (an older vault), or an unreadable file. Either way there is
     // nothing recorded; the caller must not treat that as a mismatch.
     return {};
   } finally {

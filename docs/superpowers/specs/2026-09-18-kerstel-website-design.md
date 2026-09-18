@@ -19,7 +19,7 @@ kerstel.dev still serves the landing page for the retired macOS menu bar app: sy
 ## 3. Non-goals
 
 - Search, sidebar navigation, per-command pages, troubleshooting guides.
-- A changelog widget. GitHub releases are all v1.x menu-bar releases; the widget returns with plan 5 once a real release exists.
+- A changelog widget fed by the GitHub API. The old releases were all menu-bar releases. *Update:* those releases and tags are deleted, versioning restarts at 0.1.0, and `/changelog` is now a static page rendered from the repo-root `CHANGELOG.md`.
 - Moving `docs/superpowers/` out of the Pages root. It is public today in a public repo; leave it.
 - Switching Pages to an Actions deploy.
 - Documenting `kerstel init` beyond one sentence. The wizard is plan 2 and not on `main`; plan 2 updates Getting Started when it lands.
@@ -101,7 +101,7 @@ Order of sections:
 
 ### 7.2 Security (`/security`)
 
-Prose from parent spec §3 and the README security section: what is protected, AES-256-GCM with one nonce per value, where the data key lives, the process boundary drawn today (code running in the project can read resolved values), and what v2 access gating adds. Ends with a link to the parent spec on GitHub.
+Prose from parent spec §3 and the README security section: what is protected, AES-256-GCM with one nonce per value, where the data key lives, the process boundary drawn today (code running in the project can read resolved values), and what access gating adds next. Ends with a link to the parent spec on GitHub.
 
 ### 7.3 Docs
 

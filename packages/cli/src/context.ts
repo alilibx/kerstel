@@ -75,8 +75,8 @@ export async function openContext(): Promise<CliContext> {
       // predates vault_meta and so had nothing to compare backends against.
       throw backendMismatchError("another", backend.name);
     } else {
-      // Nothing recorded yet: a fresh vault, or a v1 vault on its first open
-      // after upgrading. Record the baseline so every later open is checked.
+      // Nothing recorded yet: a fresh vault, or one created before vault_meta
+      // existed, on its first open after upgrading. Record the baseline so every later open is checked.
       vault.setMeta(META_KEYCHAIN_BACKEND, backend.name);
       vault.setMeta(META_KEY_CHECK, sealKeyCheck(key));
     }

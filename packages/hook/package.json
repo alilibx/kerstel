@@ -1,6 +1,6 @@
 {
   "name": "@kerstel/hook",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "license": "MIT",
   "//type": "The preload and its worker are loaded by `node --require`, so every runtime file in this package is CommonJS. Declaring module here makes Node parse src/*.js as ESM, where `require` is undefined and `module.exports` is dropped silently.",

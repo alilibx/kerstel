@@ -1,8 +1,8 @@
-# Kerstel v2 — Local-First Secrets Manager for JS Projects
+# Kerstel — Local-First Secrets Manager for JS Projects
 
 **Status:** Approved design, pre-implementation
 **Date:** 2026-09-17
-**Supersedes:** Kerstel v1 (the Swift menu bar app). v1 is removed from the working tree; git history preserves it.
+**Replaces:** the Swift menu bar app that previously lived in this repo. It is an unrelated product, not an earlier version: Kerstel's version history starts at 0.1.0. The Swift code is removed from the working tree; git history preserves it.
 
 ## 1. Problem
 
@@ -12,14 +12,14 @@
 
 Kerstel is a local-first secrets manager for Node and Bun projects. Secrets live in an encrypted vault on the developer's machine, unlocked via the OS credential store. `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. A setup wizard migrates projects without changing how the developer works: `npm run dev` stays `npm run dev`. A local web portal manages the vault. No account, no cloud, no telemetry, no AI — fully deterministic and offline.
 
-**Non-goals for v1:** cloud sync, team sharing, environments (dev/staging/prod), per-process access approval. All are roadmap items the v1 architecture must not block (see §10).
+**Non-goals for the first release (0.1.0):** cloud sync, team sharing, environments (dev/staging/prod), per-process access approval. All are roadmap items the first release's architecture must not block (see §10).
 
 ## 3. Threat model
 
-Two protection levels; v1 ships level 1, the architecture reserves level 2.
+Two protection levels; the first release ships level 1, the architecture reserves level 2.
 
-- **Level 1 — file-level protection (v1).** No plaintext secret ever sits in a project file. Reading `.env`, committing it, or grepping the repo yields only references. A process that *runs code* in the project can still read resolved values from `process.env`.
-- **Level 2 — access-level protection (v2).** The resolver daemon gates each resolution: an unrecognized process asking for a key triggers an approval prompt (macOS-Keychain-style: "allow `node (myapp)` to read `OPENAI_API_KEY`?"). This is why resolution is lazy and daemon-mediated from day one — the daemon already sees which process asks for which key.
+- **Level 1 — file-level protection (first release).** No plaintext secret ever sits in a project file. Reading `.env`, committing it, or grepping the repo yields only references. A process that *runs code* in the project can still read resolved values from `process.env`.
+- **Level 2 — access-level protection (next).** The resolver daemon gates each resolution: an unrecognized process asking for a key triggers an approval prompt (macOS-Keychain-style: "allow `node (myapp)` to read `OPENAI_API_KEY`?"). This is why resolution is lazy and daemon-mediated from day one — the daemon already sees which process asks for which key.
 
 Out of scope at any level: an attacker with root, a compromised OS keychain, or malicious code running *after* it has been granted a secret.
 
@@ -39,7 +39,7 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
 │ resolver daemon (auto-started, one per user)        │
 │  · unlocks vault once via OS keychain               │
 │  · serves resolutions; logs audit entries           │
-│  · v2: approval gate lives here                     │
+│  · next: approval gate lives here                   │
 └──────────────────────┬──────────────────────────────┘
                        ▼
         ~/.kerstel/vault.db  (AES-256-GCM, SQLite)
@@ -66,9 +66,9 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
   - Windows: Credential Manager (DPAPI)
 - **Schema (versioned, `schema_version` pragma):**
   - `projects(id, name, root_path, created_at)`
-  - `secrets(id, scope, project_id NULL, key, value_ciphertext, nonce, environment TEXT NULL /* reserved, unused in v1 */, created_at, updated_at)`
+  - `secrets(id, scope, project_id NULL, key, value_ciphertext, nonce, environment TEXT NULL /* reserved, unused for now */, created_at, updated_at)`
   - `audit_log(id, ts, event, scope, key, pid, process_name, project_id)`
-  - Unique on `(scope, project_id, key)` — v1 ignores `environment`; adding it later extends the unique key without data migration.
+  - Unique on `(scope, project_id, key)` — the first release ignores `environment`; adding it later extends the unique key without data migration.
 - **Reference syntax:** `kerstel://global/<KEY>` or `kerstel://<project-name>/<KEY>`. Explicit scoping — a reference names exactly one scope, no fallback chain. The wizard makes pointing a project at a global key a one-keystroke choice.
 
 ## 6. Runtime resolution
@@ -80,7 +80,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 - A `get` whose stored value matches `^kerstel://` resolves through the daemon and returns the plaintext. Resolved values are memoized per process.
 - It never cares how the reference entered the env — dotenv, Next.js env loading, Bun's native `.env` loader, or the parent shell. It intercepts the *read*.
 - **Child processes:** the hook injects the preload into `NODE_OPTIONS` (and Bun equivalents) in the env it exposes, so spawned node/bun children are covered and can resolve references of their own. Variables already present in the environment are handed to any child already resolved: building a child's envp reads `process.env` through the same trap application code uses, so the hook cannot tell the two apart, and a non-Node child (python, git, curl, ...) could not resolve a reference anyway. This matches level 1's stated boundary — a child is a process that runs code.
-  - **Consequence, today, not a future concern:** envp construction enumerates *every* variable, so a single spawn resolves **every reference in the environment**, not only the ones the app actually reads — one audit row per secret, whether or not that secret was ever used. A `git` invocation in a dev server's file watcher resolves the whole vault slice the project references. v2's per-process approval gate has to account for this directly: an approval prompt per key per spawn is unusable, so the gate needs either resolution that is lazy *across* the envp boundary (a child env that still carries references, with the child's own hook resolving on read) or approvals scoped to a process tree rather than a single read.
+  - **Consequence, today, not a future concern:** envp construction enumerates *every* variable, so a single spawn resolves **every reference in the environment**, not only the ones the app actually reads — one audit row per secret, whether or not that secret was ever used. A `git` invocation in a dev server's file watcher resolves the whole vault slice the project references. The planned per-process approval gate has to account for this directly: an approval prompt per key per spawn is unusable, so the gate needs either resolution that is lazy *across* the envp boundary (a child env that still carries references, with the child's own hook resolving on read) or approvals scoped to a process tree rather than a single read.
 - Resolution failure (daemon unreachable, key missing, locked vault) throws a clear, actionable error naming the reference and the fix (`kerstel doctor`). It never silently returns the reference string to app code.
 
 ### 6.2 Wiring (owned by the wizard, never by the user's fingers)
@@ -99,8 +99,8 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 - One per user, auto-started by the CLI on first use; socket at `~/.kerstel/kerstel.sock` (Windows: named pipe), `0600`. Hook-side auto-start arrives with the setup wizard, which is what teaches the hook where the `kerstel` binary lives.
 - **Access boundary:** a per-session bearer token, generated at `~/.kerstel/session.token` (`0600`) and compared in constant time on every request. Combined with the `0600` socket inside the `0700` home, that means only the owning user can read the token and only a caller holding it is served. The daemon does **not** verify peer UID: `node:net` exposes no peer credentials, and obtaining them would require a native module, which the single-self-contained-binary constraint rules out.
 - Unlocks the vault once per session via the OS keychain.
-- **Windows:** the POSIX mode bits above are inert on NTFS — Node does not translate them into ACLs, so `0700`/`0600` are no-ops there. What protects `~/.kerstel` on Windows is the user profile directory's inherited ACL, and the named pipe carries libuv's default security descriptor. `kerstel doctor` prints this caveat on `win32`. Tightening it (an explicit pipe DACL, an explicit directory ACL) is open work, not something v1 claims.
-- Protocol: newline-delimited JSON — `resolve`, `status`, `lock`, `shutdown`. Versioned envelope so v2 can add `approve`. `lock` drops the key by shutting the daemon down — the key is resident in its memory for as long as it serves, so a flag would leave it there — and the next resolution restarts it.
+- **Windows:** the POSIX mode bits above are inert on NTFS — Node does not translate them into ACLs, so `0700`/`0600` are no-ops there. What protects `~/.kerstel` on Windows is the user profile directory's inherited ACL, and the named pipe carries libuv's default security descriptor. `kerstel doctor` prints this caveat on `win32`. Tightening it (an explicit pipe DACL, an explicit directory ACL) is open work, not something the first release claims.
+- Protocol: newline-delimited JSON — `resolve`, `status`, `lock`, `shutdown`. Versioned envelope so access gating can add `approve`. `lock` drops the key by shutting the daemon down — the key is resident in its memory for as long as it serves, so a flag would leave it there — and the next resolution restarts it.
 - Writes an `audit_log` row per resolution (key, pid, process name, project).
 - Idles out after a configurable period and relocks.
 
@@ -127,9 +127,9 @@ Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plainte
 
 ## 10. Roadmap
 
-- **v1 (this build):** everything above.
-- **v2 — access gating:** daemon approval prompts per unknown process/key, allowlists, Touch ID / polkit for sensitive ops.
-- **v3 — optional sync & teams:** E2E-encrypted sync (client-side keys only), environments, shared vaults.
+- **First release, 0.1.0 (this build):** everything above.
+- **Next — access gating:** daemon approval prompts per unknown process/key, allowlists, Touch ID / polkit for sensitive ops.
+- **Later — optional sync & teams:** E2E-encrypted sync (client-side keys only), environments, shared vaults.
 
 ## 11. Repo & open source
 
@@ -140,7 +140,7 @@ packages/cli  packages/hook  packages/portal  apps/website
 docs/   (this spec, roadmap, SECURITY.md threat model, CONTRIBUTING.md)
 ```
 
-- Swift v1 removed in the first implementation commit (history retained). `install.sh`/`uninstall.sh` rewritten for the binary flow.
+- The Swift menu bar app removed in the first implementation commit (history retained). `install.sh`/`uninstall.sh` rewritten for the binary flow.
 - **Website:** kerstel.dev rebuilt for the new product — futuristic design, animated plaintext→reference hero, one-liner install front and center, security-model page, docs.
 - **CI:** GitHub Actions — test matrix (macOS, Linux; Node + Bun), release workflow building binaries for macOS arm64/x64, Linux x64/arm64, Windows x64; checksums published; `install.sh` picks the right asset.
 

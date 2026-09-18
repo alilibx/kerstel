@@ -22,7 +22,7 @@ const MIGRATIONS: string[] = [
     key               TEXT    NOT NULL,
     value_ciphertext  BLOB    NOT NULL,
     nonce             BLOB    NOT NULL,
-    -- Reserved for environments (dev/staging/prod). Unused in v1; every row
+    -- Reserved for environments (dev/staging/prod). Unused for now; every row
     -- stores NULL so the column can join the unique index without migration.
     environment       TEXT,
     created_at        INTEGER NOT NULL,

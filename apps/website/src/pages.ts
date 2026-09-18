@@ -42,3 +42,18 @@ export function collectPages(pagesDir: string): Page[] {
     return { source, outPath: toOutPath(source), url: toUrl(source), meta, body };
   });
 }
+
+/**
+ * The repo-root CHANGELOG.md, published as /changelog. It lives outside the
+ * pages directory so GitHub renders it too, which is why it carries no front
+ * matter and gets its meta here.
+ */
+export function changelogPage(file: string): Page {
+  return {
+    source: "changelog.md",
+    outPath: "changelog.html",
+    url: "/changelog",
+    meta: { title: "Changelog", description: "Every Kerstel release and what changed in it." },
+    body: readFileSync(file, "utf8"),
+  };
+}
