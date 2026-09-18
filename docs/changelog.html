@@ -56,6 +56,14 @@
 <li><code>kerstel uninstall</code>, which restores every project&#39;s <code>.env</code> values in their original quoting, package scripts, and <code>.gitignore</code>, then removes <code>~/.kerstel</code>, the vault key, and the binary. It refuses, naming each one, if any secret would be lost, including a value <code>init</code> kept only in its encrypted backup. Afterwards it names every restored <code>.env</code> file git still tracks.</li>
 <li>Release binaries for macOS and Linux (x64 and arm64), with SHA-256 checksums.</li>
 <li><code>curl -fsSL https://kerstel.dev/install.sh | bash</code>, which verifies the checksum and installs to <code>~/.local/bin</code> without <code>sudo</code>.</li>
+<li><code>ks</code>, a shortcut for <code>kerstel</code>, installed by <code>install.sh</code> when nothing else is called <code>ks</code>, and removed by <code>uninstall</code>.</li>
+<li><code>kerstel doctor --verbose</code> shows the paths and permissions behind each check.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><code>kerstel init</code> shows every variable and where it would go, then lets you accept the suggestions with Enter, change a few, or go one by one, with arrow-key menus.</li>
+<li><code>kerstel doctor</code> groups its checks, shows how to fix each problem, and exits 1 when something is wrong.</li>
+<li>Bare <code>kerstel</code> lists the commands and exits 0.</li>
 </ul>
 
 </main>

@@ -14,6 +14,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] Release binaries for macOS and Linux, with checksums
 - [x] Working `install.sh`
 - [x] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel
+- [x] `ks` shortcut, and a friendlier `init` and `doctor`
 
 ## 0.2.0: local portal
 
