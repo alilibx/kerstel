@@ -26,7 +26,7 @@ Values live in `~/.kerstel/vault.db`, encrypted per value with AES-256-GCM. The 
 
 A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (`~/.kerstel/kerstel.sock`, or a named pipe on Windows). Each request carries a session token, so only processes running as you can ask. The daemon records an audit row for each resolution.
 
-You rarely start it by hand. The hook and `kerstel run` start it on demand; `kerstel daemon status` shows whether it is up.
+`kerstel run` never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need a running daemon, and if none answers it tells you to run `kerstel daemon start`. Only `kerstel resolve` starts the daemon on demand, on first use. `kerstel daemon status` shows whether it is up at any time.
 
 ## Two ways to resolve
 
@@ -42,7 +42,19 @@ kerstel run -- next build
 
 The hook is a small, dependency-free preload that runs before your app code. It replaces `process.env` with a proxy. When code reads a key whose value starts with `kerstel://`, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun's native `.env` loader, Next.js env loading, or your shell.
 
-For Bun projects the hook is a `preload` entry in `bunfig.toml`. For Node projects the package scripts run through a shim that sets `NODE_OPTIONS=--require <hook>`.
+No command wires this up for you today; you add it by hand. Kerstel writes the hook's files to `~/.kerstel/hook` the first time any `kerstel` command runs, and the file to point at is `~/.kerstel/hook/preload.cjs`.
+
+For a Bun project, add it to `preload` in `bunfig.toml`:
+
+```toml
+preload = ["~/.kerstel/hook/preload.cjs"]
+```
+
+For a Node project, set `NODE_OPTIONS` for the scripts that need it:
+
+```bash
+NODE_OPTIONS="--require ~/.kerstel/hook/preload.cjs" npm run dev
+```
 
 Child processes are covered: the hook injects itself into the environment it exposes, so a `node` or `bun` child resolves its own references. Variables handed to any child are handed already resolved. A child that is not Node or Bun, such as `python` or `git`, could not resolve a reference anyway.
 

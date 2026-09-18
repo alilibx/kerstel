@@ -49,15 +49,15 @@ OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 </code></pre>
 <p>This file is now safe to read, grep, and commit. <code>kerstel ls</code> shows every reference the vault can serve.</p>
 <h2>4. Run your app</h2>
-<p>The universal way, which works for any command:</p>
-<pre><code class="language-bash">kerstel run -- npm run dev
+<p><code>kerstel run</code> resolves every <code>kerstel://</code> reference already sitting in the environment it inherits, then starts the command with the real values in place. It never reads <code>.env</code> itself, so get <code>.env</code> into the environment first:</p>
+<pre><code class="language-bash">set -a; . ./.env; set +a
+kerstel run -- npm run dev
 </code></pre>
-<p><code>kerstel run</code> resolves every reference in the environment up front and starts the command with real values injected. Nothing about the command changes.</p>
-<p>Projects wired with the runtime hook skip the wrapper: your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <a href="/docs/how-it-works">How resolution works</a> explains the difference.</p>
+<p>Projects wired with the runtime hook skip both steps: the hook resolves <code>kerstel://</code> references wherever they come from, including a <code>.env</code> loader, so your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <a href="/docs/how-it-works">How resolution works</a> covers how to wire a project for the hook.</p>
 <h2>5. Check the setup</h2>
 <pre><code class="language-bash">kerstel doctor
 </code></pre>
-<p><code>doctor</code> reports whether the daemon is running, whether the credential store holds the key, and whether the current project is wired for the hook.</p>
+<p><code>doctor</code> prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under <code>~/.kerstel</code>, and whether the daemon is running.</p>
 <h2>What about a whole project at once?</h2>
 <p><code>kerstel init</code> will do all of this for a whole project at once, moving every <code>.env</code> value into the vault and rewriting the files with references; it is in progress, so until it lands the steps above are the manual path.</p>
 

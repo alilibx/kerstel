@@ -28,11 +28,12 @@ The key is never written to the vault file, never logged, and never printed. On 
 
 ## Where plaintext appears
 
-Plaintext leaves the vault in exactly three places:
+Plaintext leaves the vault in exactly four places:
 
 1. Inside your app's process, when code reads `process.env.SOME_KEY` and the runtime hook resolves the reference.
 2. In the environment of a child process started by `kerstel run -- <command>`, or spawned by a process already running under the hook.
 3. On your terminal, only when you ask with `kerstel get <scope>/<KEY> --reveal`.
+4. On your terminal, when you run `kerstel resolve kerstel://<scope>/<KEY>`, which prints the resolved value to stdout.
 
 Plaintext never appears in log output, error messages, or audit rows.
 

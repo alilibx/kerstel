@@ -44,7 +44,7 @@ How the value reaches a teammate is up to you: a password manager share, a secur
 Rotation is a `set` on each machine:
 
 ```bash
-kerstel set myapp/STRIPE_SECRET_KEY
+printf %s "$NEW_KEY" | kerstel set myapp/STRIPE_SECRET_KEY
 ```
 
 No project file changes, no commit, no redeploy of configuration. Restart the app so the hook's per-process memo refreshes.

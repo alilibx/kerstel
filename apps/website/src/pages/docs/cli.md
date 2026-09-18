@@ -32,7 +32,7 @@ order: 2
 | `kerstel daemon stop` | Stop it. |
 | `kerstel daemon status` | Report whether it is running and where its socket is. |
 | `kerstel daemon serve` | Run the daemon in the foreground. Used by `start`; handy for debugging. |
-| `kerstel doctor` | Diagnose this machine: vault, credential store, daemon, and project wiring. |
+| `kerstel doctor` | Diagnose this machine: home, vault path and secret count, token, credential store backend, socket, whether the hook assets are installed, and whether the daemon is running. |
 
 ## Environment variables
 

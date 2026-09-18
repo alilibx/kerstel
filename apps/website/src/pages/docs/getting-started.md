@@ -47,15 +47,14 @@ This file is now safe to read, grep, and commit. `kerstel ls` shows every refere
 
 ## 4. Run your app
 
-The universal way, which works for any command:
+`kerstel run` resolves every `kerstel://` reference already sitting in the environment it inherits, then starts the command with the real values in place. It never reads `.env` itself, so get `.env` into the environment first:
 
 ```bash
+set -a; . ./.env; set +a
 kerstel run -- npm run dev
 ```
 
-`kerstel run` resolves every reference in the environment up front and starts the command with real values injected. Nothing about the command changes.
-
-Projects wired with the runtime hook skip the wrapper: your code reads `process.env.OPENAI_API_KEY` and gets the real value directly. [How resolution works](/docs/how-it-works) explains the difference.
+Projects wired with the runtime hook skip both steps: the hook resolves `kerstel://` references wherever they come from, including a `.env` loader, so your code reads `process.env.OPENAI_API_KEY` and gets the real value directly. [How resolution works](/docs/how-it-works) covers how to wire a project for the hook.
 
 ## 5. Check the setup
 
@@ -63,7 +62,7 @@ Projects wired with the runtime hook skip the wrapper: your code reads `process.
 kerstel doctor
 ```
 
-`doctor` reports whether the daemon is running, whether the credential store holds the key, and whether the current project is wired for the hook.
+`doctor` prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under `~/.kerstel`, and whether the daemon is running.
 
 ## What about a whole project at once?
 

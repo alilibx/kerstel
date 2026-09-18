@@ -50,7 +50,7 @@ kerstel run -- npm run dev
 <p>How the value reaches a teammate is up to you: a password manager share, a secure channel, or your cloud provider&#39;s console. Kerstel&#39;s job is that the value lands in a local vault and nowhere else in the repo.</p>
 <h2>Rotate a secret</h2>
 <p>Rotation is a <code>set</code> on each machine:</p>
-<pre><code class="language-bash">kerstel set myapp/STRIPE_SECRET_KEY
+<pre><code class="language-bash">printf %s &quot;$NEW_KEY&quot; | kerstel set myapp/STRIPE_SECRET_KEY
 </code></pre>
 <p>No project file changes, no commit, no redeploy of configuration. Restart the app so the hook&#39;s per-process memo refreshes.</p>
 <h2>Coming later</h2>

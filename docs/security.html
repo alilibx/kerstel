@@ -57,11 +57,12 @@
 </tbody></table>
 </div><p>The key is never written to the vault file, never logged, and never printed. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with <code>0600</code> permissions and warns you every time it does.</p>
 <h2>Where plaintext appears</h2>
-<p>Plaintext leaves the vault in exactly three places:</p>
+<p>Plaintext leaves the vault in exactly four places:</p>
 <ol>
 <li>Inside your app&#39;s process, when code reads <code>process.env.SOME_KEY</code> and the runtime hook resolves the reference.</li>
 <li>In the environment of a child process started by <code>kerstel run -- &lt;command&gt;</code>, or spawned by a process already running under the hook.</li>
 <li>On your terminal, only when you ask with <code>kerstel get &lt;scope&gt;/&lt;KEY&gt; --reveal</code>.</li>
+<li>On your terminal, when you run <code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>, which prints the resolved value to stdout.</li>
 </ol>
 <p>Plaintext never appears in log output, error messages, or audit rows.</p>
 <h2>The boundary today</h2>
