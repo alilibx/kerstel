@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -127,4 +127,14 @@ test("prints a PATH hint only when the install directory is not on PATH", async 
 
   const present = await install({}, `${installDir}:`);
   expect(present.stdout).not.toContain("is not on your PATH");
+});
+
+test("a failure after staging leaves no staged file behind", async () => {
+  // chmod runs between the staging copy and the rename, so failing it strands
+  // the staged file unless cleanup() removes it.
+  shim("chmod", "exit 1");
+  const result = await install({});
+  expect(result.code).not.toBe(0);
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+  expect(readdirSync(installDir).filter((name) => name.startsWith(".kerstel-install."))).toEqual([]);
 });
