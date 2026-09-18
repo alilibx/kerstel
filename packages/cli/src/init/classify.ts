@@ -47,15 +47,16 @@ const URL_HEAD = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)/i;
 const SINGLE_LOWERCASE_WORD = /^[a-z]+$/;
 
 /**
- * True for `https://api.example.com/v1`, false for
- * `postgres://user:pass@host/db` — the credentials in the second are exactly
- * what the vault is for.
+ * The URL's authority (host, plus userinfo if present) when `value` starts
+ * with a `scheme://`, or `null` when it isn't a URL at all. Userinfo in the
+ * authority (`user:pass@host`) is a positive secret signal — stronger than
+ * any key-name convention — so callers check for `@` in the result before
+ * falling back to the credentialless case.
  */
-function isCredentiallessUrl(value: string): boolean {
+function urlAuthority(value: string): string | null {
   const match = URL_HEAD.exec(value);
-  if (!match) return false;
-  const authority = match[2] ?? "";
-  return !authority.includes("@");
+  if (!match) return null;
+  return match[2] ?? "";
 }
 
 export function suggest(key: string, value: string): Suggestion {
@@ -64,7 +65,14 @@ export function suggest(key: string, value: string): Suggestion {
   if (trimmed === "") return "plaintext";
   if (BOOLEANS.has(trimmed.toLowerCase())) return "plaintext";
   if (NUMBER.test(trimmed)) return "plaintext";
-  if (isCredentiallessUrl(trimmed)) return "plaintext";
+
+  const authority = urlAuthority(trimmed);
+  if (authority !== null) {
+    // `postgres://user:pass@host/db` carries a credential regardless of what
+    // the key is called; `https://api.example.com/v1` carries none.
+    return authority.includes("@") ? "project" : "plaintext";
+  }
+
   if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) return "plaintext";
   if (PLAINTEXT_KEYS.test(key)) return "plaintext";
 

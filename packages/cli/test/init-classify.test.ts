@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { GLOBAL_KEYS, type Suggestion, suggest } from "../src/init/classify";
+import { GLOBAL_KEYS, SUGGESTIONS, type Suggestion, suggest } from "../src/init/classify";
 
 const CASES: [key: string, value: string, expected: Suggestion][] = [
   // Plaintext: nothing worth encrypting.
@@ -38,6 +38,13 @@ const CASES: [key: string, value: string, expected: Suggestion][] = [
   ["INTERNAL_WEBHOOK_SECRET", "whsec_abcdefghijklmnop", "project"],
   ["ADMIN_PASSWORD", "hunter2hunter2", "project"],
   ["SMTP_URL", "smtps://postmaster:pw@smtp.example.com:465", "project"],
+  // A URL's userinfo is a positive secret signal that outranks the key name.
+  ["PORT", "postgres://u:p@h/db", "project"],
+  ["HOST", "redis://default:secret@cache.internal:6379", "project"],
+  // For a NON-url value, the key-name convention still wins — intended, not a gap.
+  ["DEBUG", "sk-live-xxxxx", "plaintext"],
+  // A literal boolean is never a secret, even under a global-credential key.
+  ["OPENAI_API_KEY", "true", "plaintext"],
 ];
 
 test("suggest classifies every documented case", () => {
@@ -74,4 +81,8 @@ test("the global list is exactly the documented set", () => {
 
 test("a long opaque value under an unknown key stays with the project", () => {
   expect(suggest("SOME_VENDOR_SECRET", "a7Xq02LmNp93ZtRv")).toBe("project");
+});
+
+test("SUGGESTIONS is the three choices in wizard order", () => {
+  expect(SUGGESTIONS).toEqual(["project", "global", "plaintext"]);
 });
