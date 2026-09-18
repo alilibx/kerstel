@@ -3,6 +3,7 @@ import { DaemonError, ensureDaemon } from "../daemon/client";
 import { MAX_LINE_CHARS } from "../daemon/protocol";
 import { bold, dim, fail, info, mask, ok } from "../output";
 import { formatReference, parseReference, type SecretRef } from "../reference";
+import { cliName } from "../ui/cli-name";
 
 /** Accepts `scope/KEY` or a full `kerstel://scope/KEY`. */
 export function parseTarget(input: string): SecretRef | null {
@@ -149,7 +150,7 @@ export async function lsCommand(args: string[]): Promise<number> {
   try {
     const secrets = ctx.vault.listSecrets(scope);
     if (secrets.length === 0) {
-      info(scope ? `No secrets in scope "${scope}".` : "No secrets stored yet. Add one with `kerstel set`.");
+      info(scope ? `No secrets in scope "${scope}".` : `No secrets stored yet. Add one with \`${cliName()} set\`.`);
       return 0;
     }
     for (const secret of secrets) {

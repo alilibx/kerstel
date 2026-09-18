@@ -1,10 +1,19 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { keyBelongsToHome, parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
+import { keyBelongsToHome, parseUninstallArgs, removeShortcut, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
-import { ScriptedPrompter } from "../src/init/prompts";
+import { CancelledError, ScriptedPrompter, type Prompter } from "../src/init/prompts";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
 import { fileBackend } from "../src/vault/keychain/file";
 import { openVault } from "../src/vault/store";
@@ -65,11 +74,11 @@ test("--yes restores the project and deletes all Kerstel data", async () => {
 test("an interactive yes applies; the default no changes nothing", async () => {
   const { home, root } = await setup();
   capture();
-  expect(await uninstallCommand([], new ScriptedPrompter([false]), NO_BINARY)).toBe(0);
+  expect(await uninstallCommand([], new ScriptedPrompter(["no"]), NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(true);
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=kerstel://demo-app/API_KEY\n");
 
-  expect(await uninstallCommand([], new ScriptedPrompter([true]), NO_BINARY)).toBe(0);
+  expect(await uninstallCommand([], new ScriptedPrompter(["yes"]), NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(false);
 });
 
@@ -77,10 +86,55 @@ test("a declined prompt leaves the home's file list byte-identical", async () =>
   const { home } = await setup();
   const before = readdirSync(home).sort();
   capture();
-  expect(await uninstallCommand([], new ScriptedPrompter([false]), NO_BINARY)).toBe(0);
+  expect(await uninstallCommand([], new ScriptedPrompter(["no"]), NO_BINARY)).toBe(0);
   // In particular: no hook/ directory and no session.token, which openContext()
   // would have created but a read-only vault open must not.
   expect(readdirSync(home).sort()).toEqual(before);
+});
+
+test("cancelling the final question exits 130 and changes nothing", async () => {
+  const { home, root } = await setup();
+  const before = readdirSync(home).sort();
+  const cancelling: Prompter = {
+    confirm: () => {
+      throw new CancelledError();
+    },
+    select: () => {
+      throw new CancelledError();
+    },
+    multiselect: () => {
+      throw new CancelledError();
+    },
+    text: () => {
+      throw new CancelledError();
+    },
+  };
+  capture();
+  expect(await uninstallCommand([], cancelling, NO_BINARY)).toBe(130);
+  expect(existsSync(home)).toBe(true);
+  expect(readdirSync(home).sort()).toEqual(before);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=kerstel://demo-app/API_KEY\n");
+});
+
+test("removeShortcut deletes a ks link to the binary and nothing else", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-ks-"));
+  dirs.push(dir);
+  const binary = join(dir, "kerstel");
+  writeFileSync(binary, "bin");
+  symlinkSync("kerstel", join(dir, "ks"));
+  expect(removeShortcut(binary)).toBe("removed");
+  expect(existsSync(join(dir, "ks"))).toBe(false);
+
+  expect(removeShortcut(binary)).toBe("absent");
+
+  writeFileSync(join(dir, "ks"), "someone else's tool");
+  expect(removeShortcut(binary)).toBe("not-ours");
+  expect(readFileSync(join(dir, "ks"), "utf8")).toBe("someone else's tool");
+
+  rmSync(join(dir, "ks"));
+  writeFileSync(join(dir, "other"), "x");
+  symlinkSync("other", join(dir, "ks"));
+  expect(removeShortcut(binary)).toBe("not-ours");
 });
 
 test("--dry-run creates nothing when no vault exists yet", async () => {

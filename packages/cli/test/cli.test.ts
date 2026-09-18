@@ -310,6 +310,12 @@ test.if(process.platform !== "win32")(
   },
 );
 
+test("bare kerstel lists the commands and exits 0; --help does the same", async () => {
+  isolate();
+  expect(await runCli([])).toBe(0);
+  expect(await runCli(["--help"])).toBe(0);
+});
+
 test("an unknown command exits 2 with usage", async () => {
   isolate();
   capture();

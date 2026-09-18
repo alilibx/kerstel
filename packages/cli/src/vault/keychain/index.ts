@@ -1,4 +1,5 @@
 import { generateDataKey } from "../crypto";
+import { cliName } from "../../ui/cli-name";
 import { fileBackend } from "./file";
 import { linuxBackend } from "./linux";
 import { macosBackend } from "./macos";
@@ -71,7 +72,7 @@ export async function loadOrCreateDataKey(override?: KeychainBackend): Promise<D
     throw new Error(
       `Kerstel could not read its vault key from the ${backend.name} credential store ` +
         "even though one is stored. On macOS, re-run and click \"Always Allow\" on the " +
-        "Keychain prompt, or run `kerstel doctor`. Kerstel will never overwrite a " +
+        `Keychain prompt, or run \`${cliName()} doctor\`. Kerstel will never overwrite a ` +
         "stored key automatically.",
     );
   }

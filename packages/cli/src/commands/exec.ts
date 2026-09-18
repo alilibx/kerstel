@@ -3,6 +3,7 @@ import { openContext } from "../context";
 import { ensureDaemon } from "../daemon/client";
 import { fail } from "../output";
 import { socketPath } from "../paths";
+import { cliName } from "../ui/cli-name";
 
 /**
  * Runs one command with Kerstel's runtime hook wired in, then gets out of the
@@ -106,7 +107,7 @@ export async function execCommand(args: string[]): Promise<number> {
     fail(
       `Kerstel could not install its runtime hook into ${hookDir}: ${hookInstall.error ?? "unknown error"}. ` +
         "Without it the child would receive raw kerstel:// references. " +
-        "Fix the permissions, or use `kerstel run -- <command>` instead.",
+        `Fix the permissions, or use \`${cliName()} run -- <command>\` instead.`,
     );
     return 1;
   }

@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { backupsDir } from "../paths";
+import { cliName } from "../ui/cli-name";
 import { decrypt, encrypt } from "../vault/crypto";
 
 /**
@@ -160,7 +161,7 @@ export function readBackup(
   const dir = join(backupsDir(), scope, timestamp);
   const manifestPath = join(dir, "manifest.json");
   if (!existsSync(manifestPath)) {
-    throw new Error(`No Kerstel backup at ${dir}. Run \`kerstel doctor\` to see what is there.`);
+    throw new Error(`No Kerstel backup at ${dir}. Run \`${cliName()} doctor\` to see what is there.`);
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
