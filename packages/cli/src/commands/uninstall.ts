@@ -1,4 +1,5 @@
 import { accessSync, constants, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
@@ -6,7 +7,7 @@ import { TtyPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
 import { bold, fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
-import { emptyPlan, hasLoss, planUninstall, type UninstallPlan } from "../uninstall/plan";
+import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type UninstallPlan } from "../uninstall/plan";
 
 /**
  * Plan-5 spec §6. Three phases: plan (read only), show and gate, then apply:
@@ -76,6 +77,26 @@ async function stopDaemonIfRunning(): Promise<void> {
     await Bun.sleep(100);
   }
   ok("Stopped the Kerstel daemon.");
+}
+
+/**
+ * The restored env files git already tracks, by name, or null when git is not
+ * installed or `root` is not inside a repository. A .gitignore entry does not
+ * untrack a tracked file, and `init` encourages committing reference-only ones.
+ */
+function gitTrackedEnvFiles(project: RestoredProject): string[] | null {
+  if (project.envFiles.length === 0) return [];
+  try {
+    const result = Bun.spawnSync(["git", "-C", project.rootPath, "ls-files", "--", ...project.envFiles], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (result.exitCode !== 0) return null;
+    const tracked = new Set(result.stdout.toString().split("\n").filter((line) => line !== ""));
+    return project.envFiles.filter((name) => tracked.has(name));
+  } catch {
+    return null;
+  }
 }
 
 export async function uninstallCommand(
@@ -207,10 +228,20 @@ export async function uninstallCommand(
 
   console.log("");
   for (const project of plan.restored) ok(`Restored ${project.name} (${project.rootPath}).`);
-  if (plan.restored.length > 0) {
+  if (plan.restored.some((project) => project.envFiles.length > 0)) {
     console.log(
       yellow("!  Those .env files hold plaintext secrets again. Keep them out of git: check your .gitignore."),
     );
+    for (const project of plan.restored) {
+      for (const name of gitTrackedEnvFiles(project) ?? []) {
+        console.log(
+          yellow(
+            `!  ${join(project.rootPath, name)} is tracked by git, and .gitignore does not untrack it. ` +
+              `Run \`git rm --cached ${name}\` in ${project.rootPath} before your next commit.`,
+          ),
+        );
+      }
+    }
   }
   return 0;
 }

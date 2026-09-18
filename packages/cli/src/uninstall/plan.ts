@@ -45,9 +45,16 @@ export interface BackupOnlyValue {
   backupDir: string;
 }
 
+export interface RestoredProject {
+  name: string;
+  rootPath: string;
+  /** Names of the env files this plan rewrites, e.g. [".env", ".env.local"]. */
+  envFiles: string[];
+}
+
 export interface UninstallPlan {
   files: PlannedFile[];
-  restored: { name: string; rootPath: string }[];
+  restored: RestoredProject[];
   unreachable: UnreachableProject[];
   unresolvable: UnresolvableReference[];
   /** kerstel:// references for vault secrets no reachable project uses. */
@@ -142,6 +149,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       continue;
     }
 
+    const restoredEnvFiles: string[] = [];
     for (const loaded of loadEnvFiles(detectProject(root).envFiles)) {
       const copy = parseDotenv(loaded.original);
       for (let i = 0; i < copy.lines.length; i += 1) {
@@ -160,6 +168,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       }
       const after = serializeDotenv(copy);
       if (after === loaded.original) continue;
+      restoredEnvFiles.push(loaded.info.name);
       plan.files.push({
         path: loaded.info.path,
         label: `${project.name}: ${loaded.info.name}`,
@@ -196,7 +205,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
     }
 
     plan.backupOnly.push(...backupOnlyValues(project.name, dataKey));
-    plan.restored.push({ name: project.name, rootPath: root });
+    plan.restored.push({ name: project.name, rootPath: root, envFiles: restoredEnvFiles });
   }
 
   plan.unused = vault

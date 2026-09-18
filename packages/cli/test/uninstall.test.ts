@@ -172,6 +172,36 @@ test("a value init kept only in its backup trips the gate until --force", async 
   expect(existsSync(home)).toBe(false);
 });
 
+function git(root: string, ...args: string[]): void {
+  const result = Bun.spawnSync(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+}
+
+test("a restored .env that git tracks gets a git rm --cached warning naming it", async () => {
+  const { root } = await setup();
+  git(root, "init", "--quiet");
+  git(root, "config", "user.name", "Kerstel Test");
+  git(root, "config", "user.email", "test@kerstel.invalid");
+  git(root, "config", "commit.gpgsign", "false");
+  git(root, "add", ".env", "package.json");
+  git(root, "commit", "--quiet", "--no-verify", "-m", "references only");
+
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain(`${join(root, ".env")} is tracked by git`);
+  expect(text).toContain("git rm --cached .env");
+});
+
+test("a project outside any git repo gets only the generic warning", async () => {
+  await setup();
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("check your .gitignore");
+  expect(text).not.toContain("git rm --cached");
+});
+
 test("with no vault, a real run deletes a key orphaned in the credential store", async () => {
   const home = isolateEnv({ prefix: "uninstall-orphan" });
   dirs.push(home);

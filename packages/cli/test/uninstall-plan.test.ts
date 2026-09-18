@@ -54,7 +54,7 @@ test("rewrites references to vault values and never puts a value in the diff", a
 
   const pkg = plan.files.find((f) => f.path === join(root, "package.json"))!;
   expect(pkg.after).toContain('"dev": "next dev"');
-  expect(plan.restored).toEqual([{ name: "demo-app", rootPath: root }]);
+  expect(plan.restored).toEqual([{ name: "demo-app", rootPath: root, envFiles: [".env"] }]);
   expect(hasLoss(plan)).toBe(false);
 });
 
