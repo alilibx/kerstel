@@ -396,6 +396,36 @@ async function offerGitignore(
 }
 
 /**
+ * The wizard's closing report.
+ *
+ * Shared by BOTH exits, which is the point: a failed self-check used to
+ * return 1 straight after a migration that had entirely succeeded, so the
+ * last thing the user saw was an error with no word about the secrets now in
+ * their vault, the files now holding references, or the backup holding their
+ * originals. Exit 1 is right -- something is wrong -- but silence about the
+ * work that did land is not.
+ */
+export function summaryLines(options: {
+  scope: string;
+  packageManager: string;
+  backupDir: string;
+  verified: boolean;
+}): string[] {
+  const lines = [
+    `${bold(options.scope)} is set up. Run your scripts exactly as before — \`${options.packageManager} run <script>\` now goes through Kerstel.`,
+  ];
+  if (options.verified) return lines;
+
+  lines.push(
+    "The migration itself completed: your values are in the vault, your .env files hold references, and your scripts are wired.",
+    `Your originals are in the encrypted backup at ${options.backupDir}.`,
+    "Only the self-check failed, so a wired process cannot reach the daemon yet. Run `kerstel doctor` in this directory, " +
+      "and `kerstel daemon start` if it reports the daemon is down.",
+  );
+  return lines;
+}
+
+/**
  * Spec §8 step 6: prove the wiring works by running a probe through it.
  *
  * The probe spawns THIS CLI (`kerstel exec -- <runtime> -e ...`) with one
@@ -642,13 +672,31 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
           reference: formatReference(probeScope, probeDecision.key.key),
           expected,
         });
-        if (result === "failed") return 1;
+        if (result === "failed") {
+          const [summary, ...notes] = summaryLines({
+            scope,
+            packageManager: detected.packageManager,
+            backupDir: backup.dir,
+            verified: false,
+          });
+          console.log("");
+          ok(summary as string);
+          for (const note of notes) console.log(yellow(`!  ${note}`));
+          return 1;
+        }
         if (result === "passed") ok("Self-check passed: a wired process resolved a reference.");
       }
     }
 
     console.log("");
-    ok(`${bold(scope)} is set up. Run your scripts exactly as before — \`${detected.packageManager} run <script>\` now goes through Kerstel.`);
+    for (const line of summaryLines({
+      scope,
+      packageManager: detected.packageManager,
+      backupDir: backup.dir,
+      verified: true,
+    })) {
+      ok(line);
+    }
     return 0;
   } finally {
     ctx.vault.close();

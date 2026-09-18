@@ -2,7 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initCommand, parseInitArgs, runInit, type InitOptions } from "../src/commands/init";
+import {
+  initCommand,
+  parseInitArgs,
+  runInit,
+  summaryLines,
+  type InitOptions,
+} from "../src/commands/init";
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { collectKeys, loadEnvFiles } from "../src/init/collect";
@@ -543,4 +549,32 @@ test("the .gitignore offer reassures only when every value is a reference", asyn
   const output = captured.join("\n");
   expect(output).toContain("They now hold references, not secrets");
   expect(output).not.toContain("still holds a plaintext value");
+});
+
+test("the closing summary tells the user the migration completed even when the self-check fails", () => {
+  const strip = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
+  const backupDir = "/home/dev/.kerstel/backups/demo-app/2026-09-18T00-00-00";
+
+  const passed = summaryLines({
+    scope: "demo-app",
+    packageManager: "npm",
+    backupDir,
+    verified: true,
+  }).map(strip);
+  expect(passed.length).toBe(1);
+  expect(passed[0]).toContain("demo-app is set up");
+  expect(passed[0]).toContain("npm run <script>");
+
+  const failed = summaryLines({
+    scope: "demo-app",
+    packageManager: "npm",
+    backupDir,
+    verified: false,
+  }).map(strip);
+  // The set-up summary is still there: the migration really did happen.
+  expect(failed[0]).toBe(passed[0]);
+  const rest = failed.slice(1).join("\n");
+  expect(rest).toContain(backupDir);
+  expect(rest).toContain("self-check");
+  expect(rest).toContain("kerstel doctor");
 });
