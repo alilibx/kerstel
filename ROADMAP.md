@@ -11,7 +11,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] `kerstel doctor`
 - [x] [kerstel.dev](https://kerstel.dev) with docs, changelog, and roadmap
 - [x] Setup wizard: `kerstel init` and `kerstel exec`
-- [ ] Release binaries for macOS, Linux, and Windows, with checksums
+- [ ] Release binaries for macOS and Linux, with checksums
 - [ ] Working `install.sh`
 - [ ] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel
 
@@ -31,6 +31,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## Later: sync and teams
 
+- [ ] Windows binaries and a PowerShell installer
 - [ ] Optional end-to-end encrypted sync, with keys that stay on your devices
 - [ ] Environments (dev, staging, prod)
 - [ ] Shared vaults
