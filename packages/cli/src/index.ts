@@ -66,7 +66,7 @@ export async function runCli(argv: string[]): Promise<number> {
       case "daemon":
         return await daemonCommand(args);
       case "doctor":
-        return await doctorCommand();
+        return await doctorCommand(args);
       case "uninstall":
         return await uninstallCommand(args);
       default:

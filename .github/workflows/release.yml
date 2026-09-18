@@ -108,7 +108,7 @@ jobs:
 
           printf 'keychain-value' > value.txt
           perl -e 'alarm 30; exec @ARGV' script -q /dev/null sh -c './kerstel set global/KC_KEY < value.txt' < /dev/null
-          ./kerstel doctor | grep -q 'Keychain:.*macos'
+          ./kerstel doctor | grep -q 'macOS Keychain'
           test "$(./kerstel get global/KC_KEY --reveal)" = "keychain-value"
 
   publish:
