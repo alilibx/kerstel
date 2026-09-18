@@ -1,5 +1,6 @@
 import { daemonCommand } from "./commands/daemon";
 import { doctorCommand } from "./commands/doctor";
+import { execCommand } from "./commands/exec";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { bold, fail } from "./output";
@@ -14,6 +15,7 @@ Usage:
   kerstel ls [--scope <scope>]                  List stored references
   kerstel rm <scope>/<KEY> --yes                Remove a secret
   kerstel run -- <command>                      Run a command with references resolved
+  kerstel exec -- <command>                     Run a command with the hook wired in
   kerstel resolve kerstel://<scope>/<KEY>       Print one resolved value
   kerstel daemon <serve|start|stop|status>      Manage the resolver daemon
   kerstel doctor                                Diagnose this machine's setup
@@ -43,6 +45,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await rmCommand(args);
       case "run":
         return await runCommand(args);
+      case "exec":
+        return await execCommand(args);
       case "resolve":
         return await resolveCommand(args);
       case "daemon":
