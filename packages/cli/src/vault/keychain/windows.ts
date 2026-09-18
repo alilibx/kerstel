@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureHome, kerstelHome } from "../../paths";
 import { run } from "./exec";
-import type { KeychainBackend } from "./types";
+import type { KeychainBackend, SetOptions } from "./types";
 
 /**
  * Windows Credential Manager cannot read a secret back from the command line,
@@ -50,7 +50,23 @@ export const windowsBackend: KeychainBackend = {
     return key.length === 32 ? key : null;
   },
 
-  async set(key: Buffer): Promise<void> {
+  async exists(): Promise<boolean> {
+    // The sealed blob is an ordinary file, so its presence answers this without
+    // a DPAPI unseal -- no key material is touched. Note this can be true while
+    // get() returns null (a blob sealed by a different Windows user account, or
+    // a corrupt one): exactly the "something is stored that I cannot read"
+    // state that must not be overwritten.
+    return existsSync(blobFile());
+  },
+
+  async set(key: Buffer, options: SetOptions = {}): Promise<void> {
+    if (!options.rotate && existsSync(blobFile())) {
+      throw new Error(
+        "A Kerstel vault key is already stored for this Windows user. Refusing to " +
+          "replace it: the stored key is the only copy, and overwriting it would make " +
+          "every secret in the vault permanently unreadable.",
+      );
+    }
     ensureHome();
     // Same stdin-only rule as get(): the raw data key is piped in via stdin
     // and read with [Console]::In.ReadToEnd(), so it never appears as a

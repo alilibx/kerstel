@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureHome, kerstelHome } from "../../paths";
-import type { KeychainBackend } from "./types";
+import type { KeychainBackend, SetOptions } from "./types";
 
 function keyFile(): string {
   return join(kerstelHome(), "vault.key");
@@ -26,7 +26,21 @@ export const fileBackend: KeychainBackend = {
     return key.length === 32 ? key : null;
   },
 
-  async set(key: Buffer): Promise<void> {
+  async exists(): Promise<boolean> {
+    // True even for a truncated or non-base64 file, which get() reports as
+    // null. That asymmetry is the point: a damaged key file is still the only
+    // record of the key and must not be replaced by a fresh one.
+    return existsSync(keyFile());
+  },
+
+  async set(key: Buffer, options: SetOptions = {}): Promise<void> {
+    if (!options.rotate && existsSync(keyFile())) {
+      throw new Error(
+        "A Kerstel vault key is already stored at this location. Refusing to " +
+          "replace it: the stored key is the only copy, and overwriting it would make " +
+          "every secret in the vault permanently unreadable.",
+      );
+    }
     ensureHome();
     writeFileSync(keyFile(), key.toString("base64"), { encoding: "utf8", mode: 0o600 });
   },

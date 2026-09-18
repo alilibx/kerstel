@@ -1,8 +1,12 @@
 import { commandExists, run } from "./exec";
-import { ACCOUNT_NAME, SERVICE_NAME, type KeychainBackend } from "./types";
+import { ACCOUNT_NAME, SERVICE_NAME, type KeychainBackend, type SetOptions } from "./types";
 
 // `security find-generic-password` on a missing item exits with errSecItemNotFound.
 const ITEM_NOT_FOUND_EXIT = 44;
+// `security add-generic-password` without `-U` on an item that already exists
+// exits with errSecDuplicateItem and prints "The specified item already exists
+// in the keychain." Observed on this machine (macOS 26.6.2, Darwin 25.6.0).
+const DUPLICATE_ITEM_EXIT = 45;
 
 export const macosBackend: KeychainBackend = {
   name: "macos",
@@ -43,8 +47,35 @@ export const macosBackend: KeychainBackend = {
     return key.length === 32 ? key : null;
   },
 
-  async set(key: Buffer): Promise<void> {
-    // -U updates in place when the item already exists.
+  async exists(): Promise<boolean> {
+    // The metadata-only query: same lookup as get(), WITHOUT `-w`. That is the
+    // whole point -- `-w` is what makes `security` ask for the item's *data*,
+    // and the data is what the per-application ACL guards. A user who clicked
+    // "Deny" on the Keychain prompt still has an item that this query finds
+    // (exit 0) while get() is refused and returns null. Distinguishing those
+    // two states is what stops loadOrCreateDataKey() reading "denied" as
+    // "empty" and overwriting the only copy of the vault's data key.
+    const res = await run([
+      "security", "find-generic-password",
+      "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
+    ]);
+    if (res.code === 0) return true;
+    if (res.code === ITEM_NOT_FOUND_EXIT) return false;
+    // Anything else (a locked keychain, interaction-not-allowed, a `security`
+    // build with different codes) is "unknown". Answer true: the cost of a
+    // false "exists" is a clear error the user can act on, the cost of a false
+    // "absent" is an unrecoverable vault.
+    return true;
+  },
+
+  async set(key: Buffer, options: SetOptions = {}): Promise<void> {
+    // No `-U` unless the caller explicitly asked to rotate. `-U` updates in
+    // place, which on this item means destroying the only copy of the vault's
+    // data key; without it `security` refuses with errSecDuplicateItem (45) and
+    // the vault stays readable. This is the second of the two layers guarding
+    // that -- loadOrCreateDataKey() is the first -- so that a future caller
+    // reaching set() by another route cannot reintroduce the same loss.
+    //
     // -w with no value makes `security` read the password from stdin. It prompts
     // for the value twice (entry + confirmation) even when reading from a pipe,
     // so the same line is written twice.
@@ -62,10 +93,19 @@ export const macosBackend: KeychainBackend = {
       [
         "security", "add-generic-password",
         "-a", ACCOUNT_NAME, "-s", SERVICE_NAME,
-        "-D", "Kerstel vault key", "-U", "-w",
+        "-D", "Kerstel vault key",
+        ...(options.rotate ? ["-U"] : []),
+        "-w",
       ],
       value + value,
     );
+    if (res.code === DUPLICATE_ITEM_EXIT) {
+      throw new Error(
+        "A Kerstel vault key is already stored in the macOS Keychain. Refusing to " +
+          "replace it: the stored key is the only copy, and overwriting it would make " +
+          "every secret in the vault permanently unreadable.",
+      );
+    }
     if (res.code !== 0) throw new Error(`macOS Keychain write failed: ${res.stderr.trim()}`);
   },
 
