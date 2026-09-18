@@ -1,3 +1,5 @@
+import type { Choice } from "./prompts";
+
 /**
  * What the wizard SUGGESTS for a key. Never what it decides: `init` prints the
  * suggestion, the user changes it per key, and only `--yes` accepts the whole
@@ -14,6 +16,11 @@ export type Suggestion = "project" | "global" | "plaintext";
 
 /** The three choices, in the order the wizard offers them. */
 export const SUGGESTIONS: readonly Suggestion[] = ["project", "global", "plaintext"];
+
+export interface Explanation {
+  suggestion: Suggestion;
+  reason: string;
+}
 
 /**
  * Credentials for services a developer holds ONE account with, across every
@@ -80,9 +87,10 @@ function urlAuthority(value: string): string | null {
   return match[2] ?? "";
 }
 
-/** Where a key that is definitely a secret belongs. Never "plaintext". */
-function store(key: string): Suggestion {
-  return GLOBAL_KEYS.includes(key) ? "global" : "project";
+const SHARED = "You probably use this account in every project";
+
+function stored(key: string, reason: string): Explanation {
+  return GLOBAL_KEYS.includes(key) ? { suggestion: "global", reason: SHARED } : { suggestion: "project", reason };
 }
 
 /**
@@ -97,27 +105,42 @@ function store(key: string): Suggestion {
  *   4. A key that names a credential beats the value-SHAPE plaintext rules,
  *      which cannot tell `PASSWORD=secret` from `NODE_ENV=production`.
  */
-export function suggest(key: string, value: string): Suggestion {
+export function explain(key: string, value: string): Explanation {
   const trimmed = value.trim();
 
-  if (trimmed === "") return "plaintext";
-  if (BOOLEANS.has(trimmed.toLowerCase())) return "plaintext";
-  if (NUMBER.test(trimmed)) return "plaintext";
+  if (trimmed === "") return { suggestion: "plaintext", reason: "It's empty, so there's nothing to protect" };
+  if (BOOLEANS.has(trimmed.toLowerCase()) || NUMBER.test(trimmed)) {
+    return { suggestion: "plaintext", reason: "An on/off switch or a number, not a credential" };
+  }
 
   const authority = urlAuthority(trimmed);
   if (authority !== null) {
-    // `postgres://user:pass@host/db` carries a credential regardless of what
-    // the key is called; `https://api.example.com/v1` carries none.
-    if (authority.includes("@")) return "project";
-    if (SECRET_QUERY.test(trimmed)) return "project";
-    if (PLAINTEXT_KEYS.test(key)) return "plaintext";
-    return SECRET_KEYS.test(key) ? store(key) : "plaintext";
+    if (authority.includes("@")) return { suggestion: "project", reason: "The URL has a username and password in it" };
+    if (SECRET_QUERY.test(trimmed)) return { suggestion: "project", reason: "The URL carries a key or token" };
+    if (PLAINTEXT_KEYS.test(key)) return { suggestion: "plaintext", reason: "A setting, not a credential" };
+    return SECRET_KEYS.test(key)
+      ? stored(key, "The name says it's a secret")
+      : { suggestion: "plaintext", reason: "A plain URL with no credentials in it" };
   }
 
-  if (PLAINTEXT_KEYS.test(key)) return "plaintext";
-  if (SECRET_KEYS.test(key)) return store(key);
+  if (PLAINTEXT_KEYS.test(key)) return { suggestion: "plaintext", reason: "A setting, not a credential" };
+  if (SECRET_KEYS.test(key)) return stored(key, "The name says it's a secret");
+  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) {
+    return { suggestion: "plaintext", reason: "A short word, like a mode or a name" };
+  }
+  return stored(key, "Might be a secret, so it's safer in the vault");
+}
 
-  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) return "plaintext";
+/** What the wizard SUGGESTS. See `explain` for why; the two cannot disagree. */
+export function suggest(key: string, value: string): Suggestion {
+  return explain(key, value).suggestion;
+}
 
-  return store(key);
+/** The three destinations, in the words every menu uses. Spec §5.2. */
+export function DESTINATION_CHOICES(scope: string): Choice<Suggestion>[] {
+  return [
+    { value: "project", label: "Vault, for this project only", hint: `Only ${scope} can read it` },
+    { value: "global", label: "Vault, shared by all your projects", hint: "For accounts you use everywhere, like an OpenAI key" },
+    { value: "plaintext", label: "Keep as plain text", hint: "Stays in the file. For settings, not secrets" },
+  ];
 }
