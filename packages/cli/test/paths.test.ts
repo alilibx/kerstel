@@ -4,12 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readToken, writeToken } from "../src/daemon/token";
 import { ensureHome, kerstelHome, socketPath, tokenPath, vaultPath } from "../src/paths";
+import { restoreEnv } from "./helpers/isolate-env";
 
-const original = process.env.KERSTEL_HOME;
-afterEach(() => {
-  if (original === undefined) delete process.env.KERSTEL_HOME;
-  else process.env.KERSTEL_HOME = original;
-});
+afterEach(restoreEnv);
 
 test("KERSTEL_HOME overrides the default home", () => {
   const dir = mkdtempSync(join(tmpdir(), "kerstel-paths-"));

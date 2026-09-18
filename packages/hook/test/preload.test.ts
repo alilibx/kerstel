@@ -2,12 +2,9 @@ import { afterEach, beforeAll, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { startDaemon, type DaemonHandle } from "../../cli/src/daemon/server";
-import { generateDataKey } from "../../cli/src/vault/crypto";
-import { openVault, type Vault } from "../../cli/src/vault/store";
+import type { Vault } from "../../cli/src/vault/store";
+import { bootDaemon, cleanupDaemons } from "../../cli/test/helpers/boot-daemon";
 
-const running: DaemonHandle[] = [];
-const vaults: Vault[] = [];
 const TOKEN = "preload-test-token-4242";
 const DIST = resolve(import.meta.dir, "../dist");
 const FIXTURES = resolve(import.meta.dir, "fixtures");
@@ -20,17 +17,10 @@ beforeAll(async () => {
   expect(await build.exited).toBe(0);
 });
 
-afterEach(async () => {
-  while (running.length) await running.pop()!.close();
-  while (vaults.length) vaults.pop()!.close();
-});
+afterEach(cleanupDaemons);
 
 async function boot(): Promise<{ sock: string; vault: Vault }> {
-  const dir = mkdtempSync(join(tmpdir(), "kerstel-preload-"));
-  const sock = process.platform === "win32" ? `\\\\.\\pipe\\kerstel-p-${Date.now()}` : join(dir, "k.sock");
-  const vault = openVault(generateDataKey(), join(dir, "vault.db"));
-  vaults.push(vault);
-  running.push(await startDaemon({ vault, socketPath: sock, token: TOKEN, backendName: "file" }));
+  const { sock, vault } = await bootDaemon({ prefix: "preload", token: TOKEN });
   return { sock, vault };
 }
 

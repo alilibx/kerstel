@@ -7,13 +7,20 @@ import { LineDecoder, PROTOCOL_VERSION, encodeMessage, type Response } from "../
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { generateDataKey } from "../src/vault/crypto";
 import { openVault, type Vault } from "../src/vault/store";
+import { bootDaemon, cleanupDaemons, releaseDaemon } from "./helpers/boot-daemon";
 
-const running: DaemonHandle[] = [];
-const vaults: Vault[] = [];
+const TOKEN = "test-token-0123456789";
+
+// This file's one test that cannot use the shared helper -- it has to place a
+// stale file at the socket path BEFORE the daemon binds it -- tracks its own
+// daemon and vault here.
+const ownRunning: DaemonHandle[] = [];
+const ownVaults: Vault[] = [];
 
 afterEach(async () => {
-  while (running.length) await running.pop()!.close();
-  while (vaults.length) vaults.pop()!.close();
+  while (ownRunning.length) await ownRunning.pop()!.close();
+  while (ownVaults.length) ownVaults.pop()!.close();
+  await cleanupDaemons();
 });
 
 /** Sends one request over a fresh connection and resolves with the reply. */
@@ -33,14 +40,9 @@ function request(sock: string, message: unknown): Promise<Response> {
   });
 }
 
-async function boot(): Promise<{ sock: string; token: string; vault: Vault }> {
-  const dir = mkdtempSync(join(tmpdir(), "kerstel-daemon-"));
-  const sock = process.platform === "win32" ? `\\\\.\\pipe\\kerstel-test-${Date.now()}` : join(dir, "k.sock");
-  const vault = openVault(generateDataKey(), join(dir, "vault.db"));
-  vaults.push(vault);
-  const token = "test-token-0123456789";
-  running.push(await startDaemon({ vault, socketPath: sock, token, backendName: "file" }));
-  return { sock, token, vault };
+async function boot(): Promise<{ sock: string; token: string; vault: Vault; handle: DaemonHandle }> {
+  const { sock, vault, handle } = await bootDaemon({ prefix: "daemon", token: TOKEN });
+  return { sock, token: TOKEN, vault, handle };
 }
 
 test("resolve returns the stored secret", async () => {
@@ -151,8 +153,8 @@ test("lock acknowledges, then drops the key by shutting the daemon down", async 
 });
 
 test("a client lock resolves the closed signal", async () => {
-  const { sock, token } = await boot();
-  const handle = running.pop()!;
+  const { sock, token, handle } = await boot();
+  releaseDaemon(handle);
 
   const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "lock" });
   expect(res).toMatchObject({ ok: true, op: "lock" });
@@ -163,17 +165,13 @@ test("a client lock resolves the closed signal", async () => {
 });
 
 test("the daemon relocks itself after the idle timeout", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "kerstel-idle-"));
-  const sock = process.platform === "win32" ? `\\\\.\\pipe\\kerstel-idle-${Date.now()}` : join(dir, "k.sock");
-  const vault = openVault(generateDataKey(), join(dir, "vault.db"));
-  vaults.push(vault);
+  const { sock, vault } = await bootDaemon({ prefix: "idle", token: TOKEN, idleMs: 50 });
   vault.setSecret({ scope: "global", key: "K" }, "v");
 
-  running.push(await startDaemon({ vault, socketPath: sock, token: "t".repeat(20), backendName: "file", idleMs: 50 }));
   await Bun.sleep(120);
 
   const res = await request(sock, {
-    v: PROTOCOL_VERSION, id: "1", token: "t".repeat(20), op: "resolve",
+    v: PROTOCOL_VERSION, id: "1", token: TOKEN, op: "resolve",
     scope: "global", key: "K", pid: null, processName: null,
   });
   expect(res).toMatchObject({ ok: false, error: { code: "locked" } });
@@ -220,7 +218,7 @@ test("a socket path left occupied by a crashed daemon is rebound", async () => {
     process.platform === "win32"
       ? `\\\\.\\pipe\\kerstel-stale-${Date.now()}`
       : join(dir, "k.sock");
-  const token = "test-token-0123456789";
+  const token = TOKEN;
 
   if (process.platform !== "win32") {
     // A bare regular file, never listened on: the leftover a SIGKILLed daemon
@@ -230,16 +228,16 @@ test("a socket path left occupied by a crashed daemon is rebound", async () => {
   }
 
   const vault = openVault(generateDataKey(), join(dir, "vault.db"));
-  vaults.push(vault);
-  running.push(await startDaemon({ vault, socketPath: sock, token, backendName: "file" }));
+  ownVaults.push(vault);
+  ownRunning.push(await startDaemon({ vault, socketPath: sock, token, backendName: "file" }));
 
   const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "status" });
   expect(res).toMatchObject({ ok: true, op: "status" });
 });
 
 test("close() resolves the handle's closed signal", async () => {
-  const { sock } = await boot();
-  const handle = running.pop()!;
+  const { sock, handle } = await boot();
+  releaseDaemon(handle);
   expect(handle.socketPath).toBe(sock);
 
   let settled = false;
@@ -257,8 +255,8 @@ test("close() resolves the handle's closed signal", async () => {
 });
 
 test("a client shutdown resolves the closed signal too", async () => {
-  const { sock, token } = await boot();
-  const handle = running.pop()!;
+  const { sock, token, handle } = await boot();
+  releaseDaemon(handle);
 
   const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "shutdown" });
   expect(res).toMatchObject({ ok: true });

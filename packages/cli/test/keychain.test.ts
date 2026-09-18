@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openContext } from "../src/context";
 import { generateDataKey } from "../src/vault/crypto";
@@ -12,31 +11,13 @@ import {
   type KeychainBackend,
 } from "../src/vault/keychain";
 import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, readVaultMeta } from "../src/vault/meta";
-
-const originalHome = process.env.KERSTEL_HOME;
-const originalBackend = process.env.KERSTEL_KEYCHAIN_BACKEND;
-const originalService = process.env.KERSTEL_KEYCHAIN_SERVICE;
+import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 function isolate(): string {
-  const dir = mkdtempSync(join(tmpdir(), "kerstel-kc-"));
-  process.env.KERSTEL_HOME = dir;
-  process.env.KERSTEL_KEYCHAIN_BACKEND = "file";
-  // The macOS backend ignores KERSTEL_HOME -- its item lives in the login
-  // Keychain, not under the home directory -- so isolating the service name
-  // is the only thing standing between these tests and a developer's real,
-  // machine-global `dev.kerstel.vault` item and its one and only data key.
-  process.env.KERSTEL_KEYCHAIN_SERVICE = "dev.kerstel.vault.test";
-  return dir;
+  return isolateEnv({ prefix: "kc" });
 }
 
-afterEach(() => {
-  if (originalHome === undefined) delete process.env.KERSTEL_HOME;
-  else process.env.KERSTEL_HOME = originalHome;
-  if (originalBackend === undefined) delete process.env.KERSTEL_KEYCHAIN_BACKEND;
-  else process.env.KERSTEL_KEYCHAIN_BACKEND = originalBackend;
-  if (originalService === undefined) delete process.env.KERSTEL_KEYCHAIN_SERVICE;
-  else process.env.KERSTEL_KEYCHAIN_SERVICE = originalService;
-});
+afterEach(restoreEnv);
 
 test("the file backend round-trips a key", async () => {
   isolate();

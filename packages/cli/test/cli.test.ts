@@ -9,15 +9,10 @@ import { socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
 import { runCli } from "../src/index";
-
-const originalHome = process.env.KERSTEL_HOME;
-const originalBackend = process.env.KERSTEL_KEYCHAIN_BACKEND;
+import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 function isolate(): string {
-  const dir = mkdtempSync(join(tmpdir(), "kerstel-cli-"));
-  process.env.KERSTEL_HOME = dir;
-  process.env.KERSTEL_KEYCHAIN_BACKEND = "file";
-  return dir;
+  return isolateEnv({ prefix: "cli" });
 }
 
 let captured: string[] = [];
@@ -33,10 +28,7 @@ function capture(): void {
 afterEach(async () => {
   console.log = realLog;
   await runCli(["daemon", "stop"]).catch(() => 0);
-  if (originalHome === undefined) delete process.env.KERSTEL_HOME;
-  else process.env.KERSTEL_HOME = originalHome;
-  if (originalBackend === undefined) delete process.env.KERSTEL_KEYCHAIN_BACKEND;
-  else process.env.KERSTEL_KEYCHAIN_BACKEND = originalBackend;
+  restoreEnv();
 });
 
 test("set then get --reveal round-trips a secret", async () => {
