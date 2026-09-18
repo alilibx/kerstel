@@ -1,5 +1,6 @@
 import { accessSync, constants, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
@@ -14,6 +15,20 @@ import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type Uninstall
  * every project file first, and only once all of them are written, the
  * daemon, the data key, ~/.kerstel, and the binary.
  */
+
+/**
+ * Whether the vault key belongs to this home alone, and so is uninstall's to
+ * delete. The file backend keeps the key inside the home. The native stores
+ * keep it in ONE machine-wide item (`serviceName()`), shared by every home on
+ * the machine: under a custom KERSTEL_HOME it may be the key that the real
+ * ~/.kerstel depends on, and deleting it would make that vault unreadable.
+ * A rebound service name (KERSTEL_KEYCHAIN_SERVICE) is a slot of its own.
+ */
+export function keyBelongsToHome(backendName: string): boolean {
+  if (backendName === "file") return true;
+  if (process.env.KERSTEL_KEYCHAIN_SERVICE) return true;
+  return resolve(kerstelHome()) === resolve(join(homedir(), ".kerstel"));
+}
 
 export interface UninstallOptions {
   dryRun: boolean;
@@ -123,6 +138,7 @@ export async function uninstallCommand(
   // With no vault, a key left in the credential store is an orphan: nothing
   // it could decrypt remains, so a real run deletes it. exists() is read-only.
   let orphanedKey = false;
+  const ownsKey = keyBelongsToHome(existing.backend.name);
   if (existing.vault) {
     try {
       plan = planUninstall(existing.vault, existing.key);
@@ -130,7 +146,7 @@ export async function uninstallCommand(
       existing.vault.close();
     }
   } else {
-    orphanedKey = await existing.backend.exists();
+    orphanedKey = ownsKey && (await existing.backend.exists());
     info(
       orphanedKey
         ? `Kerstel has no vault on this machine, but the ${existing.backend.name} credential store still holds its key.`
@@ -215,7 +231,12 @@ export async function uninstallCommand(
   const home = kerstelHome();
   rmSync(home, { recursive: true, force: true });
   ok(`Deleted ${home}.`);
-  if (existing.vault || orphanedKey) {
+  if (existing.vault && !ownsKey) {
+    info(
+      `Left the vault key in the ${existing.backend.name} credential store: every Kerstel home on this ` +
+        `machine shares it, and ${home} is not the default ~/.kerstel. Delete it by hand once no vault needs it.`,
+    );
+  } else if (existing.vault || orphanedKey) {
     await existing.backend.delete();
     // The backends run the platform's delete tool without checking its exit
     // code, so a denied Keychain prompt would pass silently. Check the result.

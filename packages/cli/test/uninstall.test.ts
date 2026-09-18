@@ -1,8 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
+import { keyBelongsToHome, parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
 import { ScriptedPrompter } from "../src/init/prompts";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
@@ -249,4 +249,37 @@ test("a key delete that silently fails is reported instead of claimed", async ()
   }
   expect(existsSync(home)).toBe(false);
   expect(output.join("\n")).not.toContain("Deleted the vault key");
+});
+
+test("a native store's shared key belongs only to the default home", () => {
+  const home = isolateEnv({ prefix: "uninstall-owner" });
+  dirs.push(home);
+  expect(keyBelongsToHome("file")).toBe(true);
+  // isolateEnv rebinds the service name, which gives the key a slot of its own.
+  expect(keyBelongsToHome("macos")).toBe(true);
+  delete process.env.KERSTEL_KEYCHAIN_SERVICE;
+  expect(keyBelongsToHome("macos")).toBe(false);
+  expect(keyBelongsToHome("linux")).toBe(false);
+  process.env.KERSTEL_HOME = join(homedir(), ".kerstel");
+  expect(keyBelongsToHome("macos")).toBe(true);
+});
+
+test("under a custom home, a key in a shared native store is never treated as orphaned", async () => {
+  const home = isolateEnv({ prefix: "uninstall-shared" });
+  dirs.push(home);
+  await loadOrCreateDataKey();
+  delete process.env.KERSTEL_KEYCHAIN_SERVICE;
+  // Stand in for a native backend, whose one key may belong to the real ~/.kerstel.
+  const native = fileBackend as { name: string };
+  native.name = "macos";
+  const deleted = spyOn(fileBackend, "delete");
+  capture();
+  try {
+    expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(0);
+    expect(deleted).not.toHaveBeenCalled();
+    expect(output.join("\n")).not.toContain("orphaned vault key");
+  } finally {
+    native.name = "file";
+    deleted.mockRestore();
+  }
 });
