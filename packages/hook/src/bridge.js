@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const { Worker, receiveMessageOnPort, MessageChannel } = require("node:worker_threads");
+const { locateHook } = require("./locate.js");
 
 const STATUS_INDEX = 0;
 const STATE_PENDING = 0;
@@ -14,11 +15,18 @@ const STATE_PENDING = 0;
  * loop, which keeps running while this thread is blocked, so the worker can do
  * its socket round trip and wake us with Atomics.notify(). The reply itself
  * travels over a MessagePort so its size is not capped by shared memory.
+ *
+ * @param options.workerFile Absolute path to the resolver worker. preload.js
+ * computes this once via locateHook() and passes it down. Omitted (bridge.test.js
+ * driving this module directly) it is located on first use by the same runtime
+ * lookup — never from a compile-time path, which the bundler rewrites to the
+ * build machine's. See locate.js.
  */
 function createBridge(options) {
   const socketPath = options.socketPath;
   const token = options.token;
   const timeoutMs = options.timeoutMs || 5_000;
+  const configuredWorkerFile = options.workerFile;
 
   // Shared memory carries the wake-up signal and nothing else. The reply itself
   // goes over the MessagePort, so no length or status field belongs here.
@@ -34,8 +42,10 @@ function createBridge(options) {
   function start() {
     if (worker) return worker;
 
-    // After bundling, this file is preload.cjs and its worker is worker.cjs.
-    const workerFile = path.join(__dirname, __filename.endsWith(".cjs") ? "worker.cjs" : "worker.js");
+    // Resolved at RUNTIME, from the loader's view of where this code actually
+    // lives. Deriving it from __dirname/__filename would ship every user the
+    // build machine's source path — see locate.js for what the bundler bakes.
+    const workerFile = configuredWorkerFile || locateHook().workerFile;
 
     worker = new Worker(workerFile, {
       workerData: { socketPath, token, timeoutMs, control, port: channel.port2 },

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startDaemon, type DaemonHandle } from "../../cli/src/daemon/server";
@@ -41,28 +41,131 @@ async function runHooked(
   script: string,
   args: string[],
   env: Record<string, string>,
-): Promise<{ stdout: string; code: number }> {
-  const preload = join(DIST, "preload.cjs");
+  options: { preloadDir?: string; hookDirEnv?: string | null } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const preload = join(options.preloadDir ?? DIST, "preload.cjs");
   const cmd =
     runtime === "node"
       ? ["node", "--require", preload, script, ...args]
       : ["bun", "--preload", preload, script, ...args];
+
+  // `null` means "do not set KERSTEL_HOOK_DIR at all", which is what a real
+  // `node --require ~/.kerstel/hook/preload.cjs` looks like when the CLI did
+  // not launch the process. That is the case the worker path must survive on
+  // its own, so it must be expressible here.
+  const hookDirEnv = options.hookDirEnv === undefined ? DIST : options.hookDirEnv;
 
   const proc = Bun.spawn(cmd, {
     env: {
       ...process.env,
       KERSTEL_SOCKET: sock,
       KERSTEL_TOKEN: TOKEN,
-      KERSTEL_HOOK_DIR: DIST,
+      ...(hookDirEnv === null ? { KERSTEL_HOOK_DIR: undefined } : { KERSTEL_HOOK_DIR: hookDirEnv }),
       NODE_OPTIONS: "",
       ...env,
     },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return { stdout, code };
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, code };
 }
+
+// ---------------------------------------------------------------------------
+// The shipped hook must not carry the build machine's paths.
+//
+// Bun's bundler rewrites __dirname, __filename, module.filename, module.path
+// and module.id into string LITERALS holding the source path they had on the
+// machine that ran the build, and it rewrites a statically resolvable
+// require.resolve("./literal") the same way. Anything the hook derives from
+// those points at files no user has: the resolver worker never boots and every
+// lookup stalls to its deadline before blaming the daemon. The e2e suite cannot
+// see this, because it runs on the machine those paths are true for.
+//
+// These two tests are the guard. The first fails the moment a baked path
+// reappears in the output at all; the second proves the hook actually works
+// from a directory that has no relationship to this repo.
+// ---------------------------------------------------------------------------
+
+test("the built hook contains no path from the build machine", () => {
+  const repoRoot = resolve(import.meta.dir, "../../..");
+  // Absolute-path roots on every platform Kerstel targets. A bundler that bakes
+  // anything will bake something starting with one of these.
+  const forbidden = [repoRoot, "/Users/", "/home/", "/private/", "/var/folders/"];
+
+  for (const name of ["preload.cjs", "worker.cjs"]) {
+    const source = readFileSync(join(DIST, name), "utf8");
+    for (const needle of forbidden) {
+      // Name the offending line in the failure: "it contains /Users/" is not
+      // enough to act on, and the whole bundle is far too big to eyeball.
+      const offending = source
+        .split("\n")
+        .map((line, index) => [index + 1, line] as const)
+        .filter(([, line]) => line.includes(needle));
+      expect(`${name}: ${offending.map(([n, l]) => `${n}: ${l.trim()}`).join("\n")}`).toBe(`${name}: `);
+    }
+  }
+});
+
+test("the built hook resolves from a directory outside the repo", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "OUTSIDE_KEY" }, "resolved-off-build-machine");
+
+  // A fresh directory with nothing but the two shipped files, standing in for
+  // ~/.kerstel/hook/ on a machine that never saw this repo. KERSTEL_HOOK_DIR is
+  // deliberately NOT set: it would hand the hook the answer and hide exactly
+  // the defect this test exists to catch.
+  // realpath'd: require.resolve() reports the canonical path, and on macOS
+  // tmpdir() is the /var -> /private/var symlink, so the raw mkdtemp path would
+  // never compare equal to what the hook reports.
+  const install = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-install-")));
+  copyFileSync(join(DIST, "preload.cjs"), join(install, "preload.cjs"));
+
+  // The installed worker is the shipped one plus a provenance marker.
+  //
+  // Without this the test passes even with the bug reintroduced: the baked path
+  // points at packages/hook/src/worker.js, which EXISTS on the build machine
+  // and works, so the resolution succeeds and nothing looks wrong. That is the
+  // accidental pass that let this ship. The marker makes the assertion about
+  // WHICH worker ran, not merely that some worker answered — so a hook that
+  // reaches back into the repo fails here even though its value is correct.
+  const marker = join(install, "worker-loaded.marker");
+  await Bun.write(
+    join(install, "worker.cjs"),
+    `${readFileSync(join(DIST, "worker.cjs"), "utf8")}\n` +
+      "if (process.env.KERSTEL_WORKER_MARKER) " +
+      'require("node:fs").writeFileSync(process.env.KERSTEL_WORKER_MARKER, "loaded");\n',
+  );
+
+  const script = join(mkdtempSync(join(tmpdir(), "kerstel-outside-")), "read.cjs");
+  await Bun.write(
+    script,
+    "process.stdout.write(String(process.env.OUTSIDE_KEY) + '|' + String(process.env.KERSTEL_HOOK_DIR));",
+  );
+
+  const { stdout } = await runHooked(
+    "node",
+    sock,
+    script,
+    [],
+    {
+      OUTSIDE_KEY: "kerstel://global/OUTSIDE_KEY",
+      KERSTEL_TIMEOUT_MS: "3000",
+      KERSTEL_WORKER_MARKER: marker,
+    },
+    { preloadDir: install, hookDirEnv: null },
+  );
+
+  // The value came back...
+  expect(stdout).toBe(`resolved-off-build-machine|${install}`);
+  // ...and it came back through the worker sitting in the install directory,
+  // not one the bundler remembered the path to.
+  expect(existsSync(marker)).toBe(true);
+});
 
 test("node resolves a reference through process.env", async () => {
   const { sock, vault } = await boot();

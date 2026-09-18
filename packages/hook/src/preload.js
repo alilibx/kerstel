@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const { createBridge } = require("./bridge.js");
+const { locateHook } = require("./locate.js");
 const { parseReference } = require("./protocol.js");
 
 // Guard against double installation (for example --require plus a bunfig preload).
@@ -12,13 +13,26 @@ if (!process.env.KERSTEL_ACTIVE) {
 function install() {
   const socketPath = process.env.KERSTEL_SOCKET;
   const token = process.env.KERSTEL_TOKEN;
-  const hookDir = process.env.KERSTEL_HOOK_DIR || __dirname;
 
   if (!socketPath || !token) {
     // Nothing to resolve against. Leave process.env exactly as found so an
     // unconfigured machine behaves like a machine without Kerstel installed.
     return;
   }
+
+  // Located ONCE, at runtime, from where this file really sits — never from
+  // __dirname, which the bundler replaces with the build machine's source path
+  // (see locate.js). Failing here means the install is broken; say so now
+  // rather than leaving every later lookup to time out against a missing
+  // worker, and leave process.env untouched so the app runs unhooked.
+  let hook;
+  try {
+    hook = locateHook();
+  } catch (error) {
+    process.emitWarning(`Kerstel hook disabled: ${error.message}`);
+    return;
+  }
+  const hookDir = hook.dir;
 
   const raw = process.env;
   const cache = new Map();
@@ -37,6 +51,7 @@ function install() {
         socketPath,
         token,
         timeoutMs: Number(process.env.KERSTEL_TIMEOUT_MS) || 5_000,
+        workerFile: hook.workerFile,
       });
     }
 
