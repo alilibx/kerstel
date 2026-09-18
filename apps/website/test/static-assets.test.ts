@@ -19,6 +19,7 @@ function localAssetUrls(html: string): string[] {
   const attr = /(?:src|href|poster|content)="(?:https:\/\/kerstel\.dev)?(\/[^"]+)"/g;
   for (const match of html.matchAll(attr)) {
     const path = match[1];
+    if (path === undefined) continue;
     // Page routes (/docs, /security) have no extension; assets always do.
     if (!/\.[a-z0-9]+$/i.test(path)) continue;
     urls.add(path);
