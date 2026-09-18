@@ -69,6 +69,12 @@ async function stopDaemonIfRunning(): Promise<void> {
   const client = await connectDaemon();
   await client.shutdown();
   client.close();
+  // shutdown() returns once the request is sent, not once the daemon has let
+  // go of the vault and socket. Deleting the home under a daemon still
+  // writing to it could leave a stray socket or vault file behind.
+  for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
+    await Bun.sleep(100);
+  }
   ok("Stopped the Kerstel daemon.");
 }
 
@@ -88,6 +94,9 @@ export async function uninstallCommand(
   // to touch nothing, and this machine may genuinely have no vault yet.
   const existing = await openExistingVault();
   let plan: UninstallPlan;
+  // With no vault, a key left in the credential store is an orphan: nothing
+  // it could decrypt remains, so a real run deletes it. exists() is read-only.
+  let orphanedKey = false;
   if (existing.vault) {
     try {
       plan = planUninstall(existing.vault, existing.key);
@@ -95,7 +104,12 @@ export async function uninstallCommand(
       existing.vault.close();
     }
   } else {
-    info("Kerstel has no data on this machine.");
+    orphanedKey = await existing.backend.exists();
+    info(
+      orphanedKey
+        ? `Kerstel has no vault on this machine, but the ${existing.backend.name} credential store still holds its key.`
+        : "Kerstel has no data on this machine.",
+    );
     plan = emptyPlan();
   }
 
@@ -175,9 +189,13 @@ export async function uninstallCommand(
   const home = kerstelHome();
   rmSync(home, { recursive: true, force: true });
   ok(`Deleted ${home}.`);
-  if (existing.vault) {
+  if (existing.vault || orphanedKey) {
     await existing.backend.delete();
-    ok(`Deleted the vault key from the ${existing.backend.name} credential store.`);
+    ok(
+      existing.vault
+        ? `Deleted the vault key from the ${existing.backend.name} credential store.`
+        : `Deleted the orphaned vault key from the ${existing.backend.name} credential store.`,
+    );
   }
 
   if (binary.compiled) {

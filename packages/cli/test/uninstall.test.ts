@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
 import { ScriptedPrompter } from "../src/init/prompts";
-import { loadOrCreateDataKey } from "../src/vault/keychain";
+import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
 import { openVault } from "../src/vault/store";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
@@ -170,4 +170,20 @@ test("a value init kept only in its backup trips the gate until --force", async 
 
   expect(await uninstallCommand(["--yes", "--force"], undefined, NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(false);
+});
+
+test("with no vault, a real run deletes a key orphaned in the credential store", async () => {
+  const home = isolateEnv({ prefix: "uninstall-orphan" });
+  dirs.push(home);
+  await loadOrCreateDataKey();
+  const backend = await selectBackend();
+  expect(await backend.exists()).toBe(true);
+
+  capture();
+  expect(await uninstallCommand(["--dry-run"], undefined, NO_BINARY)).toBe(0);
+  expect(await backend.exists()).toBe(true);
+
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(0);
+  expect(await backend.exists()).toBe(false);
+  expect(output.join("\n")).toContain("Deleted the orphaned vault key");
 });
