@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { changelogPage, collectPages } from "./pages";
+import { collectPages, rootPage, type Page } from "./pages";
 import { renderPage } from "./render";
 
 export const SITE_URL = "https://kerstel.dev";
@@ -61,10 +61,24 @@ export function cleanOutput(outDir: string): void {
   }
 }
 
+/** Repo-root Markdown files published as site pages. */
+function rootPages(): Page[] {
+  return [
+    rootPage(join(REPO_ROOT, "CHANGELOG.md"), "changelog", {
+      title: "Changelog",
+      description: "Every Kerstel release and what changed in it.",
+    }),
+    rootPage(join(REPO_ROOT, "ROADMAP.md"), "roadmap", {
+      title: "Roadmap",
+      description: "What Kerstel ships next, release by release.",
+    }),
+  ];
+}
+
 /** Renders every page and copies static files. Returns the page paths written, relative to outDir. */
 export function build({ outDir }: BuildOptions): string[] {
   const layout = readFileSync(join(SRC, "layout.html"), "utf8");
-  const pages = [...collectPages(join(SRC, "pages")), changelogPage(join(REPO_ROOT, "CHANGELOG.md"))];
+  const pages = [...collectPages(join(SRC, "pages")), ...rootPages()];
 
   cleanOutput(outDir);
 

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roadmap · Kerstel</title>
+<meta name="description" content="What Kerstel ships next, release by release.">
+<link rel="canonical" href="https://kerstel.dev/roadmap">
+<meta property="og:title" content="Roadmap · Kerstel">
+<meta property="og:description" content="What Kerstel ships next, release by release.">
+<meta property="og:url" content="https://kerstel.dev/roadmap">
+<meta property="og:image" content="https://kerstel.dev/logo-white.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+
+<main class="wrap">
+<h1>Roadmap</h1>
+<p>What Kerstel ships, in order. A box is ticked only once the feature is merged to <code>main</code>. The <a href="https://kerstel.dev/changelog">changelog</a> lists what each release contains once it&#39;s out.</p>
+<h2>0.1.0: first release</h2>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Encrypted local vault, with the data key in the OS credential store</li>
+<li><input checked="" disabled="" type="checkbox"> <code>kerstel://</code> references, plus <code>set</code>, <code>get</code>, <code>ls</code>, and <code>rm</code></li>
+<li><input checked="" disabled="" type="checkbox"> <code>kerstel run</code> and <code>kerstel resolve</code></li>
+<li><input checked="" disabled="" type="checkbox"> Resolver daemon and runtime hook for Node and Bun</li>
+<li><input checked="" disabled="" type="checkbox"> <code>kerstel doctor</code></li>
+<li><input checked="" disabled="" type="checkbox"> <a href="https://kerstel.dev">kerstel.dev</a> with docs, changelog, and roadmap</li>
+<li><input disabled="" type="checkbox"> Setup wizard: <code>kerstel init</code> and <code>kerstel exec</code></li>
+<li><input disabled="" type="checkbox"> Release binaries for macOS, Linux, and Windows, with checksums</li>
+<li><input disabled="" type="checkbox"> Working <code>install.sh</code></li>
+<li><input disabled="" type="checkbox"> <code>kerstel uninstall</code>, which restores plaintext <code>.env</code> files before removing Kerstel</li>
+</ul>
+<h2>0.2.0: local portal</h2>
+<ul>
+<li><input disabled="" type="checkbox"> <code>kerstel ui</code>: a local web portal on <code>127.0.0.1</code>, opened with a one-time token</li>
+<li><input disabled="" type="checkbox"> Manage global and project secrets, with masked values and audited reveal</li>
+<li><input disabled="" type="checkbox"> See which projects reference which keys</li>
+<li><input disabled="" type="checkbox"> Audit log view</li>
+<li><input disabled="" type="checkbox"> Lock and unlock the vault</li>
+</ul>
+<h2>Next: access gating</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Approval prompt the first time an unknown process asks for a key</li>
+<li><input disabled="" type="checkbox"> Allowlists</li>
+<li><input disabled="" type="checkbox"> Touch ID or polkit for sensitive actions</li>
+</ul>
+<h2>Later: sync and teams</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Optional end-to-end encrypted sync, with keys that stay on your devices</li>
+<li><input disabled="" type="checkbox"> Environments (dev, staging, prod)</li>
+<li><input disabled="" type="checkbox"> Shared vaults</li>
+</ul>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="/changelog">Changelog</a>
+<a href="/roadmap">Roadmap</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>

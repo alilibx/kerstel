@@ -145,6 +145,8 @@ main h3 { font-size: 17px; margin: 28px 0 8px; color: #fff; }
 main p, main ul, main ol { margin: 0 0 14px; color: var(--text); }
 main ul, main ol { padding-left: 22px; }
 main li + li { margin-top: 4px; }
+main li:has(> input[type="checkbox"]) { list-style: none; margin-left: -22px; }
+main li > input[type="checkbox"] { accent-color: var(--accent); margin-right: 8px; vertical-align: -1px; }
 main .lede { font-size: 18px; color: var(--text-secondary); }
 main hr { border: 0; border-top: 1px solid var(--surface-border); margin: 32px 0; }
 

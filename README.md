@@ -83,16 +83,17 @@ bun run test
 Contributions are welcome! Here's how:
 
 1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
+2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Run the tests (`bun run test`)
-5. Commit (`git commit -m 'Add my feature'`)
-6. Push (`git push origin feature/my-feature`)
-7. Open a Pull Request
+4. Add a line to `CHANGELOG.md`, and tick `ROADMAP.md` if you finished an item on it
+5. Run the tests (`bun run test`)
+6. Commit with a [Conventional Commits](https://www.conventionalcommits.org) message (`git commit -m 'feat: add my feature'`)
+7. Push (`git push origin feat/my-feature`)
+8. Open a Pull Request
 
 The macOS Keychain tests in `packages/cli/test/keychain.test.ts` write to and delete from the real login Keychain, so they are skipped unless you set `KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS=1`.
 
-Please keep PRs focused — one feature or fix per PR.
+Please keep PRs focused — one feature or fix per PR. [AGENTS.md](AGENTS.md) has the full contributor rules, including how to update [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). Coding agents read it too.
 
 ## License
 
@@ -102,6 +103,6 @@ Please keep PRs focused — one feature or fix per PR.
 
 <div align="center">
 
-**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security) · [Changelog](CHANGELOG.md)
+**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
 
 </div>

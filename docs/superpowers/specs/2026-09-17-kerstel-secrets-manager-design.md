@@ -127,7 +127,11 @@ Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plainte
 
 ## 10. Roadmap
 
-- **First release, 0.1.0 (this build):** everything above.
+The public, tick-box version of this roadmap is the repo-root `ROADMAP.md`, published at kerstel.dev/roadmap.
+
+
+- **First release, 0.1.0 (this build):** everything above except the portal (§9).
+- **0.2.0 — local portal:** `kerstel ui` as described in §9. Moved out of 0.1.0 so binaries ship sooner.
 - **Next — access gating:** daemon approval prompts per unknown process/key, allowlists, Touch ID / polkit for sensitive ops.
 - **Later — optional sync & teams:** E2E-encrypted sync (client-side keys only), environments, shared vaults.
 

@@ -17,4 +17,4 @@ The first release: a local-first secrets manager for Node and Bun projects.
 - Resolver daemon (`kerstel daemon serve|start|stop|status`) that unlocks the vault once and serves resolutions over a local socket.
 - Runtime hook for Node and Bun that resolves references lazily from `process.env`, with no wrapper command.
 - `kerstel doctor` to diagnose the vault, the credential store, the daemon, and the hook assets.
-- [kerstel.dev](https://kerstel.dev) with getting-started, CLI, resolution, teams, and security docs.
+- [kerstel.dev](https://kerstel.dev) with getting-started, CLI, resolution, teams, and security docs, plus the changelog and the [roadmap](https://kerstel.dev/roadmap).
