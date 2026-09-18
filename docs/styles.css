@@ -345,3 +345,14 @@ main td code { white-space: nowrap; }
   main h1 { font-size: 30px; }
   .site-header .wrap, .site-footer .wrap { height: auto; padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
 }
+
+/* Landing-page demo video */
+.demo-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface);
+  margin-top: 8px;
+}

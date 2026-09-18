@@ -9,8 +9,12 @@
 <meta property="og:title" content="Kerstel · Local-first secrets for Node and Bun projects">
 <meta property="og:description" content="Your .env files hold only references. The real values live in an encrypted vault on your machine. No account, no cloud, no telemetry.">
 <meta property="og:url" content="https://kerstel.dev/">
-<meta property="og:image" content="https://kerstel.dev/logo-white.png">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://kerstel.dev/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Kerstel: local-first secrets for Node and Bun. No account, no cloud, no telemetry.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kerstel.dev/og.jpg">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/styles.css">
@@ -48,6 +52,13 @@
 <div class="section-label">The problem</div>
 <h2>Plaintext .env files leak</h2>
 <p class="lede">Anything that can read files can read your secrets: AI coding agents, editor plugins, backup tools, and the commit you did not mean to make. Other tools fix this with a cloud account and a wrapper command you type on every run. Kerstel needs no account, and writes its wrapper into your scripts once, so <code>npm run dev</code> is still <code>npm run dev</code>.</p>
+</section><section class="section">
+<div class="section-label">Demo</div>
+<h2>The whole flow in 37 seconds</h2>
+<p class="lede">A plaintext key becomes a reference, <code>kerstel init</code> migrates the project, and the same wiring runs under npm, Bun, pnpm, and Yarn.</p>
+<video class="demo-video" controls playsinline preload="metadata" poster="/brag-poster.jpg" width="1920" height="1080">
+<source src="/brag.mp4" type="video/mp4">
+</video>
 </section><section class="section">
 <div class="section-label">How it works</div>
 <h2>Store once. Reference everywhere.</h2>

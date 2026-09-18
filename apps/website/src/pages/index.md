@@ -27,6 +27,15 @@ description: Your .env files hold only references. The real values live in an en
 </section>
 
 <section class="section">
+<div class="section-label">Demo</div>
+<h2>The whole flow in 37 seconds</h2>
+<p class="lede">A plaintext key becomes a reference, <code>kerstel init</code> migrates the project, and the same wiring runs under npm, Bun, pnpm, and Yarn.</p>
+<video class="demo-video" controls playsinline preload="metadata" poster="/brag-poster.jpg" width="1920" height="1080">
+<source src="/brag.mp4" type="video/mp4">
+</video>
+</section>
+
+<section class="section">
 <div class="section-label">How it works</div>
 <h2>Store once. Reference everywhere.</h2>
 <p class="lede">Run <code>kerstel set global/OPENAI_API_KEY</code> once. From then on your project file holds <code class="ref">kerstel://global/OPENAI_API_KEY</code> and your code still reads the real value from <code>process.env</code>. <code>kerstel init</code> does the whole project at once, and wires your scripts for you.</p>

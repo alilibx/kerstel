@@ -11,18 +11,18 @@
     },
     "apps/website": {
       "name": "@kerstel/website",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "marked": "^18.0.13",
       },
     },
     "packages/cli": {
       "name": "@kerstel/cli",
-      "version": "0.0.0",
+      "version": "0.1.0",
     },
     "packages/hook": {
       "name": "@kerstel/hook",
-      "version": "0.0.0",
+      "version": "0.1.0",
     },
   },
   "packages": {
