@@ -54,7 +54,7 @@ set -a; . ./.env; set +a
 kerstel run -- npm run dev
 ```
 
-Projects wired with the runtime hook skip both steps: the hook resolves `kerstel://` references wherever they come from, including a `.env` loader, so your code reads `process.env.OPENAI_API_KEY` and gets the real value directly. [How resolution works](/docs/how-it-works) covers how to wire a project for the hook.
+Projects wired with the runtime hook skip both steps: the hook resolves `kerstel://` references wherever they come from, including a `.env` loader, so your code reads `process.env.OPENAI_API_KEY` and gets the real value directly. `kerstel init` does that wiring for you, once, and [how resolution works](/docs/how-it-works) covers what it writes.
 
 ## 5. Check the setup
 
@@ -62,8 +62,35 @@ Projects wired with the runtime hook skip both steps: the hook resolves `kerstel
 kerstel doctor
 ```
 
-`doctor` prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under `~/.kerstel`, and whether the daemon is running.
+`doctor` prints your Kerstel home, the vault path and how many secrets it holds, the session token, which credential store backs the vault, the socket path, whether the hook assets are installed under `~/.kerstel`, and whether the daemon is running. Run inside a project with a `package.json` and it adds a **Project** section covering the wiring: see the [CLI reference](/docs/cli) for what that section reports.
 
-## What about a whole project at once?
+## Set up a project
 
-`kerstel init` will do all of this for a whole project at once, moving every `.env` value into the vault and rewriting the files with references; it is in progress, so until it lands the steps above are the manual path.
+Everything above, for a whole project, in one command:
+
+```bash
+cd my-app
+kerstel init
+```
+
+Run it from the project root — it needs a readable `package.json`, because it wires your scripts. It detects your runtime and package manager from your lockfile, derives the project's scope from the `package.json` name, and reads every `.env` / `.env.*` file in the root (templates like `.env.example` are skipped).
+
+You are asked three kinds of question, and no more:
+
+1. **One choice per key**, before any plan is drawn: store the value in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext**. Kerstel suggests one; you decide. Key names, value sizes and value shapes are printed — never the values.
+2. **One confirmation**, under the full plan and a line-for-line diff of every file it means to change, covering all of it at once: the backup, the vault entries, the `.env` rewrites, and the wiring. Values are masked in that diff too.
+3. **One question about `.gitignore`**, afterwards, defaulting to **no**: if `.gitignore` currently hides your env files, Kerstel offers to remove those lines and leave a note instead, so the now reference-only files can be committed. It re-reads the rewritten files first and names any key that still holds a plaintext value rather than calling the files safe.
+
+Before its first write it puts your original files, encrypted with your vault key, in `~/.kerstel/backups/<scope>/<timestamp>/`. Then it rewrites the values, wires every `package.json` script as `kerstel exec -- <your original command>`, adds the `bunfig.toml` preload on a Bun project, and finishes by running a probe through the wiring to prove a reference resolves.
+
+To see all of that without writing anything, add `--dry-run`: it prints every diff and stops before the first write.
+
+```bash
+kerstel init --dry-run
+```
+
+`init` is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed.
+
+If the same key appears in more than one file with different values, the highest-precedence file wins: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.
+
+Afterwards, `npm run dev` is still `npm run dev`. Run `kerstel doctor` in the project to confirm the wiring.

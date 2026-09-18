@@ -46,13 +46,17 @@
 <p><code>run</code> reads the current environment, resolves every reference it finds, and starts the command with plaintext values in place. It is the universal path. It works for IDE run configurations, other languages, and any command that cannot load a Node preload.</p>
 <h3>The runtime hook</h3>
 <p>The hook is a small, dependency-free preload that runs before your app code. It replaces <code>process.env</code> with a proxy. When code reads a key whose value starts with <code>kerstel://</code>, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun&#39;s native <code>.env</code> loader, Next.js env loading, or your shell.</p>
-<p>No command wires this up for you today; you add it by hand. Kerstel writes the hook&#39;s files to <code>~/.kerstel/hook</code> the first time any <code>kerstel</code> command runs, and the file to point at is <code>~/.kerstel/hook/preload.cjs</code>.</p>
-<p>For a Bun project, add it to <code>preload</code> in <code>bunfig.toml</code>:</p>
+<p><code>kerstel init</code> wires this up for you. Every script in <code>package.json</code> becomes <code>kerstel exec -- &lt;your original command&gt;</code> — npm lifecycle scripts such as <code>postinstall</code> and <code>prepare</code> are never wrapped, because that would make <code>npm install</code> itself depend on Kerstel — and a Bun project also gets the hook added to <code>preload</code> in <code>bunfig.toml</code>. Kerstel writes the hook&#39;s files to <code>~/.kerstel/hook</code> the first time any <code>kerstel</code> command runs, and the file everything points at is <code>~/.kerstel/hook/preload.cjs</code>.</p>
+<h3>What <code>kerstel exec</code> does</h3>
+<p><code>kerstel exec -- &lt;command&gt;</code> is the whole wrapper, and it resolves nothing itself. It sets <code>KERSTEL_SOCKET</code>, <code>KERSTEL_TOKEN</code> and <code>KERSTEL_HOOK_DIR</code> for the child, appends <code>--require &lt;the hook&gt;</code> to <code>NODE_OPTIONS</code>, and starts the command. When the command it is about to run is <code>bun</code> or <code>bunx</code>, it also inserts <code>--preload=&lt;the hook&gt;</code> directly after the executable, because Bun does not honour <code>NODE_OPTIONS=--require</code>. Then the hook takes over and resolves each reference lazily, on the read.</p>
+<p>The path written into <code>bunfig.toml</code> is absolute: <code>bunfig.toml</code> does not expand <code>~</code>. It is also per-machine, so the committed path is not the one that works on a teammate&#39;s laptop — every developer on a Bun project runs <code>kerstel init</code> once after cloning, and it replaces the stale path with theirs.</p>
+<h3>Wiring it by hand</h3>
+<p>A project with no <code>package.json</code> scripts to wrap can point at the hook itself. For Bun, add it to <code>preload</code> in <code>bunfig.toml</code>:</p>
 <pre><code class="language-toml">preload = [&quot;/Users/you/.kerstel/hook/preload.cjs&quot;]
 </code></pre>
-<p><code>bunfig.toml</code> does not expand <code>~</code>, so write the full path (on Linux it is under <code>/home/you</code>).</p>
-<p>For a Node project, set <code>NODE_OPTIONS</code> for the scripts that need it:</p>
-<pre><code class="language-bash">NODE_OPTIONS=&quot;--require ~/.kerstel/hook/preload.cjs&quot; npm run dev
+<p>Write the full path there (on Linux it is under <code>/home/you</code>), since <code>bunfig.toml</code> does not expand <code>~</code>.</p>
+<p>For Node, set <code>NODE_OPTIONS</code> on the scripts that need it:</p>
+<pre><code class="language-bash">NODE_OPTIONS=&quot;--require /Users/you/.kerstel/hook/preload.cjs&quot; npm run dev
 </code></pre>
 <p>Child processes are covered: the hook injects itself into the environment it exposes, so a <code>node</code> or <code>bun</code> child resolves its own references. Variables handed to any child are handed already resolved. A child that is not Node or Bun, such as <code>python</code> or <code>git</code>, could not resolve a reference anyway.</p>
 <h2>When resolution fails</h2>

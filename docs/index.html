@@ -47,11 +47,11 @@
 </section><section class="section">
 <div class="section-label">The problem</div>
 <h2>Plaintext .env files leak</h2>
-<p class="lede">Anything that can read files can read your secrets: AI coding agents, editor plugins, backup tools, and the commit you did not mean to make. Other tools fix this with a cloud account and a wrapper command. Kerstel asks for neither.</p>
+<p class="lede">Anything that can read files can read your secrets: AI coding agents, editor plugins, backup tools, and the commit you did not mean to make. Other tools fix this with a cloud account and a wrapper command you type on every run. Kerstel needs no account, and writes its wrapper into your scripts once, so `npm run dev` is still `npm run dev`.</p>
 </section><section class="section">
 <div class="section-label">How it works</div>
 <h2>Store once. Reference everywhere.</h2>
-<p class="lede">Run <code>kerstel set global/OPENAI_API_KEY</code> once. From then on your project file holds <code class="ref">kerstel://global/OPENAI_API_KEY</code> and your code still reads the real value from <code>process.env</code>.</p>
+<p class="lede">Run <code>kerstel set global/OPENAI_API_KEY</code> once. From then on your project file holds <code class="ref">kerstel://global/OPENAI_API_KEY</code> and your code still reads the real value from <code>process.env</code>. <code>kerstel init</code> does the whole project at once, and wires your scripts for you.</p>
 <div class="steps">
 <div class="step"><h3>Vault</h3><p>Values are encrypted at rest with AES-256-GCM. The data key lives in your OS credential store, never in a file.</p></div>
 <div class="step"><h3>Daemon</h3><p>A per-user resolver unlocks the vault once and answers lookups over a local socket. Nothing leaves your machine.</p></div>
