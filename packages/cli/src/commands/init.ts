@@ -584,6 +584,33 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const nothingToDo =
       envChanges.length === 0 && !packageWiring.changed && !(bunfigWiring?.changed ?? false);
     if (nothingToDo) {
+      // "Already migrated" is a claim about the FILE. A project where keys were
+      // kept in plaintext on purpose also has nothing to change, and telling
+      // that user every value is a reference would be false about the one thing
+      // they came here to check. Keys are NAMED; values still never are.
+      const kept = decisions.filter((d) => d.target === "plaintext").map((d) => d.key.key);
+      const untouched = [
+        ...new Set(loaded.flatMap((entry) => entry.file.unsupported.map((u) => u.key))),
+      ];
+
+      if (kept.length + untouched.length > 0) {
+        const clauses: string[] = [];
+        if (kept.length > 0) {
+          clauses.push(
+            `${kept.length} ${kept.length === 1 ? "key stays" : "keys stay"} in plaintext by ` +
+              `your choice: ${kept.join(", ")}`,
+          );
+        }
+        if (untouched.length > 0) {
+          clauses.push(
+            `${untouched.length} ${untouched.length === 1 ? "key is" : "keys are"} in plaintext ` +
+              `Kerstel cannot rewrite: ${untouched.join(", ")}`,
+          );
+        }
+        info(`Nothing to change: your scripts are wired; ${clauses.join("; ")}.`);
+        return 0;
+      }
+
       ok(`Already migrated: every value in ${detected.envFiles.map((f) => f.name).join(", ")} is a reference, and your scripts are wired.`);
       return 0;
     }

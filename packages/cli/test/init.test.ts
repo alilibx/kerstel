@@ -578,3 +578,64 @@ test("the closing summary tells the user the migration completed even when the s
   expect(rest).toContain("self-check");
   expect(rest).toContain("kerstel doctor");
 });
+
+/**
+ * "Already migrated" is a claim about the FILE, not about the wiring. A rerun
+ * of a project where a key was deliberately kept in plaintext has nothing to
+ * change either, and saying every value is a reference there would tell the
+ * user their secrets are in the vault when one of them is still on disk.
+ */
+test("a rerun names the keys still in plaintext instead of claiming migration", async () => {
+  isolateEnv({ prefix: "init-kept" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "KEEP_ME=keep-this-value\nMOVE_ME=move-this-value\n",
+  });
+  const flags = ["--keep", "KEEP_ME"];
+  expect(await runInit(options(root, flags), new ScriptedPrompter(["project", true]))).toBe(0);
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(options(root, flags), new ScriptedPrompter([]));
+  } finally {
+    console.log = realLog;
+  }
+
+  const out = captured.join("\n");
+  expect(code).toBe(0);
+  expect(out).toContain("Nothing to change");
+  expect(out).toContain("KEEP_ME");
+  expect(out).not.toContain("Already migrated");
+  // Rule 1 holds even here: the key is named, the value never is.
+  expect(out).not.toContain("keep-this-value");
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("KEEP_ME=keep-this-value");
+});
+
+test("a rerun of a fully migrated project still reports it as migrated", async () => {
+  isolateEnv({ prefix: "init-migrated" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "MOVE_ME=move-this-value\n",
+  });
+  expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(options(root), new ScriptedPrompter([]));
+  } finally {
+    console.log = realLog;
+  }
+
+  expect(code).toBe(0);
+  expect(captured.join("\n")).toContain("Already migrated");
+});
