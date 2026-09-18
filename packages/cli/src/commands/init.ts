@@ -525,6 +525,16 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   info(`Runtime:    ${detected.runtime} (${detected.packageManager})`);
   info(`Scope:      ${bold(scope)}`);
 
+  // Before the empty check: a project whose only .env is a broken symlink has
+  // an env file, and "no .env files here" would be the wrong thing to say.
+  for (const name of detected.unreadableEnvFiles) {
+    console.log(yellow(`!  ${name} could not be read (a broken symlink?), so it was skipped.`));
+  }
+
+  if (detected.envFiles.length === 0 && detected.unreadableEnvFiles.length > 0) {
+    fail("No readable .env files here. Fix or remove the ones above, then re-run `kerstel init`.");
+    return 1;
+  }
   if (detected.envFiles.length === 0) {
     fail(
       "No .env files here. There is nothing to migrate yet -- create one, or store secrets " +
@@ -533,9 +543,6 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     return 1;
   }
   info(`Env files:  ${detected.envFiles.map((file) => file.name).join(", ")}`);
-  for (const name of detected.unreadableEnvFiles) {
-    console.log(yellow(`!  ${name} could not be read (a broken symlink?), so it was skipped.`));
-  }
 
   // --- Step 2: parse ------------------------------------------------------
   const loaded = loadEnvFiles(detected.envFiles);
@@ -552,6 +559,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
 
   const keys = collectKeys(loaded);
   const known = new Set(keys.map((key) => key.key));
+  const alreadyReferences = new Set(keys.filter((key) => key.reference !== null).map((key) => key.key));
   for (const [flag, named] of [
     ["--keep", options.keepKeys],
     ["--global", options.globalKeys],
@@ -559,6 +567,11 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const unknown = [...named].filter((key) => !known.has(key));
     if (unknown.length > 0) {
       console.log(yellow(`!  ${flag} names ${unknown.join(", ")}, which no env file defines. Ignored.`));
+    }
+    // Flags decide where a PLAINTEXT value goes; a reference has already gone.
+    const migrated = [...named].filter((key) => alreadyReferences.has(key));
+    if (migrated.length > 0) {
+      console.log(yellow(`!  ${flag} names ${migrated.join(", ")}, already a reference. Ignored.`));
     }
   }
   for (const key of keys) {

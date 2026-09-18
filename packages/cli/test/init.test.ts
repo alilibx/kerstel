@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -746,4 +746,28 @@ test("init says so when package.json is not valid JSON", async () => {
 
   const out = await captureLog(() => runInit(options(root, ["--yes"]), new DefaultsPrompter()));
   expect(out).toContain("not valid JSON");
+});
+
+test("a project whose only env file is a broken symlink says so", async () => {
+  isolateEnv({ prefix: "init-only-broken" });
+  const root = makeProject({ "package.json": NPM_PACKAGE });
+  symlinkSync(join(root, "gone"), join(root, ".env"));
+
+  const out = await captureLog(() => runInit(options(root, ["--yes"]), new DefaultsPrompter()));
+  expect(out).toContain(".env could not be read");
+  expect(out).not.toContain("No .env files here");
+});
+
+test("--keep naming a key that is already a reference is reported", async () => {
+  isolateEnv({ prefix: "init-keep-ref" });
+  const root = makeProject({
+    "package.json": WIRED_PACKAGE,
+    ".env": "ALREADY=kerstel://demo-app/ALREADY\nPLAIN=value\n",
+  });
+
+  const out = await captureLog(() =>
+    runInit(options(root, ["--dry-run", "--yes", "--keep", "ALREADY"]), new DefaultsPrompter()),
+  );
+  expect(out).toContain("ALREADY");
+  expect(out).toContain("already a reference");
 });
