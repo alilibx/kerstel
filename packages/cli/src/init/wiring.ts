@@ -112,7 +112,13 @@ export interface BunfigWiring {
 }
 
 const SECTION_HEADER = /^\s*\[/;
-const PRELOAD_LINE = /^(\s*preload\s*=\s*)\[([^\]]*)\](\s*)$/;
+/**
+ * A single-line array, with whatever follows the closing bracket captured so
+ * it can be printed back untouched. A trailing `# comment` is ordinary TOML
+ * and used to make this matcher miss, which sent a perfectly editable line
+ * into the multi-line branch and aborted `init` with the wrong reason.
+ */
+const PRELOAD_LINE = /^(\s*preload\s*=\s*)\[([^\]]*)\]([ \t]*(?:#.*)?)$/;
 const PRELOAD_OPEN = /^\s*preload\s*=\s*\[/;
 /** The string form: `preload = "./setup.ts"`, which TOML allows and bun accepts. */
 const PRELOAD_STRING = /^(\s*preload\s*=\s*)("(?:[^"\\]|\\.)*"|'[^']*')([ \t]*(?:#.*)?)$/;

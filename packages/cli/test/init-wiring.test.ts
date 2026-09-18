@@ -253,3 +253,36 @@ test("wireBunfig is not fooled by a hash inside a string preload path", () => {
   const result = wireBunfig('preload = "./set#up.ts"\n', "/hook/preload.cjs");
   expect(result.contents).toBe('preload = ["./set#up.ts", "/hook/preload.cjs"]\n');
 });
+
+/**
+ * A trailing comment after the closing bracket used to miss the single-line
+ * matcher, fall into the multi-line branch and abort `init` with an error
+ * about an array that is not multi-line at all.
+ */
+test("wireBunfig merges into a single-line preload array with a trailing comment", () => {
+  const source = 'preload = ["./setup.ts"] # bun runs this first\n';
+  const result = wireBunfig(source, "/hook/preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe(
+    'preload = ["./setup.ts", "/hook/preload.cjs"] # bun runs this first\n',
+  );
+});
+
+test("wireBunfig replaces a stale entry on a commented single-line array", () => {
+  const source = 'preload = ["/Users/ali/.kerstel/hook/preload.cjs"]\t#kerstel\n';
+  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
+  expect(result.contents).toBe(
+    'preload = ["/home/dev/.kerstel/hook/preload.cjs"]\t#kerstel\n',
+  );
+});
+
+test("wireBunfig fills an empty commented preload array", () => {
+  expect(wireBunfig("preload = [] # nothing yet\n", "/hook/preload.cjs").contents).toBe(
+    'preload = ["/hook/preload.cjs"] # nothing yet\n',
+  );
+});
+
+test("wireBunfig still refuses a multi-line array that carries a comment", () => {
+  const source = 'preload = [ # paths\n  "./setup.ts"\n]\n';
+  expect(() => wireBunfig(source, "/hook/preload.cjs")).toThrow(/by hand/);
+});
