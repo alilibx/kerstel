@@ -56,6 +56,16 @@ describe("build output", () => {
     }
   });
 
+  test("landing page carries the hero, install command, and section links", () => {
+    const html = readFileSync(join(out, "index.html"), "utf8");
+    expect(html).toContain('id="hero-val"');
+    expect(html).toContain("curl -fsSL https://kerstel.dev/install.sh | bash");
+    expect(html).toContain('href="/security"');
+    expect(html).toContain('href="/docs/getting-started"');
+    expect(html).not.toContain("version-badge");
+    expect(html).not.toContain("api.github.com");
+  });
+
   test("no page mentions the retired product", () => {
     for (const file of htmlFiles) {
       const html = readFileSync(join(out, file), "utf8");
