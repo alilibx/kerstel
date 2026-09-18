@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How resolution works · Kerstel</title>
+<meta name="description" content="Reference syntax, scopes, the resolver daemon, and how the runtime hook turns a reference into a value.">
+<link rel="canonical" href="https://kerstel.dev/docs/how-it-works">
+<meta property="og:title" content="How resolution works · Kerstel">
+<meta property="og:description" content="Reference syntax, scopes, the resolver daemon, and how the runtime hook turns a reference into a value.">
+<meta property="og:url" content="https://kerstel.dev/docs/how-it-works">
+<meta property="og:image" content="https://kerstel.dev/logo-white.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/cli">CLI reference</a></li><li><a href="/docs/how-it-works" aria-current="page">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li></ul></nav>
+<main class="wrap">
+<h1>How resolution works</h1>
+<p class="lede">A reference is a pointer into your vault. This page follows one from the <code>.env</code> file to <code>process.env</code>.</p><h2>References and scopes</h2>
+<p>A reference looks like this:</p>
+<pre><code>kerstel://&lt;scope&gt;/&lt;KEY&gt;
+</code></pre>
+<p>The scope is either <code>global</code> or a project name. A reference names exactly one scope and resolves there or fails. There is no fallback chain: <code>kerstel://myapp/API_KEY</code> never quietly picks up <code>global/API_KEY</code>. If you want a project to use a shared value, point the project&#39;s <code>.env</code> at the global reference directly.</p>
+<h2>The vault</h2>
+<p>Values live in <code>~/.kerstel/vault.db</code>, encrypted per value with AES-256-GCM. The data key lives in your OS credential store. The <a href="/security">security model</a> covers this in detail.</p>
+<h2>The daemon</h2>
+<p>A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (<code>~/.kerstel/kerstel.sock</code>, or a named pipe on Windows). Each request carries a session token, so only processes running as you can ask. The daemon records an audit row for each resolution.</p>
+<p>You rarely start it by hand. The hook and <code>kerstel run</code> start it on demand; <code>kerstel daemon status</code> shows whether it is up.</p>
+<h2>Two ways to resolve</h2>
+<h3><code>kerstel run</code></h3>
+<pre><code class="language-bash">kerstel run -- next build
+</code></pre>
+<p><code>run</code> reads the current environment, resolves every reference it finds, and starts the command with plaintext values in place. It is the universal path. It works for IDE run configurations, other languages, and any command that cannot load a Node preload.</p>
+<h3>The runtime hook</h3>
+<p>The hook is a small, dependency-free preload that runs before your app code. It replaces <code>process.env</code> with a proxy. When code reads a key whose value starts with <code>kerstel://</code>, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun&#39;s native <code>.env</code> loader, Next.js env loading, or your shell.</p>
+<p>For Bun projects the hook is a <code>preload</code> entry in <code>bunfig.toml</code>. For Node projects the package scripts run through a shim that sets <code>NODE_OPTIONS=--require &lt;hook&gt;</code>.</p>
+<p>Child processes are covered: the hook injects itself into the environment it exposes, so a <code>node</code> or <code>bun</code> child resolves its own references. Variables handed to any child are handed already resolved. A child that is not Node or Bun, such as <code>python</code> or <code>git</code>, could not resolve a reference anyway.</p>
+<h2>When resolution fails</h2>
+<p>If the daemon is unreachable, the vault is locked, or the key is missing, the hook throws an error that names the reference and points at <code>kerstel doctor</code>. It never returns the reference string to your code as if it were the value.</p>
+<h2>Edge cases worth knowing</h2>
+<ul>
+<li><strong>Build-time snapshots.</strong> Frameworks that inline environment variables into a client bundle, such as <code>NEXT_PUBLIC_*</code>, only see real values when the build itself runs under the hook or through <code>kerstel run</code>.</li>
+<li><strong>Scrubbed environments.</strong> A process launched with a clean environment, or by an absolute-path exec that drops <code>NODE_OPTIONS</code>, cannot load the hook. Use <code>kerstel run</code> for those.</li>
+<li><strong>One spawn resolves everything.</strong> Building a child&#39;s environment enumerates every variable, so a single spawn resolves every reference in scope, whether or not the child reads it. Expect one audit row per reference per spawn.</li>
+</ul>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>

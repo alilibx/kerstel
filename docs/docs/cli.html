@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI reference · Kerstel</title>
+<meta name="description" content="Every Kerstel command, what it does, and the flags it takes.">
+<link rel="canonical" href="https://kerstel.dev/docs/cli">
+<meta property="og:title" content="CLI reference · Kerstel">
+<meta property="og:description" content="Every Kerstel command, what it does, and the flags it takes.">
+<meta property="og:url" content="https://kerstel.dev/docs/cli">
+<meta property="og:image" content="https://kerstel.dev/logo-white.png">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/cli" aria-current="page">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li></ul></nav>
+<main class="wrap">
+<h1>CLI reference</h1>
+<p class="lede">All commands take a reference in the form <code>&lt;scope&gt;/&lt;KEY&gt;</code>, where scope is <code>global</code> or a project name.</p><h2>Secrets</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel set &lt;scope&gt;/&lt;KEY&gt; [--value &lt;value&gt;]</code></td>
+<td>Store or overwrite a secret. Without <code>--value</code>, the value is read from stdin.</td>
+</tr>
+<tr>
+<td><code>kerstel get &lt;scope&gt;/&lt;KEY&gt; [--reveal]</code></td>
+<td>Read a secret. Prints a masked value unless <code>--reveal</code> is given.</td>
+</tr>
+<tr>
+<td><code>kerstel ls [--scope &lt;scope&gt;]</code></td>
+<td>List stored references, optionally for one scope. Values are never listed.</td>
+</tr>
+<tr>
+<td><code>kerstel rm &lt;scope&gt;/&lt;KEY&gt; --yes</code></td>
+<td>Remove a secret. <code>--yes</code> is required; there is no interactive confirmation.</td>
+</tr>
+</tbody></table>
+<h2>Running code</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel run -- &lt;command&gt;</code></td>
+<td>Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook.</td>
+</tr>
+<tr>
+<td><code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code></td>
+<td>Print one resolved value. Useful in scripts.</td>
+</tr>
+</tbody></table>
+<h2>Daemon and diagnostics</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel daemon start</code></td>
+<td>Start the resolver daemon in the background.</td>
+</tr>
+<tr>
+<td><code>kerstel daemon stop</code></td>
+<td>Stop it.</td>
+</tr>
+<tr>
+<td><code>kerstel daemon status</code></td>
+<td>Report whether it is running and where its socket is.</td>
+</tr>
+<tr>
+<td><code>kerstel daemon serve</code></td>
+<td>Run the daemon in the foreground. Used by <code>start</code>; handy for debugging.</td>
+</tr>
+<tr>
+<td><code>kerstel doctor</code></td>
+<td>Diagnose this machine: vault, credential store, daemon, and project wiring.</td>
+</tr>
+</tbody></table>
+<h2>Environment variables</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>KERSTEL_HOME</code></td>
+<td>Directory for the vault, socket, and hook assets. Defaults to <code>~/.kerstel</code>.</td>
+</tr>
+<tr>
+<td><code>KERSTEL_KEYCHAIN_BACKEND</code></td>
+<td>Force a credential store backend. Set to <code>file</code> for a <code>0600</code> key file instead of the OS store. Kerstel warns whenever this fallback is in use.</td>
+</tr>
+</tbody></table>
+<h2>Exit codes</h2>
+<p>Commands exit <code>0</code> on success and non-zero on any failure. Errors go to stderr and name the fix, usually <code>kerstel doctor</code>. Plaintext values never appear in error output.</p>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>
