@@ -16,7 +16,7 @@ Your `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to r
 
 ## The problem
 
-`.env` and `.env.local` files hold secrets in plaintext. Anything that can read files — AI coding agents, editor plugins, accidental commits, backup tools — can read those secrets too. Existing solutions solve this with cloud accounts and explicit wrapper commands. Kerstel doesn't ask for either.
+`.env` and `.env.local` files hold secrets in plaintext. Anything that can read files — AI coding agents, editor plugins, accidental commits, backup tools — can read those secrets too. Existing solutions solve this with cloud accounts and a wrapper command you have to remember to type. Kerstel has no account, and writes its wrapper into your `package.json` scripts once so you never type it: `npm run dev` stays `npm run dev`.
 
 ## How it works
 
@@ -38,17 +38,19 @@ A reference names exactly one scope — `global`, or a project name — with no 
 ## Usage
 
 ```bash
+kerstel init [--yes] [--dry-run]              # Migrate this project's .env files
 kerstel set <scope>/<KEY> [--value <value>]   # Store a secret (or pipe it on stdin)
 kerstel get <scope>/<KEY> [--reveal]          # Read a secret
 kerstel ls [--scope <scope>]                  # List stored references
 kerstel rm <scope>/<KEY> --yes                # Remove a secret
 kerstel run -- <command>                      # Run a command with references resolved
+kerstel exec -- <command>                     # Run a command with the hook wired in
 kerstel resolve kerstel://<scope>/<KEY>       # Print one resolved value
 kerstel daemon <serve|start|stop|status>      # Manage the resolver daemon
 kerstel doctor                                # Diagnose this machine's setup
 ```
 
-`kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`, with no wrapper command needed.
+`kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
 
 ## Set up a project
 
@@ -57,28 +59,30 @@ cd my-app
 kerstel init
 ```
 
-The wizard walks through seven steps and asks before each one:
+The wizard shows you everything it intends to do — the plan, and a full diff of every file — and then asks **once**, before its first write, whether to apply all of it: the backup, the vault entries, the `.env` rewrites and the wiring. Two questions sit outside that one: what to do with each key, asked before the plan is drawn, and whether to touch `.gitignore`, asked afterwards.
 
 1. **Detect** your runtime and package manager from your lockfile.
 2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found — key names, value sizes and shapes, never the values themselves. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
 3. **Back up** the originals, encrypted with your vault key, to `~/.kerstel/backups/<project>/<timestamp>/`.
 4. **Rewrite** the files, changing only the bytes of the values it stored. Comments, blank lines, key order, quoting style and inline comments all survive byte for byte.
 5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped), and Bun projects also get a `preload` entry in `bunfig.toml`. You see the diff first.
-6. **Offer to update `.gitignore`**, as a separate confirmation that defaults to **no**: if it currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the now reference-only files can be committed. Decline and it leaves `.gitignore` untouched.
+6. **Offer to update `.gitignore`**, as a separate confirmation that defaults to **no**: if it currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the now reference-only files can be committed. It re-reads the rewritten files first: if any key still holds a plaintext value — `--keep`, a **plaintext** answer, or a line it could not parse — it names those keys rather than telling you the files are safe to commit. Decline and it leaves `.gitignore` untouched.
 7. **Self-check** by running a probe through the wiring and confirming a reference resolves.
 
 Afterwards `npm run dev` is still `npm run dev`.
+
+The `bunfig.toml` preload path points into `~/.kerstel`, which is per-machine, so the committed path is not the one that works on a teammate's laptop. Every developer on a Bun project runs `kerstel init` once after cloning; it replaces the stale path with theirs.
 
 Useful flags:
 
 | Flag | What it does |
 |---|---|
-| `--dry-run` | Prints every diff and writes nothing. Run this first. |
+| `--dry-run` | Prints every diff and writes nothing to your project or your vault (it still prepares `~/.kerstel`). Run this first. |
 | `--yes` | Accepts every suggestion, asks nothing. |
 | `--scope <name>` | Overrides the project scope (default: your `package.json` name). |
 | `--global KEY[,KEY]` | Forces those keys into the `global` scope. |
 | `--keep KEY[,KEY]` | Forces those keys to stay plaintext. |
-| `--non-interactive` | Fails loudly instead of asking; use in scripts. |
+| `--non-interactive` | Never asks a question. Applies the suggested plan like `--yes`, but fails with exit 2 naming the flag on any question no flag can answer — a missing secret value, for instance. Pair it with `--from-stdin` in scripts. |
 | `--from-stdin` | Reads `{"KEY": "value"}` JSON for keys this machine is missing. |
 
 `kerstel init` is idempotent: run it again after adding a key and it migrates only what is new.
