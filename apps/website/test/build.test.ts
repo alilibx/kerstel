@@ -5,7 +5,15 @@ import { extname, join, relative } from "node:path";
 import { build } from "../src/build";
 
 /** Every page the site must ship. Later tasks append to this list. */
-const EXPECTED_PAGES = ["index.html", "security.html"];
+const EXPECTED_PAGES = [
+  "index.html",
+  "security.html",
+  "docs/index.html",
+  "docs/getting-started.html",
+  "docs/cli.html",
+  "docs/how-it-works.html",
+  "docs/teams.html",
+];
 
 const FORBIDDEN = [/menu bar/i, /macOS 14/i, /AI usage/i, /system metrics/i, /\bports\b/i];
 
@@ -50,10 +58,23 @@ describe("build output", () => {
         const url = m[1]!;
         let path = url === "/" ? "index.html" : url.slice(1);
         if (path.endsWith("/")) path += "index.html";
-        else if (!extname(path)) path += ".html";
+        else if (!extname(path)) path = existsSync(join(out, `${path}.html`)) ? `${path}.html` : `${path}/index.html`;
         expect(existsSync(join(out, path)), `${file} links to ${url} but ${path} does not exist`).toBe(true);
       }
     }
+  });
+
+  test("docs pages share the docs navigation in a fixed order", () => {
+    const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams"];
+    for (const file of ["docs/getting-started.html", "docs/cli.html", "docs/how-it-works.html", "docs/teams.html"]) {
+      const html = readFileSync(join(out, file), "utf8");
+      const hrefs = [...html.matchAll(/<nav class="docs-nav"[\s\S]*?<\/nav>/g)][0]?.[0] ?? "";
+      const order = [...hrefs.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+      expect(order, file).toEqual(expectedOrder);
+      expect(hrefs, file).toContain('aria-current="page"');
+    }
+    const index = readFileSync(join(out, "docs/index.html"), "utf8");
+    expect(index).not.toContain('class="docs-nav"');
   });
 
   test("landing page carries the hero, install command, and section links", () => {
