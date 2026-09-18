@@ -25,6 +25,15 @@ export interface DaemonOptions {
 export interface DaemonHandle {
   socketPath: string;
   close(): Promise<void>;
+  /**
+   * Resolves once THIS server has finished closing, whether `close()` was
+   * called locally, by the idle timer, or by a client's `shutdown`. A caller
+   * that needs to outlive the server (`daemon serve`) awaits this instead of
+   * probing the socket path, which only ever answers "is SOMETHING listening
+   * here" -- a question that gets the wrong answer the moment another process
+   * binds the same path.
+   */
+  closed: Promise<void>;
 }
 
 const DEFAULT_IDLE_MS = 8 * 60 * 60 * 1000;
@@ -190,13 +199,21 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
   if (process.platform !== "win32") chmodSync(socketPath, 0o600);
   touchIdleTimer();
 
+  let signalClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    signalClosed = resolve;
+  });
+
   async function close(): Promise<void> {
     if (idleTimer) clearTimeout(idleTimer);
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (process.platform !== "win32") rmSync(socketPath, { force: true });
+    // Last, so anything awaiting `closed` observes a fully torn-down server.
+    // Resolving a promise twice is a no-op, so a second close() is harmless.
+    signalClosed();
   }
 
-  return { socketPath, close };
+  return { socketPath, close, closed };
 }

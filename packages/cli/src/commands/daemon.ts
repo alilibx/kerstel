@@ -1,11 +1,30 @@
 import { openContext } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
+import { daemonServeCommand } from "../daemon/spawn";
 import { fail, info, ok } from "../output";
 import { socketPath } from "../paths";
 
 const START_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 100;
+
+/**
+ * Spec §7: "Idles out after a configurable period." Configured here, at the
+ * one place that actually starts a long-lived server, so `startDaemon`'s
+ * default stays a library default rather than a policy.
+ * A non-numeric, zero or negative value is ignored in favour of that default:
+ * an idle timeout of zero would relock the vault before the first request.
+ */
+function configuredIdleMs(): number | undefined {
+  const raw = process.env.KERSTEL_IDLE_MS;
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    info(`Ignoring KERSTEL_IDLE_MS="${raw}": expected a positive whole number of milliseconds.`);
+    return undefined;
+  }
+  return parsed;
+}
 
 /**
  * Opens the vault and blocks in the foreground, serving requests until the
@@ -18,8 +37,8 @@ const POLL_INTERVAL_MS = 100;
  * this process is serving requests, which is most of this function's life.
  * It IS closed on every path that actually ends this process's reason to
  * keep running: if startDaemon() itself fails (the vault was opened but
- * never started serving), and once the shutdown-detection loop below ends
- * (the vault is no longer needed and this function is about to return).
+ * never started serving), and once the server signals it has closed (the
+ * vault is no longer needed and this function is about to return).
  */
 async function serveCommand(): Promise<number> {
   const ctx = await openContext();
@@ -34,6 +53,7 @@ async function serveCommand(): Promise<number> {
       socketPath: socketPath(),
       token: ctx.token,
       backendName: ctx.backend,
+      idleMs: configuredIdleMs(),
       onIdle: () => {
         // Idle timeout only locks the vault by default; closing the server is
         // what actually ends this process's reason to keep running.
@@ -47,12 +67,12 @@ async function serveCommand(): Promise<number> {
 
   ok(`Kerstel daemon listening on ${handle.socketPath}`);
 
-  // A remote `daemon stop` closes the server directly inside startDaemon()
-  // with no callback back into this process, so watch for the socket going
-  // away rather than waiting on a promise or event we're not given.
-  while (await isDaemonRunning(handle.socketPath)) {
-    await Bun.sleep(POLL_INTERVAL_MS * 5);
-  }
+  // A remote `daemon stop` closes the server from inside startDaemon() with no
+  // callback back into this function, so the handle carries a signal we can
+  // wait on. It reports THIS server's own shutdown -- unlike probing the socket
+  // path, which answers "is something listening" and would keep this process
+  // parked forever, holding an open vault, if another daemon bound the path.
+  await handle.closed;
   ctx.vault.close();
   return 0;
 }
@@ -69,7 +89,7 @@ async function startCommand(): Promise<number> {
     return 0;
   }
 
-  Bun.spawn([process.execPath, "daemon", "serve"], {
+  Bun.spawn(daemonServeCommand(), {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

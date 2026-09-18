@@ -55,6 +55,9 @@ async function boot(): Promise<{ sock: string; vault: Vault }> {
       child.kill();
       await child.exited;
     },
+    // The real daemon lives in the child process, so "this server closed" is
+    // "that child exited" as far as anything here can observe.
+    closed: child.exited.then(() => undefined),
   };
   running.push(handle);
 

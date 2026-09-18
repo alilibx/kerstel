@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -178,15 +178,62 @@ test("shutdown acknowledges the request before the daemon stops accepting connec
   });
 });
 
-test("a stale socket file is replaced on restart", async () => {
-  const { sock, token } = await boot();
-  await running.pop()!.close();
-
+// This is the restart-after-CRASH story, which is the only reason the unlink in
+// startDaemon() exists. A daemon that shuts down cleanly removes its own socket
+// file, so closing one and starting another proves nothing about stale files --
+// there is nothing left at the path to be stale. The state after a crash is a
+// file sitting at the socket path with nobody listening, and bind(2) refusing
+// to reuse it. Create exactly that, by hand, and make the daemon walk over it.
+test("a socket path left occupied by a crashed daemon is rebound", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kerstel-restart-"));
+  const sock =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\kerstel-stale-${Date.now()}`
+      : join(dir, "k.sock");
+  const token = "test-token-0123456789";
+
+  if (process.platform !== "win32") {
+    // A bare regular file, never listened on: the leftover a SIGKILLed daemon
+    // leaves behind. Without the unlink, listen() fails here with EADDRINUSE.
+    writeFileSync(sock, "");
+    expect(existsSync(sock)).toBe(true);
+  }
+
   const vault = openVault(generateDataKey(), join(dir, "vault.db"));
   vaults.push(vault);
   running.push(await startDaemon({ vault, socketPath: sock, token, backendName: "file" }));
 
   const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "status" });
+  expect(res).toMatchObject({ ok: true, op: "status" });
+});
+
+test("close() resolves the handle's closed signal", async () => {
+  const { sock } = await boot();
+  const handle = running.pop()!;
+  expect(handle.socketPath).toBe(sock);
+
+  let settled = false;
+  void handle.closed.then(() => {
+    settled = true;
+  });
+
+  // Nothing has closed the server yet, so the signal must still be pending.
+  await Bun.sleep(10);
+  expect(settled).toBe(false);
+
+  await handle.close();
+  await handle.closed;
+  expect(settled).toBe(true);
+});
+
+test("a client shutdown resolves the closed signal too", async () => {
+  const { sock, token } = await boot();
+  const handle = running.pop()!;
+
+  const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "shutdown" });
   expect(res).toMatchObject({ ok: true });
+
+  // `daemon serve` awaits exactly this promise; a remote shutdown has to settle
+  // it or that process parks forever holding an open vault.
+  await handle.closed;
 });

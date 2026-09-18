@@ -10,6 +10,7 @@ import {
   type Response,
   type StatusOk,
 } from "./protocol";
+import { daemonServeCommand } from "./spawn";
 import { readToken } from "./token";
 
 export class DaemonError extends Error {
@@ -45,6 +46,18 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
     throw new DaemonError("unauthorized", "No session token found. Run `kerstel daemon start`.");
   }
 
+  // Same short-circuit, and for the same reason, as isDaemonRunning() below:
+  // in Bun, connecting to a Unix socket PATH THAT DOES NOT EXIST raises its
+  // ENOENT outside the "error" event and outside this promise, where no
+  // listener and no `await`-site try/catch can intercept it -- it takes the
+  // process down. That is the ordinary state of a machine whose daemon has
+  // never been started, which is exactly the case ensureDaemon() has to
+  // survive in order to start one. (Windows named pipes are not files, so the
+  // check is Unix-only; there the connect error arrives normally.)
+  if (process.platform !== "win32" && !existsSync(sock)) {
+    throw new DaemonError("unreachable", `Kerstel daemon is not running (no socket at ${sock})`);
+  }
+
   const socket = await new Promise<Socket>((resolve, reject) => {
     const conn = createConnection(sock);
     const timer = setTimeout(() => {
@@ -66,8 +79,37 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
   const decoder = new LineDecoder();
   let counter = 0;
 
+  let closed = false;
+
+  const fail = (error: Error): void => {
+    closed = true;
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  };
+
   socket.on("data", (chunk) => {
-    for (const line of decoder.push(chunk)) {
+    let lines: string[];
+    try {
+      lines = decoder.push(chunk);
+    } catch {
+      // LineDecoder throws past MAX_LINE_CHARS. This runs inside a "data"
+      // listener, so an escaping throw is an uncaught exception that kills the
+      // whole client PROCESS -- not just this request. The server guards its
+      // own decoder the same way (server.ts). Reject everything in flight with
+      // a code the caller can act on, then drop the connection: the stream's
+      // framing is unrecoverable once a line is this long, and `fail()` has
+      // already latched `closed` so no further request can be sent.
+      fail(
+        new DaemonError(
+          "internal",
+          "The Kerstel daemon sent a message larger than the protocol allows; the connection was dropped.",
+        ),
+      );
+      socket.destroy();
+      return;
+    }
+
+    for (const line of lines) {
       let response: Response;
       try {
         response = JSON.parse(line) as Response;
@@ -81,14 +123,6 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
       }
     }
   });
-
-  let closed = false;
-
-  const fail = (error: Error): void => {
-    closed = true;
-    for (const waiter of pending.values()) waiter.reject(error);
-    pending.clear();
-  };
   socket.on("error", (error) => fail(new DaemonError("unreachable", (error as Error).message)));
   socket.on("close", () => fail(new DaemonError("unreachable", "Daemon connection closed")));
 
@@ -211,7 +245,7 @@ export async function ensureDaemon(options: EnsureOptions = {}): Promise<DaemonC
     // Fall through and start one.
   }
 
-  const command = options.spawnCommand ?? [process.execPath, "daemon", "serve"];
+  const command = options.spawnCommand ?? daemonServeCommand();
   Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
 
   const deadline = Date.now() + (options.timeoutMs ?? 10_000);

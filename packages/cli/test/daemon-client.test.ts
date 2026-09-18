@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DaemonError, connectDaemon, isDaemonRunning } from "../src/daemon/client";
+import { MAX_LINE_CHARS } from "../src/daemon/protocol";
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { generateDataKey } from "../src/vault/crypto";
 import { openVault, type Vault } from "../src/vault/store";
@@ -88,6 +90,41 @@ test("connecting to a nonexistent socket rejects quickly", async () => {
   const sock = process.platform === "win32" ? "\\\\.\\pipe\\kerstel-absent" : join(dir, "absent.sock");
   await expect(connectDaemon({ socketPath: sock, token: TOKEN, timeoutMs: 300 })).rejects.toThrow();
 });
+
+// The decoder throws past MAX_LINE_CHARS, and on the client that throw happens
+// inside a "data" listener, where an escape is an UNCAUGHT EXCEPTION that takes
+// the whole process down -- not just the request. Serve an oversized line from
+// a bare socket server (the real daemon refuses to store a value this big, by
+// design) and assert the client survives it as a rejected promise.
+test.skipIf(process.platform === "win32")(
+  "an oversized reply rejects the request instead of crashing the process",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kerstel-huge-"));
+    const sock = join(dir, "k.sock");
+
+    const server = createServer((socket) => {
+      socket.on("data", () => {
+        // No newline: pure buffer growth, past the cap, exactly what a daemon
+        // streaming an over-large value would produce.
+        socket.write("x".repeat(MAX_LINE_CHARS + 1));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(sock, () => resolve()));
+
+    try {
+      const client = await connectDaemon({ socketPath: sock, token: TOKEN });
+      const error = await client.resolve("global", "HUGE").then(
+        () => null,
+        (e: unknown) => e as DaemonError,
+      );
+      expect(error).toBeInstanceOf(DaemonError);
+      expect(error?.message).toContain("larger than the protocol allows");
+      client.close();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
 
 test("a request issued after close rejects instead of hanging", async () => {
   const { sock } = await boot();

@@ -4,6 +4,11 @@ export const PROTOCOL_VERSION = 1;
  * Maximum line length in UTF-16 code units (JavaScript string length).
  * Bounds the in-memory buffer from a malicious or buggy peer. Not a byte-denominated wire limit.
  * One megabyte is far beyond any legitimate request or secret.
+ *
+ * It caps SUSTAINED growth, not peak allocation: `LineDecoder.push` appends the
+ * whole chunk before checking, so a single enormous chunk is held in memory
+ * once before it is rejected. Bounding the peak would require checking the
+ * incoming chunk's size before concatenation.
  */
 export const MAX_LINE_CHARS = 1_048_576;
 
