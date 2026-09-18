@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backupTimestamp, createBackup, listBackups, restoreBackup } from "../src/init/backup";
@@ -98,6 +98,27 @@ test("listBackups returns this scope's timestamps, oldest first", () => {
 
   expect(listBackups("my-app")).toEqual(["2026-01-01T00-00-00.000Z", "2026-02-01T00-00-00.000Z"]);
   expect(listBackups("nobody")).toEqual([]);
+});
+
+test("listBackups excludes leftover .tmp-* staging dirs, even ones with a manifest", () => {
+  isolateEnv({ prefix: "backup-tmp-leftover" });
+  const key = generateDataKey();
+  createBackup({ scope: "my-app", dataKey: key, files: FILES, timestamp: "2026-04-01T00-00-00.000Z" });
+
+  const scopeDir = join(backupsDir(), "my-app");
+
+  // A staging dir killed after its manifest was written but before renameSync
+  // committed it -- this is the scenario a naive `existsSync(manifest.json)`
+  // filter would wrongly accept.
+  const tmpWithManifest = join(scopeDir, ".tmp-fake-1");
+  mkdirSync(tmpWithManifest, { recursive: true });
+  writeFileSync(join(tmpWithManifest, "manifest.json"), "{}");
+
+  // A staging dir killed before the manifest was even written.
+  const tmpWithoutManifest = join(scopeDir, ".tmp-fake-2");
+  mkdirSync(tmpWithoutManifest, { recursive: true });
+
+  expect(listBackups("my-app")).toEqual(["2026-04-01T00-00-00.000Z"]);
 });
 
 test.if(process.platform !== "win32")("backups are owner-only", () => {

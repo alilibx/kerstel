@@ -29,12 +29,15 @@ import { decrypt, encrypt } from "../vault/crypto";
  * Blob format: the 12-byte nonce, then the ciphertext with its GCM tag. One
  * file, one encryption, no framing to get wrong.
  *
- * Writes are staged in a hidden sibling directory and renamed into place only
- * once every file and the manifest are down -- a crash or thrown error midway
- * through a multi-file backup leaves an orphaned `.tmp-*` directory instead of
- * a `<timestamp>` directory that looks real but is missing files `restoreBackup`
- * would need. `listBackups` only reports a timestamp once its manifest exists,
- * so a half-written backup never looks complete.
+ * Writes are staged in a hidden sibling directory (named `.tmp-<timestamp>-*`)
+ * and renamed into place only once every file and the manifest are down -- a
+ * crash or thrown error midway through a multi-file backup leaves an orphaned
+ * `.tmp-*` directory instead of a `<timestamp>` directory that looks real but
+ * is missing files `restoreBackup` would need. That staging directory can
+ * itself contain a fully-written `manifest.json` (a kill between the manifest
+ * write and the rename), so `listBackups` cannot rely on manifest presence
+ * alone -- it also excludes any entry still named `.tmp-*`, so a half-written
+ * backup never looks complete no matter where in the write it was interrupted.
  */
 
 const NONCE_BYTES = 12;
@@ -127,11 +130,15 @@ export function listBackups(scope: string): string[] {
   if (!existsSync(dir)) return [];
   try {
     // Timestamps are ISO, so lexicographic order is chronological order.
-    // Only a directory with a manifest is a completed backup -- an orphaned
-    // `.tmp-*` staging directory (left behind if a crash skipped the cleanup
-    // in createBackup) has no manifest and is filtered out here too.
+    // A completed backup is a directory that (a) is not still a `.tmp-*`
+    // staging name and (b) has a manifest. Checking manifest presence alone
+    // is not enough: a staging directory can be killed after its manifest was
+    // written but before createBackup's renameSync committed it, which would
+    // otherwise slip a raw `.tmp-<timestamp>-<random>` string past this
+    // filter and out as a "timestamp" -- breaking the sort order and any
+    // caller doing `new Date(timestamp)`.
     return readdirSync(dir)
-      .filter((name) => existsSync(join(dir, name, "manifest.json")))
+      .filter((name) => !name.startsWith(".tmp-") && existsSync(join(dir, name, "manifest.json")))
       .sort();
   } catch {
     return [];
