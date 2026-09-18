@@ -16,8 +16,10 @@ import {
 } from "../init/prompts";
 import { renderDiff, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
-import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference } from "../reference";
+import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
+import { vaultPath } from "../paths";
 import { loadOrCreateDataKey } from "../vault/keychain";
+import { readStoredReferences } from "../vault/meta";
 import type { Vault } from "../vault/store";
 
 /**
@@ -29,8 +31,10 @@ import type { Vault } from "../vault/store";
  *      shape and nothing else; the value itself only ever moves between the
  *      file, the vault and the encrypted backup.
  *   2. NOTHING IS WRITTEN BEFORE THE USER SAYS YES, and the backup is written
- *      before anything else, so every step has an undo.
- *   3. --dry-run returns before the first write, having printed every diff.
+ *      before anything else, so every step has an undo. That includes values
+ *      a teammate types in: they are held in memory until the plan is applied.
+ *   3. --dry-run writes nothing at all, not even to ~/.kerstel: it never opens
+ *      the vault or the credential store, having printed every diff.
  */
 
 const GITIGNORE_NOTE = "# Kerstel: .env files hold references, safe to commit";
@@ -80,14 +84,14 @@ export function parseInitArgs(args: string[], cwd: string): InitOptions | { erro
       const value = args[++i];
       // A flag as the next token means the value is missing, not that the
       // project is called "--yes".
-      if (!value || value.startsWith("--")) return { error: "--scope needs a name, e.g. --scope my-app" };
+      if (!value || value.startsWith("-")) return { error: "--scope needs a name, e.g. --scope my-app" };
       if (!isValidScope(value)) {
         return { error: `Invalid scope "${value}". Use a lowercase name of letters, digits, . _ or -.` };
       }
       options.scope = value;
     } else if (arg === "--global" || arg === "--keep") {
       const value = args[++i];
-      if (!value || value.startsWith("--")) return { error: `${arg} needs a comma-separated list of KEYs` };
+      if (!value || value.startsWith("-")) return { error: `${arg} needs a comma-separated list of KEYs` };
       const target = arg === "--global" ? options.globalKeys : options.keepKeys;
       for (const key of splitKeys(value)) target.add(key);
     } else {
@@ -97,6 +101,11 @@ export function parseInitArgs(args: string[], cwd: string): InitOptions | { erro
           "--global KEY[,KEY], --keep KEY[,KEY], --non-interactive, --from-stdin.",
       };
     }
+  }
+
+  const both = [...options.keepKeys].filter((key) => options.globalKeys.has(key));
+  if (both.length > 0) {
+    return { error: `${both.join(", ")} cannot be in both --keep and --global. Pick one.` };
   }
 
   return options;
@@ -115,16 +124,23 @@ async function readStdin(): Promise<string> {
   return new TextDecoder().decode(Buffer.concat(chunks.map((c) => Buffer.from(c))));
 }
 
+interface SuppliedValue {
+  ref: SecretRef;
+  value: string;
+}
+
 /**
  * Spec §8's teammate flow: the repository carries references, this machine's
  * vault does not carry the values. Ask for them, or read them as JSON.
+ *
+ * Only COLLECTS the values. Storing them is the caller's job, after the user
+ * has approved the plan (rule 2).
  */
 async function fillMissingReferences(
   missing: CollectedKey[],
-  vault: Vault,
   options: InitOptions,
   prompter: Prompter,
-): Promise<number> {
+): Promise<SuppliedValue[] | number> {
   console.log("");
   console.log(bold("Values this machine is missing"));
   for (const key of missing) {
@@ -134,7 +150,7 @@ async function fillMissingReferences(
 
   if (options.dryRun) {
     info("--dry-run: no values were requested and nothing was stored.");
-    return 0;
+    return [];
   }
 
   let supplied: Record<string, string> = {};
@@ -150,6 +166,7 @@ async function fillMissingReferences(
     }
   }
 
+  const values: SuppliedValue[] = [];
   for (const key of missing) {
     const ref = key.reference!;
     const reference = formatReference(ref.scope, ref.key);
@@ -158,14 +175,20 @@ async function fillMissingReferences(
       value = await prompter.text(`Value for ${reference}?`, { secret: true, flag: "--from-stdin" });
     }
     if (typeof value !== "string" || value === "") {
-      fail(`No value supplied for ${reference}. Nothing was stored for it.`);
+      fail(`No value supplied for ${reference}. Nothing was stored.`);
       return 2;
     }
-    vault.setSecret(ref, value);
-    ok(`Stored ${reference}`);
+    values.push({ ref, value });
   }
 
-  return 0;
+  return values;
+}
+
+function storeSupplied(vault: Vault, values: SuppliedValue[]): void {
+  for (const { ref, value } of values) {
+    vault.setSecret(ref, value);
+    ok(`Stored ${formatReference(ref.scope, ref.key)}`);
+  }
 }
 
 interface Decision {
@@ -233,10 +256,9 @@ const BLANK_OR_COMMENT = /^\s*(#.*)?$/;
  * key, the `export` prefix, the quoting style and any inline comment.
  *
  * It masks EVERY value, not only the ones this run migrates. Rule 1 has no
- * exceptions, and `renderDiff` produces a SINGLE HUNK -- it prints every line
- * from the first difference to the last verbatim -- so a value the wizard is
- * deliberately leaving alone still reaches the terminal whenever it happens to
- * sit between two rewritten keys. That covers `--keep`, a "plaintext" answer,
+ * exceptions: `renderDiff` prints a line of context around every edit, so a
+ * value the wizard is deliberately leaving alone reaches the terminal whenever
+ * it sits next to a rewritten key. That covers `--keep`, a "plaintext" answer,
  * and a value the parser refused.
  *
  * Applied to BOTH sides, which has a second benefit: an untouched key masks to
@@ -487,8 +509,10 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   const detected = detectProject(options.cwd);
   if (!detected.packageJson) {
     fail(
-      `No readable package.json in ${options.cwd}. Run \`kerstel init\` from your project root ` +
-        "(Kerstel wires package scripts, so it needs one).",
+      detected.packageJsonError === "invalid"
+        ? `${detected.packageJsonPath} is not valid JSON. Fix it, then re-run \`kerstel init\`.`
+        : `No readable package.json in ${options.cwd}. Run \`kerstel init\` from your project root ` +
+            "(Kerstel wires package scripts, so it needs one).",
     );
     return 2;
   }
@@ -501,6 +525,16 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   info(`Runtime:    ${detected.runtime} (${detected.packageManager})`);
   info(`Scope:      ${bold(scope)}`);
 
+  // Before the empty check: a project whose only .env is a broken symlink has
+  // an env file, and "no .env files here" would be the wrong thing to say.
+  for (const name of detected.unreadableEnvFiles) {
+    console.log(yellow(`!  ${name} could not be read (a broken symlink?), so it was skipped.`));
+  }
+
+  if (detected.envFiles.length === 0 && detected.unreadableEnvFiles.length > 0) {
+    fail("No readable .env files here. Fix or remove the ones above, then re-run `kerstel init`.");
+    return 1;
+  }
   if (detected.envFiles.length === 0) {
     fail(
       "No .env files here. There is nothing to migrate yet -- create one, or store secrets " +
@@ -524,6 +558,22 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   }
 
   const keys = collectKeys(loaded);
+  const known = new Set(keys.map((key) => key.key));
+  const alreadyReferences = new Set(keys.filter((key) => key.reference !== null).map((key) => key.key));
+  for (const [flag, named] of [
+    ["--keep", options.keepKeys],
+    ["--global", options.globalKeys],
+  ] as const) {
+    const unknown = [...named].filter((key) => !known.has(key));
+    if (unknown.length > 0) {
+      console.log(yellow(`!  ${flag} names ${unknown.join(", ")}, which no env file defines. Ignored.`));
+    }
+    // Flags decide where a PLAINTEXT value goes; a reference has already gone.
+    const migrated = [...named].filter((key) => alreadyReferences.has(key));
+    if (migrated.length > 0) {
+      console.log(yellow(`!  ${flag} names ${migrated.join(", ")}, already a reference. Ignored.`));
+    }
+  }
   for (const key of keys) {
     if (key.conflicts.length === 0) continue;
     console.log(
@@ -535,16 +585,24 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     );
   }
 
-  const ctx = await openContext();
+  // --dry-run never opens the vault: opening it creates ~/.kerstel, installs
+  // the hook, and can mint a data key. The names of stored secrets are readable
+  // without the key, and that is all a dry run needs.
+  const storedNames = options.dryRun ? readStoredReferences(vaultPath()) : null;
+  const ctx = options.dryRun ? null : await openContext();
   try {
     const referenced = keys.filter((key) => key.reference !== null);
     const plain = keys.filter((key) => key.reference === null);
+    const inVault = (ref: SecretRef): boolean =>
+      ctx ? ctx.vault.getSecret(ref) !== null : storedNames!.has(`${ref.scope}/${ref.key}`);
 
     // --- Teammate flow ----------------------------------------------------
-    const missing = referenced.filter((key) => ctx.vault.getSecret(key.reference!) === null);
+    const missing = referenced.filter((key) => !inVault(key.reference!));
+    let supplied: SuppliedValue[] = [];
     if (missing.length > 0) {
-      const code = await fillMissingReferences(missing, ctx.vault, options, prompter);
-      if (code !== 0) return code;
+      const result = await fillMissingReferences(missing, options, prompter);
+      if (typeof result === "number") return result;
+      supplied = result;
     }
 
     // --- Step 3: classify and decide --------------------------------------
@@ -570,6 +628,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
 
     const nothingToDo = envChanges.length === 0 && !packageWiring.changed;
     if (nothingToDo) {
+      // Values a teammate just typed are the whole point of this run, and there
+      // is no plan to approve, so the typing was the approval.
+      if (ctx) {
+        ctx.vault.registerProject(scope, detected.root);
+        storeSupplied(ctx.vault, supplied);
+      }
       // "Already migrated" is a claim about the FILE. A project where keys were
       // kept in plaintext on purpose also has nothing to change, and telling
       // that user every value is a reference would be false about the one thing
@@ -632,6 +696,9 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       return 0;
     }
 
+    // Past the dry-run return, so the vault is open.
+    const vault = ctx!.vault;
+
     // --- Step 5: backup, then store, then rewrite ---------------------------
     // openContext() holds the data key privately; this reads the same key from
     // the same credential store rather than widening CliContext to expose it.
@@ -643,11 +710,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     });
     ok(`Encrypted backup of your originals: ${backup.dir}`);
 
-    ctx.vault.registerProject(scope, detected.root);
+    vault.registerProject(scope, detected.root);
+    storeSupplied(vault, supplied);
     let stored = 0;
     for (const decision of decisions) {
       if (decision.target === "plaintext") continue;
-      ctx.vault.setSecret(
+      vault.setSecret(
         { scope: decision.target === "global" ? GLOBAL_SCOPE : scope, key: decision.key.key },
         decision.key.value,
       );
@@ -670,7 +738,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const probeDecision = decisions.find((decision) => decision.target !== "plaintext");
     if (probeDecision) {
       const probeScope = probeDecision.target === "global" ? GLOBAL_SCOPE : scope;
-      const expected = ctx.vault.getSecret({ scope: probeScope, key: probeDecision.key.key });
+      const expected = vault.getSecret({ scope: probeScope, key: probeDecision.key.key });
       if (expected !== null) {
         console.log("");
         const result = await selfCheck(detected, {
@@ -705,7 +773,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     }
     return 0;
   } finally {
-    ctx.vault.close();
+    ctx?.vault.close();
   }
 }
 

@@ -122,3 +122,27 @@ test("renderDiff handles pure insertion", () => {
   expect(out).not.toContain("- ");
 });
 
+
+test("wiring keeps CRLF line endings", () => {
+  const source = NPM_PACKAGE.replace(/\n/g, "\r\n");
+  const wired = wirePackageJson(source);
+  expect(wired.changed).toBe(true);
+  expect(wired.contents.replace(/\r\n/g, "")).not.toContain("\n");
+  expect(wired.contents.endsWith("}\r\n")).toBe(true);
+});
+
+test("wiring keeps a missing final newline missing", () => {
+  const wired = wirePackageJson(NPM_PACKAGE.trimEnd());
+  expect(wired.changed).toBe(true);
+  expect(wired.contents.endsWith("}")).toBe(true);
+});
+
+test("renderDiff leaves an unchanged line between two edits out of the diff", () => {
+  const out = strip(renderDiff(".env", "A=1\nB=2\nC=3\n", "A=x\nB=2\nC=y\n"));
+  expect(out).toContain("- A=1");
+  expect(out).toContain("+ A=x");
+  expect(out).toContain("- C=3");
+  expect(out).toContain("+ C=y");
+  expect(out).not.toContain("- B=2");
+  expect(out).not.toContain("+ B=2");
+});

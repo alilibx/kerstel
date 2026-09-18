@@ -19,7 +19,7 @@ order: 2
 
 | Flag | What it does |
 | --- | --- |
-| `--dry-run` | Prints the plan and every diff, then stops before the first write. Nothing reaches your project or your vault. |
+| `--dry-run` | Prints the plan and every diff, then stops before the first write. Nothing reaches your project, your vault, or `~/.kerstel`. |
 | `--yes` | Takes every suggestion and every default, asking nothing. |
 | `--scope <name>` | Use this scope instead of the one derived from your `package.json` name. Lowercase letters, digits, `.`, `_` and `-`. |
 | `--global KEY[,KEY]` | Put those keys in the `global` scope without asking. |

@@ -17,7 +17,7 @@ export interface DotenvRaw {
   kind: "raw";
   /** The line without its terminator, exactly as read. */
   text: string;
-  /** This line's terminator: "\n", "\r\n", or "" for an unterminated last line. */
+  /** This line's terminator: "\n", "\r\n", a lone "\r", or "" for an unterminated last line. */
   eol: string;
 }
 
@@ -212,7 +212,9 @@ function parseLine(
  * contributor on more than one OS — still round-trips exactly.
  */
 export function parseDotenv(source: string): DotenvFile {
-  const parts = source.split(/(\r\n|\n)/);
+  // A lone "\r" is a line ending too, as it is to dotenv and to Node's own
+  // parser; reading it as part of the value would swallow the next key.
+  const parts = source.split(/(\r\n|\n|\r)/);
   const lines: DotenvLine[] = [];
   const unsupported: UnsupportedValue[] = [];
 

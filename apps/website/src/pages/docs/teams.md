@@ -30,7 +30,7 @@ git clone git@github.com:acme/myapp.git && cd myapp
 kerstel init
 ```
 
-The committed `.env` is already the list of what the project needs, so `init` lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. To supply the values from a script instead:
+The committed `.env` is already the list of what the project needs, so `init` lists the references this vault cannot resolve yet and asks for each one with the echo turned off — no value ever arrives on the command line. It stores them when you apply the plan, or straight away if nothing else in the project needs changing. To supply the values from a script instead:
 
 ```bash
 echo '{"DATABASE_URL":"kerstel-demo-value","STRIPE_SECRET_KEY":"kerstel-demo-value"}' | kerstel init --from-stdin --non-interactive

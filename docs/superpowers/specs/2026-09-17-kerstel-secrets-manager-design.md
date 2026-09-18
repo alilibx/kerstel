@@ -119,7 +119,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 
 When one key appears in several files with different values, `init` stores the highest-precedence one (`.env.<x>.local` > `.env.local` > `.env.<x>` > `.env`), rewrites every occurrence to that single reference, keeps the losing values only in the encrypted backup, and names the affected files — Kerstel has no environments yet, so one key resolves to exactly one value.
 
-**Teammate flow:** clone → `kerstel init` reads committed references, lists keys the local vault lacks, prompts for values. References double as a living `.env.example`. Each value is stored in the vault as it is entered, before the apply confirmation — the confirmation governs the writes to the project's own files, and a value supplied for a reference the repository already carries needs no further approval.
+**Teammate flow:** clone → `kerstel init` reads committed references, lists keys the local vault lacks, prompts for values. References double as a living `.env.example`. Values are held in memory as they are entered and stored when the user applies the plan, so declining leaves the vault untouched and "nothing is written before the user says yes" holds without exception. If nothing else in the project needs changing, there is no plan to approve, and the values are stored straight away. `--dry-run` asks for no values and writes nothing, not even to `~/.kerstel`.
 
 Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plaintext), `ui`, `run`, `doctor` (wiring + daemon + keychain diagnostics), `daemon start|stop|status`, `uninstall` (restores plaintext `.env` from vault before removing itself, with confirmation).
 
