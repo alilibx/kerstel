@@ -10,6 +10,9 @@ const SRC = resolve(import.meta.dir);
 /** The GitHub Pages source directory at the repo root. */
 export const DEFAULT_OUT = resolve(SRC, "../../../docs");
 
+/** Root of the whole repository, computed the same way DEFAULT_OUT is. */
+export const REPO_ROOT = resolve(SRC, "../../..");
+
 /** Top-level entries in the output directory the build never touches. */
 const PRESERVE = new Set(["superpowers"]);
 
@@ -21,23 +24,35 @@ export interface BuildOptions {
 }
 
 /**
- * Removes everything in outDir except the preserved entries. Creates outDir
- * if needed.
+ * Decides whether outDir is safe to clean, without touching the filesystem
+ * beyond the package.json check. A separate, exported, pure-ish predicate so
+ * it can be unit-tested against every boundary case directly, including
+ * DEFAULT_OUT itself, without actually deleting anything.
  *
- * Refuses to touch a directory that looks like a source tree rather than a
- * built site: one that holds a `package.json`, or one that is (or contains)
- * this package's own `src`. A bad `--out` value -- a typo, a bug in the
- * caller, or an argument this build script failed to reject -- must not be
- * able to delete real source.
+ * Refuses two shapes of bad `--out` value: a directory that holds a
+ * `package.json` (looks like a source tree, in or out of this repo), and any
+ * directory that is inside this repository but is not `docs/` -- that covers
+ * both an ancestor of `src` (`packages/cli/src`) and a descendant of it
+ * (`src/pages`), which a plain ancestor-of-SRC check would miss.
  */
-export function cleanOutput(outDir: string): void {
+export function assertSafeOutDir(outDir: string): void {
   if (existsSync(join(outDir, "package.json"))) {
     throw new Error(`refusing to clean ${outDir}: it contains a package.json, which looks like a source tree`);
   }
-  const rel = relative(outDir, SRC);
-  if (rel === "" || !rel.startsWith("..")) {
-    throw new Error(`refusing to clean ${outDir}: it is this package's own source tree (or an ancestor of it)`);
+  const resolved = resolve(outDir);
+  const rel = relative(REPO_ROOT, resolved);
+  const insideRepo = rel === "" || !rel.startsWith("..");
+  if (insideRepo && resolved !== DEFAULT_OUT) {
+    throw new Error(`refusing to clean ${outDir}: inside the repository but not docs/`);
   }
+}
+
+/**
+ * Removes everything in outDir except the preserved entries. Creates outDir
+ * if needed.
+ */
+export function cleanOutput(outDir: string): void {
+  assertSafeOutDir(outDir);
 
   mkdirSync(outDir, { recursive: true });
   for (const entry of readdirSync(outDir)) {

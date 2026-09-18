@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
-import { build, cleanOutput } from "../src/build";
+import { DEFAULT_OUT, REPO_ROOT, assertSafeOutDir, build, cleanOutput } from "../src/build";
 
 /** Every page the site must ship. Later tasks append to this list. */
 const EXPECTED_PAGES = [
@@ -134,7 +134,26 @@ describe("build output", () => {
     expect(() => cleanOutput(dir)).toThrow(/package\.json/);
   });
 
-  test("cleanOutput refuses the package's own src ancestor", () => {
+  test("assertSafeOutDir accepts the real docs/ output directory", () => {
+    expect(() => assertSafeOutDir(DEFAULT_OUT)).not.toThrow();
+  });
+
+  test("assertSafeOutDir refuses an in-repo ancestor of src, like packages/cli/src", () => {
+    const target = resolve(REPO_ROOT, "packages", "cli", "src");
+    expect(() => assertSafeOutDir(target)).toThrow(/inside the repository/);
+  });
+
+  test("assertSafeOutDir refuses an in-repo descendant of src, like src/pages", () => {
+    const target = resolve(import.meta.dir, "..", "src", "pages");
+    expect(() => assertSafeOutDir(target)).toThrow(/inside the repository/);
+  });
+
+  test("assertSafeOutDir accepts a tmp directory outside the repo", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kerstel-outdir-"));
+    expect(() => assertSafeOutDir(dir)).not.toThrow();
+  });
+
+  test("cleanOutput refuses a directory that is this package's own src tree", () => {
     const websiteDir = resolve(import.meta.dir, "..");
     // websiteDir also has its own package.json, so either guard is enough to
     // refuse it; what matters is that it refuses, never that it deletes.
