@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { openContext } from "../src/context";
 import { generateDataKey } from "../src/vault/crypto";
 import {
@@ -10,6 +10,7 @@ import {
   serviceName,
   type KeychainBackend,
 } from "../src/vault/keychain";
+import { addPasswordCommand } from "../src/vault/keychain/macos";
 import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, readVaultMeta } from "../src/vault/meta";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
@@ -88,6 +89,49 @@ test.if(
   }
   expect(await backend.get()).toBeNull();
 });
+
+test("the macOS key goes to security -i on stdin, quoted, never as an argument", () => {
+  const key = Buffer.alloc(32, 42);
+  const line = addPasswordCommand(key, "dev.kerstel.vault", false);
+  expect(line).toBe(
+    `add-generic-password -a "kerstel" -s "dev.kerstel.vault" -D "Kerstel vault key" -w "${key.toString("base64")}"\n`,
+  );
+  expect(addPasswordCommand(key, "svc", true)).toContain(" -U -w ");
+  expect(() => addPasswordCommand(key, 'bad"name', false)).toThrow(/quote/);
+});
+
+// The bug this guards against only shows up with a controlling terminal:
+// `security add-generic-password -w` reads the value from the TTY, not stdin,
+// so the first run in a real shell stopped at "password data for new item:".
+// `script` gives the child a pseudo-terminal, which bun test itself lacks.
+test.if(
+  process.platform === "darwin" && process.env.KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS === "1",
+)("the macOS Keychain backend stores a key without prompting in a terminal", async () => {
+  const service = "dev.kerstel.vault.test-tty";
+  const source = resolve(import.meta.dir, "../src/vault/keychain/macos.ts");
+  const code = `
+    const { macosBackend } = await import(${JSON.stringify(source)});
+    const key = Buffer.alloc(32, 5);
+    await macosBackend.delete();
+    try {
+      await macosBackend.set(key);
+      console.log((await macosBackend.get())?.equals(key) ? "ROUND-TRIP-OK" : "ROUND-TRIP-MISMATCH");
+    } finally {
+      await macosBackend.delete();
+    }
+  `;
+  const proc = Bun.spawn(["script", "-q", "/dev/null", process.execPath, "-e", code], {
+    env: { ...process.env, KERSTEL_KEYCHAIN_SERVICE: service },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timer = setTimeout(() => proc.kill(), 10_000);
+  const output = await new Response(proc.stdout).text();
+  clearTimeout(timer);
+  expect(output).not.toContain("password data");
+  expect(output).toContain("ROUND-TRIP-OK");
+}, 15_000);
 
 // --- Never overwrite an existing stored key -------------------------------
 //

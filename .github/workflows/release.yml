@@ -90,6 +90,27 @@ jobs:
           ./kerstel daemon stop
           test "$out" = "smoke-value"
 
+      - name: Keychain in a terminal ${{ matrix.asset }}
+        # The step above uses the file backend. This one uses the real login
+        # Keychain, inside a pseudo-terminal from `script`: `security` behaves
+        # differently with a terminal attached, and a first run that stops to
+        # prompt for the key only shows up there. perl's alarm is the timeout
+        # macOS lacks, so a prompt fails the step instead of hanging it.
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/keychain"
+          mkdir -p "$work" && cd "$work"
+          cp "$RUNNER_TEMP/release/${{ matrix.asset }}" ./kerstel
+          chmod +x ./kerstel
+          export KERSTEL_HOME="$work/home" KERSTEL_KEYCHAIN_SERVICE=dev.kerstel.vault.smoke
+          trap 'security delete-generic-password -a kerstel -s "$KERSTEL_KEYCHAIN_SERVICE" >/dev/null 2>&1 || true' EXIT
+
+          printf 'keychain-value' > value.txt
+          perl -e 'alarm 30; exec @ARGV' script -q /dev/null sh -c './kerstel set global/KC_KEY < value.txt' < /dev/null
+          ./kerstel doctor | grep -q 'Keychain:.*macos'
+          test "$(./kerstel get global/KC_KEY --reveal)" = "keychain-value"
+
   publish:
     needs: [verify, smoke]
     runs-on: ubuntu-latest

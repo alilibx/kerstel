@@ -8,6 +8,30 @@ const ITEM_NOT_FOUND_EXIT = 44;
 // in the keychain." Observed on this machine (macOS 26.6.2, Darwin 25.6.0).
 const DUPLICATE_ITEM_EXIT = 45;
 
+/** One argument for `security -i`'s line parser, which splits on spaces and honours double quotes. */
+function quoteArg(value: string): string {
+  if (/["\\\n\r]/.test(value)) {
+    throw new Error(`Cannot pass ${JSON.stringify(value)} to the macOS Keychain: it contains a quote, backslash, or newline.`);
+  }
+  return `"${value}"`;
+}
+
+/**
+ * The `security -i` command line that stores the vault key. Exported for
+ * tests: the key must be on this line (stdin), never in `security`'s argv.
+ */
+export function addPasswordCommand(key: Buffer, service: string, rotate: boolean): string {
+  const args = [
+    "add-generic-password",
+    "-a", quoteArg(ACCOUNT_NAME),
+    "-s", quoteArg(service),
+    "-D", quoteArg("Kerstel vault key"),
+    ...(rotate ? ["-U"] : []),
+    "-w", quoteArg(key.toString("base64")),
+  ];
+  return `${args.join(" ")}\n`;
+}
+
 export const macosBackend: KeychainBackend = {
   name: "macos",
 
@@ -76,28 +100,15 @@ export const macosBackend: KeychainBackend = {
     // that -- loadOrCreateDataKey() is the first -- so that a future caller
     // reaching set() by another route cannot reintroduce the same loss.
     //
-    // -w with no value makes `security` read the password from stdin. It prompts
-    // for the value twice (entry + confirmation) even when reading from a pipe,
-    // so the same line is written twice.
-    //
-    // This double-prompt behavior was found empirically on this machine (macOS
-    // 26.6.2) by observing `security` hang the second read on EOF and silently
-    // create the item with an empty secret when fed only one line — it is not
-    // documented Apple behavior, and other `security` builds may prompt only
-    // once. Writing the value twice is safe either way: a build that reads
-    // once consumes the first line and never looks at the second, so this is
-    // not a workaround to "clean up" — removing it can silently corrupt the
-    // stored key on builds that do want the confirmation line.
-    const value = `${key.toString("base64")}\n`;
+    // The command goes to `security -i` on stdin, so the key is never an argv
+    // entry. It must NOT be `add-generic-password -w` with the value piped in:
+    // with no value, `-w` reads it through readpassphrase(), which prefers the
+    // controlling terminal over stdin. Under a pipe (tests, CI) that looks like
+    // it works, but in a real terminal `security` ignores stdin and prints
+    // "password data for new item:", waiting for the user to type the key.
     const res = await run(
-      [
-        "security", "add-generic-password",
-        "-a", ACCOUNT_NAME, "-s", serviceName(),
-        "-D", "Kerstel vault key",
-        ...(options.rotate ? ["-U"] : []),
-        "-w",
-      ],
-      value + value,
+      ["security", "-i"],
+      addPasswordCommand(key, serviceName(), options.rotate === true),
     );
     if (res.code === DUPLICATE_ITEM_EXIT) {
       throw new Error(
