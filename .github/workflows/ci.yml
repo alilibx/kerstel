@@ -44,3 +44,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/cli build
       - run: ./dist/kerstel --help
+
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/website build
+      # docs/ is committed build output. A page edit without a rebuild shows up
+      # here as a diff and fails the job, so kerstel.dev can never go stale.
+      - run: git diff --exit-code -- docs/
+      - run: bun test apps/website
