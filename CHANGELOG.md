@@ -16,5 +16,13 @@ The first release: a local-first secrets manager for Node and Bun projects.
 - `kerstel resolve` to print one resolved value.
 - Resolver daemon (`kerstel daemon serve|start|stop|status`) that unlocks the vault once and serves resolutions over a local socket.
 - Runtime hook for Node and Bun that resolves references lazily from `process.env`, with no wrapper command.
-- `kerstel doctor` to diagnose the vault, the credential store, the daemon, and the hook assets.
-- [kerstel.dev](https://kerstel.dev) with getting-started, CLI, resolution, teams, and security docs.
+- `kerstel doctor` to diagnose the vault, the credential store, the daemon, and the hook assets. Inside a project it also reports the scope, the runtime, how many scripts are wired, and how many references this vault can resolve.
+- `kerstel init`, a setup wizard that moves a project's `.env` values into the vault. It shows the full plan and every diff, asks once before writing, and backs up the originals encrypted. It rewrites only the values, keeping comments, order, and quoting intact. Then it wires the runtime hook into your `package.json` scripts, so `npm run dev` stays `npm run dev`.
+- `kerstel init` on a cloned project that already uses Kerstel prompts for each key your vault is missing, with the echo turned off. Nothing is stored until you apply the plan.
+- `kerstel init` flags for scripts and CI: `--dry-run` (writes nothing, not even to `~/.kerstel`), `--yes`, `--scope`, `--global`, `--keep`, `--non-interactive`, and `--from-stdin`. `--keep` or `--global` naming a key no env file defines gets a warning.
+- `kerstel exec -- <command>`, which runs one command with the runtime hook wired in. `kerstel init` writes it into your scripts.
+- [kerstel.dev](https://kerstel.dev) with getting-started, CLI, resolution, teams, and security docs, plus the changelog and the [roadmap](https://kerstel.dev/roadmap).
+- `kerstel --version`.
+- `kerstel uninstall`, which restores every project's `.env` values in their original quoting, package scripts, and `.gitignore`, then removes `~/.kerstel`, the vault key, and the binary. It refuses, naming each one, if any secret would be lost, including a value `init` kept only in its encrypted backup. Afterwards it names every restored `.env` file git still tracks.
+- Release binaries for macOS and Linux (x64 and arm64), with SHA-256 checksums.
+- `curl -fsSL https://kerstel.dev/install.sh | bash`, which verifies the checksum and installs to `~/.local/bin` without `sudo`.

@@ -20,6 +20,9 @@ export const LIFECYCLE_SCRIPTS: readonly string[] = [
 
 export const EXEC_PREFIX = "kerstel exec -- ";
 
+/** The line `init` leaves in .gitignore in place of the env-file lines it removes. */
+export const GITIGNORE_NOTE = "# Kerstel: .env files hold references, safe to commit";
+
 export function wrapScript(command: string): string {
   return `${EXEC_PREFIX}${command}`;
 }
@@ -93,43 +96,107 @@ export function wirePackageJson(source: string): PackageJsonWiring {
 
   return {
     changed: true,
-    contents: `${JSON.stringify(parsed, null, detectIndent(source))}\n`,
+    contents: serializePackageJson(parsed, source),
     rewrites,
     skipped,
   };
 }
 
+/**
+ * JSON.stringify with the source file's own indent, line endings, and final
+ * newline (or lack of one), so the only lines a rewrite changes are the ones
+ * whose content changed.
+ */
+export function serializePackageJson(parsed: unknown, source: string): string {
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const body = JSON.stringify(parsed, null, detectIndent(source)).replace(/\n/g, eol);
+  const finalNewline = /\r?\n$/.test(source) ? eol : "";
+  return body + finalNewline;
+}
+
 /** How many unchanged lines to show around an edit. */
 const CONTEXT_LINES = 1;
 
+type DiffOp = { kind: "same" | "del" | "add"; text: string };
+
 /**
- * A minimal line diff: the common prefix and suffix are trimmed, whatever is
- * left is shown as removals then additions, with a little context. No LCS, no
- * dependency -- the edits this wizard makes are a handful of adjacent lines,
- * and a diff the user can read in one glance beats a clever one.
+ * Line-level edit script from a longest-common-subsequence table. The files
+ * this wizard diffs are `.env` files and `package.json`, a few hundred lines
+ * at most, so the quadratic table costs nothing and needs no dependency.
  */
-export function renderDiff(label: string, before: string, after: string): string {
-  const a = before.split("\n");
-  const b = after.split("\n");
-
-  let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
-
-  let tail = 0;
-  while (
-    tail < a.length - head &&
-    tail < b.length - head &&
-    a[a.length - 1 - tail] === b[b.length - 1 - tail]
-  ) {
-    tail += 1;
+function diffLines(a: string[], b: string[]): DiffOp[] {
+  const n = a.length;
+  const m = b.length;
+  const lcs: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+    }
   }
 
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      ops.push({ kind: "same", text: a[i]! });
+      i += 1;
+      j += 1;
+    } else if (j >= m || (i < n && lcs[i + 1]![j]! >= lcs[i]![j + 1]!)) {
+      ops.push({ kind: "del", text: a[i]! });
+      i += 1;
+    } else {
+      ops.push({ kind: "add", text: b[j]! });
+      j += 1;
+    }
+  }
+  return ops;
+}
+
+/**
+ * A readable line diff: each run of changes is printed as its removals then
+ * its additions, with a line of context either side. Unchanged lines between
+ * two edits stay out of it, so a key the wizard leaves alone never shows up as
+ * a spurious -/+ pair.
+ */
+export function renderDiff(label: string, before: string, after: string): string {
+  const ops = diffLines(before.split("\n"), after.split("\n"));
+
+  // Which unchanged lines sit close enough to a change to be shown.
+  const shown = ops.map((op) => op.kind !== "same");
+  ops.forEach((op, index) => {
+    if (op.kind === "same") return;
+    for (let k = Math.max(0, index - CONTEXT_LINES); k <= Math.min(ops.length - 1, index + CONTEXT_LINES); k += 1) {
+      shown[k] = true;
+    }
+  });
+
   const lines = [bold(label)];
-  for (const line of a.slice(Math.max(0, head - CONTEXT_LINES), head)) lines.push(dim(`  ${line}`));
-  for (const line of a.slice(head, a.length - tail)) lines.push(red(`- ${line}`));
-  for (const line of b.slice(head, b.length - tail)) lines.push(green(`+ ${line}`));
-  for (const line of a.slice(a.length - tail, a.length - tail + CONTEXT_LINES)) {
-    lines.push(dim(`  ${line}`));
+  let index = 0;
+  let printedAny = false;
+  while (index < ops.length) {
+    if (!shown[index]) {
+      index += 1;
+      continue;
+    }
+    // A gap since the last printed line marks the start of a new hunk.
+    if (printedAny && !shown[index - 1]) lines.push(dim("  ..."));
+    const op = ops[index]!;
+    if (op.kind === "same") {
+      lines.push(dim(`  ${op.text}`));
+      index += 1;
+    } else {
+      const dels: string[] = [];
+      const adds: string[] = [];
+      while (index < ops.length && ops[index]!.kind !== "same") {
+        const change = ops[index]!;
+        (change.kind === "del" ? dels : adds).push(change.text);
+        index += 1;
+      }
+      for (const text of dels) lines.push(red(`- ${text}`));
+      for (const text of adds) lines.push(green(`+ ${text}`));
+    }
+    printedAny = true;
   }
   return lines.join("\n");
 }

@@ -146,21 +146,17 @@ export function listBackups(scope: string): string[] {
 }
 
 /**
- * Writes one backup's originals into `targetDir`.
+ * Decrypts one backup's originals IN MEMORY and returns them, writing nothing.
  *
- * Every file is decrypted BEFORE anything is written: a wrong key or a
- * corrupted blob must fail with nothing half-restored, because the thing being
- * overwritten is the developer's live `.env`.
- *
- * Reserved for `uninstall` (plan 5) and used by tests today -- which is why it
- * ships now, with the encrypt path it is the inverse of.
+ * Every blob is checked against the digest the manifest recorded, so a wrong
+ * key or a corrupted blob throws rather than handing back garbage. `uninstall`
+ * reads the latest backup this way to find values that exist nowhere else.
  */
-export function restoreBackup(
+export function readBackup(
   scope: string,
   timestamp: string,
-  targetDir: string,
   dataKey: Buffer,
-): string[] {
+): { name: string; contents: string }[] {
   const dir = join(backupsDir(), scope, timestamp);
   const manifestPath = join(dir, "manifest.json");
   if (!existsSync(manifestPath)) {
@@ -168,7 +164,7 @@ export function restoreBackup(
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
-  const restored: { path: string; contents: string }[] = [];
+  const files: { name: string; contents: string }[] = [];
 
   for (const entry of manifest.files) {
     const blob = readFileSync(join(dir, `${entry.name}.enc`));
@@ -182,9 +178,28 @@ export function restoreBackup(
         `Kerstel backup ${timestamp} is corrupt: ${entry.name} does not match its recorded hash.`,
       );
     }
-    restored.push({ path: join(targetDir, entry.name), contents });
+    files.push({ name: entry.name, contents });
   }
+  return files;
+}
 
+/**
+ * Writes one backup's originals into `targetDir`.
+ *
+ * Every file is decrypted BEFORE anything is written (see `readBackup`): a
+ * wrong key or a corrupted blob must fail with nothing half-restored, because
+ * the thing being overwritten is the developer's live `.env`.
+ */
+export function restoreBackup(
+  scope: string,
+  timestamp: string,
+  targetDir: string,
+  dataKey: Buffer,
+): string[] {
+  const restored = readBackup(scope, timestamp, dataKey).map((file) => ({
+    path: join(targetDir, file.name),
+    contents: file.contents,
+  }));
   for (const file of restored) writePrivate(file.path, file.contents);
   return restored.map((file) => file.path);
 }

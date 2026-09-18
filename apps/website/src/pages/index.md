@@ -16,7 +16,7 @@ description: Your .env files hold only references. The real values live in an en
 <code>curl -fsSL https://kerstel.dev/install.sh | bash</code>
 <button class="copy-btn" type="button" onclick="copyInstall(this)">Copy</button>
 </div>
-<p class="install-note">macOS, Linux, and Windows binaries. No account, no cloud, no telemetry. Binaries are not published yet, and the installer says so until the first release.</p>
+<p class="install-note">macOS and Linux. No account, no cloud, no telemetry.</p>
 </div>
 </section>
 
@@ -52,7 +52,7 @@ description: Your .env files hold only references. The real values live in an en
 <h2>Clear about what is protected</h2>
 <ul class="claims">
 <li>No plaintext secret ever sits in a project file. Reading, grepping, or committing <code>.env</code> yields only references.</li>
-<li>Each value is encrypted with its own random nonce. The key that unlocks them is held by macOS Keychain, Secret Service, or Windows Credential Manager.</li>
+<li>Each value is encrypted with its own random nonce. The key that unlocks them is held by the macOS Keychain or Linux's Secret Service.</li>
 <li>Code that runs inside your project can still read resolved values. That is the boundary Kerstel draws today, and per-process approval is the next step.</li>
 </ul>
 <a class="more" href="/security">Read the full security model →</a>

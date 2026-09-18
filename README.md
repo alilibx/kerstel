@@ -33,24 +33,36 @@ Your `.env` file then holds a reference instead of the value:
 OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
 ```
 
-A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
+A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
 
 ## Usage
 
 ```bash
-kerstel init [--yes] [--dry-run]              # Migrate this project's .env files
-kerstel set <scope>/<KEY> [--value <value>]   # Store a secret (or pipe it on stdin)
-kerstel get <scope>/<KEY> [--reveal]          # Read a secret
-kerstel ls [--scope <scope>]                  # List stored references
-kerstel rm <scope>/<KEY> --yes                # Remove a secret
-kerstel run -- <command>                      # Run a command with references resolved
-kerstel exec -- <command>                     # Run a command with the hook wired in
-kerstel resolve kerstel://<scope>/<KEY>       # Print one resolved value
-kerstel daemon <serve|start|stop|status>      # Manage the resolver daemon
-kerstel doctor                                # Diagnose this machine's setup
+kerstel init [--yes] [--dry-run]                 # Migrate this project's .env files
+kerstel set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
+kerstel get <scope>/<KEY> [--reveal]             # Read a secret
+kerstel ls [--scope <scope>]                     # List stored references
+kerstel rm <scope>/<KEY> --yes                   # Remove a secret
+kerstel run -- <command>                         # Run a command with references resolved
+kerstel exec -- <command>                        # Run a command with the hook wired in
+kerstel resolve kerstel://<scope>/<KEY>          # Print one resolved value
+kerstel daemon <serve|start|stop|status>         # Manage the resolver daemon
+kerstel doctor                                   # Diagnose this machine's setup
+kerstel uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
+kerstel --version                                # Print the version
 ```
 
 `kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
+
+## Install
+
+```bash
+curl -fsSL https://kerstel.dev/install.sh | bash
+```
+
+macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Re-run it to upgrade, or set `KERSTEL_VERSION=0.1.0` to pin a version.
+
+To remove Kerstel, run `kerstel uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, and the binary, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 
@@ -75,7 +87,7 @@ Useful flags:
 
 | Flag | What it does |
 |---|---|
-| `--dry-run` | Prints every diff and writes nothing to your project or your vault (it still prepares `~/.kerstel`). Run this first. |
+| `--dry-run` | Prints every diff and writes nothing: not to your project, your vault, or `~/.kerstel`. Run this first. |
 | `--yes` | Accepts every suggestion, asks nothing. |
 | `--scope <name>` | Overrides the project scope (default: your `package.json` name). |
 | `--global KEY[,KEY]` | Forces those keys into the `global` scope. |
@@ -87,7 +99,7 @@ Useful flags:
 
 ### One key, several files
 
-If the same key appears in more than one file with different values, Kerstel stores the highest-precedence one — `.env.<x>.local` beats `.env.local` beats `.env.<x>` beats `.env` — points **every** occurrence at that one reference, and tells you which files it collapsed. The other values remain in the encrypted backup. v1 has no environments (that is on the roadmap), so one key resolves to one value.
+If the same key appears in more than one file with different values, Kerstel stores the highest-precedence one — `.env.<x>.local` beats `.env.local` beats `.env.<x>` beats `.env` — points **every** occurrence at that one reference, and tells you which files it collapsed. The other values remain in the encrypted backup. Kerstel has no environments yet (they are on the [roadmap](ROADMAP.md)), so one key resolves to one value.
 
 ### Joining a project that already uses Kerstel
 
@@ -96,7 +108,7 @@ git clone git@github.com:acme/my-app.git && cd my-app
 kerstel init
 ```
 
-The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. The references double as a living `.env.example`. To supply them from a script instead:
+The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. It stores them when you apply the plan, or straight away if nothing else in the project needs changing. The references double as a living `.env.example`. To supply them from a script instead:
 
 ```bash
 echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | kerstel init --from-stdin --non-interactive
@@ -149,16 +161,17 @@ bun run test
 Contributions are welcome! Here's how:
 
 1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
+2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Run the tests (`bun run test`)
-5. Commit (`git commit -m 'Add my feature'`)
-6. Push (`git push origin feature/my-feature`)
-7. Open a Pull Request
+4. Add a line to `CHANGELOG.md`, and tick `ROADMAP.md` if you finished an item on it
+5. Run the tests (`bun run test`)
+6. Commit with a [Conventional Commits](https://www.conventionalcommits.org) message (`git commit -m 'feat: add my feature'`)
+7. Push (`git push origin feat/my-feature`)
+8. Open a Pull Request
 
 The macOS Keychain tests in `packages/cli/test/keychain.test.ts` write to and delete from the real login Keychain, so they are skipped unless you set `KERSTEL_ALLOW_REAL_KEYCHAIN_TESTS=1`.
 
-Please keep PRs focused — one feature or fix per PR.
+Please keep PRs focused — one feature or fix per PR. [AGENTS.md](AGENTS.md) has the full contributor rules, including how to update [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). Coding agents read it too.
 
 ## License
 
@@ -168,6 +181,6 @@ Please keep PRs focused — one feature or fix per PR.
 
 <div align="center">
 
-**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security) · [Changelog](CHANGELOG.md)
+**[kerstel.dev](https://kerstel.dev)** · [Docs](https://kerstel.dev/docs) · [Security model](https://kerstel.dev/security) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
 
 </div>

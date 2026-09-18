@@ -51,6 +51,29 @@ export function readVaultMeta(file: string): Record<string, string> {
   }
 }
 
+/**
+ * Every `scope/KEY` the vault holds, read WITHOUT the data key.
+ *
+ * Scope and key names are stored in the clear (only values are encrypted), so
+ * `init --dry-run` can tell which references a vault lacks without opening the
+ * vault, touching the credential store, or writing anything. Empty for a vault
+ * that does not exist yet.
+ */
+export function readStoredReferences(file: string): Set<string> {
+  if (!existsSync(file)) return new Set();
+
+  let db: Database | null = null;
+  try {
+    db = new Database(file, { readonly: true });
+    const rows = db.query<{ scope: string; key: string }, []>("SELECT scope, key FROM secrets").all();
+    return new Set(rows.map((row) => `${row.scope}/${row.key}`));
+  } catch {
+    return new Set();
+  } finally {
+    db?.close();
+  }
+}
+
 /** Seals the key-check constant for storage in `vault_meta`. */
 export function sealKeyCheck(dataKey: Buffer): string {
   const { ciphertext, nonce } = encrypt(KEY_CHECK_PLAINTEXT, dataKey);

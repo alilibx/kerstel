@@ -34,7 +34,7 @@ export function loadEnvFiles(files: EnvFileInfo[]): LoadedEnvFile[] {
 /**
  * Merges every `.env*` file into one key list, highest precedence first.
  *
- * v1 has no environments (spec §10), so a key defined in several files
+ * Kerstel has no environments yet (spec §10), so a key defined in several files
  * collapses to ONE vault entry: the value from the highest-precedence file.
  * The other values survive only in the encrypted backup, and `init` warns
  * about every one of them by name -- silently dropping a value the developer

@@ -1,0 +1,22 @@
+name: Changelog
+# AGENTS.md rule: a PR that changes shipped source adds a CHANGELOG.md line.
+# The skip-changelog label is the escape hatch for refactors. Its own workflow
+# so that adding or removing the label reruns only this check.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  changelog:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          if echo "$changed" | grep -qE '^packages/[^/]+/src/' && ! echo "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "::error::This PR changes packages/*/src but not CHANGELOG.md. Add a line under the (unreleased) section, or label the PR skip-changelog if users see no change."
+            exit 1
+          fi

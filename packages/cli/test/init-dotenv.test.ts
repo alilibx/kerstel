@@ -4,6 +4,7 @@ import {
   lookup,
   parseDotenv,
   serializeDotenv,
+  setLineValue,
   setValue,
 } from "../src/init/dotenv-file";
 
@@ -190,4 +191,34 @@ test("the continuation lines of an unclosed quote are never mined for key names"
   expect(file.unsupported.map((u) => u.key)).toEqual(["K"]);
   expect(JSON.stringify(file.unsupported)).not.toContain("MIIEow");
   expect(serializeDotenv(file)).toBe(source);
+});
+
+test("a lone carriage return ends a line, as dotenv treats it", () => {
+  const source = "A=1\rB=2\r";
+  const file = parseDotenv(source);
+  expect(entries(file).map((e) => [e.key, e.value])).toEqual([
+    ["A", "1"],
+    ["B", "2"],
+  ]);
+  expect(file.unsupported).toEqual([]);
+  expect(serializeDotenv(file)).toBe(source);
+});
+
+test("setLineValue rewrites only the targeted line and throws on non-pair lines", () => {
+  const file = parseDotenv("K=one\nOTHER=x\nK=two\n# comment\n");
+  // Rewrite only the second K (at index 2)
+  setLineValue(file, 2, "kerstel://app/K");
+  expect(serializeDotenv(file)).toBe("K=one\nOTHER=x\nK=kerstel://app/K\n# comment\n");
+
+  // Throws on a non-pair line (comment at index 3)
+  expect(() => setLineValue(file, 3, "value")).toThrow();
+});
+
+test("setLineValue preserves quoting style like setValue", () => {
+  const file = parseDotenv(['A="old"', "B='old'"].join("\n"));
+  setLineValue(file, 0, "kerstel://app/A");
+  setLineValue(file, 1, "kerstel://app/B");
+  expect(serializeDotenv(file)).toBe(
+    ['A="kerstel://app/A"', "B='kerstel://app/B'"].join("\n"),
+  );
 });

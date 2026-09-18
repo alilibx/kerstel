@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -638,4 +638,136 @@ test("a rerun of a fully migrated project still reports it as migrated", async (
 
   expect(code).toBe(0);
   expect(captured.join("\n")).toContain("Already migrated");
+});
+
+/** Runs `body` with console.log captured, and returns everything it printed. */
+async function captureLog(body: () => Promise<unknown>): Promise<string> {
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    await body();
+  } finally {
+    console.log = realLog;
+  }
+  return captured.join("\n");
+}
+
+const WIRED_PACKAGE = `{
+  "name": "@acme/demo-app",
+  "scripts": {
+    "dev": "kerstel exec -- next dev"
+  }
+}
+`;
+
+test("parseInitArgs rejects a key list that looks like a flag, or a key in both lists", () => {
+  expect(parseInitArgs(["--keep", "-x"], "/tmp/p")).toEqual({
+    error: expect.stringContaining("--keep") as unknown as string,
+  });
+  expect(parseInitArgs(["--keep", "A", "--global", "A"], "/tmp/p")).toEqual({
+    error: expect.stringContaining("A") as unknown as string,
+  });
+});
+
+test("--dry-run leaves KERSTEL_HOME exactly as it found it", async () => {
+  const home = isolateEnv({ prefix: "init-dry-home" });
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "SECRET_TOKEN=do-not-touch-me\nOTHER=kerstel://demo-app/OTHER\n",
+  });
+
+  expect(await runInit(options(root, ["--dry-run", "--yes"]), new DefaultsPrompter())).toBe(0);
+  expect(readdirSync(home)).toEqual([]);
+});
+
+test("--dry-run lists only the references the vault really lacks", async () => {
+  isolateEnv({ prefix: "init-dry-missing" });
+  await openTestVault((vault) => vault.setSecret({ scope: "demo-app", key: "HAVE_IT" }, "stored"));
+
+  const root = makeProject({
+    "package.json": WIRED_PACKAGE,
+    ".env": "HAVE_IT=kerstel://demo-app/HAVE_IT\nNEED_IT=kerstel://demo-app/NEED_IT\n",
+  });
+
+  const out = await captureLog(() => runInit(options(root, ["--dry-run"]), new ScriptedPrompter([])));
+  expect(out).toContain("kerstel://demo-app/NEED_IT");
+  expect(out).not.toContain("kerstel://demo-app/HAVE_IT");
+});
+
+test("the teammate flow stores nothing when the user declines the plan", async () => {
+  isolateEnv({ prefix: "init-teammate-no" });
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+  });
+
+  const prompter = new ScriptedPrompter(["typed-then-declined", false]);
+  expect(await runInit(options(root), prompter)).toBe(0);
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "demo-app", key: "SERVICE_TOKEN" })).toBeNull();
+  });
+});
+
+test("the teammate flow stores values when nothing else needs changing", async () => {
+  isolateEnv({ prefix: "init-teammate-only" });
+
+  const root = makeProject({
+    "package.json": WIRED_PACKAGE,
+    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+  });
+
+  expect(await runInit(options(root), new ScriptedPrompter(["only-value"]))).toBe(0);
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "demo-app", key: "SERVICE_TOKEN" })).toBe("only-value");
+    expect(vault.listProjects().map((p) => p.name)).toContain("demo-app");
+  });
+});
+
+test("--keep or --global naming a key no env file defines is reported", async () => {
+  isolateEnv({ prefix: "init-unknown-key" });
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "REAL_KEY=value\n",
+  });
+
+  const out = await captureLog(() =>
+    runInit(options(root, ["--dry-run", "--yes", "--keep", "TYPO_KEY", "--global", "OTHER_TYPO"]), new DefaultsPrompter()),
+  );
+  expect(out).toContain("TYPO_KEY");
+  expect(out).toContain("OTHER_TYPO");
+});
+
+test("init says so when package.json is not valid JSON", async () => {
+  isolateEnv({ prefix: "init-bad-json" });
+  const root = makeProject({ "package.json": "{ nope", ".env": "A=1\n" });
+
+  const out = await captureLog(() => runInit(options(root, ["--yes"]), new DefaultsPrompter()));
+  expect(out).toContain("not valid JSON");
+});
+
+test("a project whose only env file is a broken symlink says so", async () => {
+  isolateEnv({ prefix: "init-only-broken" });
+  const root = makeProject({ "package.json": NPM_PACKAGE });
+  symlinkSync(join(root, "gone"), join(root, ".env"));
+
+  const out = await captureLog(() => runInit(options(root, ["--yes"]), new DefaultsPrompter()));
+  expect(out).toContain(".env could not be read");
+  expect(out).not.toContain("No .env files here");
+});
+
+test("--keep naming a key that is already a reference is reported", async () => {
+  isolateEnv({ prefix: "init-keep-ref" });
+  const root = makeProject({
+    "package.json": WIRED_PACKAGE,
+    ".env": "ALREADY=kerstel://demo-app/ALREADY\nPLAIN=value\n",
+  });
+
+  const out = await captureLog(() =>
+    runInit(options(root, ["--dry-run", "--yes", "--keep", "ALREADY"]), new DefaultsPrompter()),
+  );
+  expect(out).toContain("ALREADY");
+  expect(out).toContain("already a reference");
 });

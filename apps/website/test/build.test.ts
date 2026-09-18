@@ -14,6 +14,7 @@ const EXPECTED_PAGES = [
   "docs/how-it-works.html",
   "docs/teams.html",
   "changelog.html",
+  "roadmap.html",
 ];
 
 const FORBIDDEN = [/menu bar/i, /macOS 14/i, /AI usage/i, /system metrics/i, /\bports\b/i];
@@ -65,6 +66,13 @@ describe("build output", () => {
     }
   });
 
+  test("no page links to a relative .md file, which only resolves on GitHub", () => {
+    for (const file of htmlFiles) {
+      const html = readFileSync(join(out, file), "utf8");
+      expect(html, file).not.toMatch(/href="(?![a-z]+:)[^"]*\.md(?:[#?"])/);
+    }
+  });
+
   test("docs pages share the docs navigation in a fixed order", () => {
     const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams"];
     for (const file of ["docs/getting-started.html", "docs/cli.html", "docs/how-it-works.html", "docs/teams.html"]) {
@@ -96,6 +104,16 @@ describe("build output", () => {
     expect(html).toContain(`<h2>${version}`);
     for (const file of htmlFiles) {
       expect(readFileSync(join(out, file), "utf8"), file).toContain('href="/changelog"');
+    }
+  });
+
+  test("roadmap page renders ROADMAP.md checklists and is linked from every page", () => {
+    const html = readFileSync(join(out, "roadmap.html"), "utf8");
+    expect(html).toContain("<h2>0.1.0: first release</h2>");
+    expect(html).toMatch(/<input checked="" disabled="" type="checkbox">/);
+    expect(html).toMatch(/<input disabled="" type="checkbox">/);
+    for (const file of htmlFiles) {
+      expect(readFileSync(join(out, file), "utf8"), file).toContain('href="/roadmap"');
     }
   });
 

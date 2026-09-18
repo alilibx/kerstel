@@ -19,9 +19,13 @@ export interface DetectedProject {
   packageJsonPath: string;
   /** Parsed package.json, or null when it is missing or not valid JSON. */
   packageJson: Record<string, unknown> | null;
+  /** Why `packageJson` is null, so the caller can name the actual problem. */
+  packageJsonError: "missing" | "invalid" | null;
   packageName: string | null;
   /** `.env*` files in the root, highest precedence first. */
   envFiles: EnvFileInfo[];
+  /** `.env*` names that could not be read, such as a dangling symlink. */
+  unreadableEnvFiles: string[];
 }
 
 /** Names that are templates for humans, never sources of real values. */
@@ -30,14 +34,17 @@ const TEMPLATE_SUFFIXES = [".example", ".sample", ".template", ".dist"];
 export function isEnvFileName(name: string): boolean {
   if (name !== ".env" && !name.startsWith(".env.")) return false;
   if (name === ".env.") return false;
-  return !TEMPLATE_SUFFIXES.some((suffix) => name.endsWith(suffix));
+  // `.env.example.local` is a developer's local copy of a template, and still
+  // a template: judge the name without its `.local` suffix.
+  const base = name.endsWith(".local") ? name.slice(0, -".local".length) : name;
+  return !TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
 }
 
 /**
  * Spec §8 / ruling 6 precedence, highest first:
  *   .env.<x>.local (3) > .env.local (2) > .env.<x> (1) > .env (0)
  *
- * v1 has no environments, so this decides only which duplicate value is the
+ * Kerstel has no environments yet, so this decides only which duplicate value is the
  * one stored in the vault. It is the convention Next.js, Vite and CRA all
  * follow, so it is the one a developer already expects.
  */
@@ -48,15 +55,21 @@ export function envFileRank(name: string): number {
   return 1;
 }
 
-export function discoverEnvFiles(root: string): EnvFileInfo[] {
+interface EnvFileScan {
+  found: EnvFileInfo[];
+  unreadable: string[];
+}
+
+function scanEnvFiles(root: string): EnvFileScan {
   let names: string[];
   try {
     names = readdirSync(root);
   } catch {
-    return [];
+    return { found: [], unreadable: [] };
   }
 
   const found: EnvFileInfo[] = [];
+  const unreadable: string[] = [];
   for (const name of names) {
     if (!isEnvFileName(name)) continue;
     const path = join(root, name);
@@ -65,6 +78,9 @@ export function discoverEnvFiles(root: string): EnvFileInfo[] {
       // as a file would throw EISDIR halfway through the wizard.
       if (!statSync(path).isFile()) continue;
     } catch {
+      // statSync follows symlinks, so a dangling one lands here. It names an
+      // env file the user expects to be migrated, so it is reported, not hidden.
+      unreadable.push(name);
       continue;
     }
     found.push({ name, path, rank: envFileRank(name) });
@@ -72,7 +88,12 @@ export function discoverEnvFiles(root: string): EnvFileInfo[] {
 
   // Rank descending, then name ascending so the order is stable across
   // filesystems that do not enumerate in a fixed order.
-  return found.sort((a, b) => b.rank - a.rank || a.name.localeCompare(b.name));
+  found.sort((a, b) => b.rank - a.rank || a.name.localeCompare(b.name));
+  return { found, unreadable: unreadable.sort() };
+}
+
+export function discoverEnvFiles(root: string): EnvFileInfo[] {
+  return scanEnvFiles(root).found;
 }
 
 const LOCKFILES: ReadonlyArray<readonly [file: string, manager: PackageManager]> = [
@@ -102,21 +123,32 @@ export function detectPackageManager(
   return "npm";
 }
 
-function readPackageJson(path: string): Record<string, unknown> | null {
+type PackageJsonRead =
+  | { json: Record<string, unknown>; error: null }
+  | { json: null; error: "missing" | "invalid" };
+
+function readPackageJson(path: string): PackageJsonRead {
+  let source: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
+    source = readFileSync(path, "utf8");
   } catch {
-    // Missing, unreadable, or malformed. The caller reports it; a malformed
-    // package.json must not crash `init` before it can say which file is wrong.
-    return null;
+    return { json: null, error: "missing" };
+  }
+  try {
+    const parsed: unknown = JSON.parse(source);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { json: null, error: "invalid" };
+    return { json: parsed as Record<string, unknown>, error: null };
+  } catch {
+    // The caller reports it; a malformed package.json must not crash `init`
+    // before it can say which file is wrong.
+    return { json: null, error: "invalid" };
   }
 }
 
 export function detectProject(root: string): DetectedProject {
   const packageJsonPath = join(root, "package.json");
-  const packageJson = readPackageJson(packageJsonPath);
+  const { json: packageJson, error: packageJsonError } = readPackageJson(packageJsonPath);
+  const envScan = scanEnvFiles(root);
   const packageManager = detectPackageManager(root, packageJson);
   const name = packageJson?.name;
 
@@ -126,7 +158,9 @@ export function detectProject(root: string): DetectedProject {
     packageManager,
     packageJsonPath,
     packageJson,
+    packageJsonError,
     packageName: typeof name === "string" && name.length > 0 ? name : null,
-    envFiles: discoverEnvFiles(root),
+    envFiles: envScan.found,
+    unreadableEnvFiles: envScan.unreadable,
   };
 }

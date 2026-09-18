@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -123,4 +123,24 @@ test("a non-bun project is a node project", () => {
   const detected = detectProject(root);
   expect(detected.packageManager).toBe("pnpm");
   expect(detected.runtime).toBe("node");
+});
+
+test("a template with a .local suffix is still a template", () => {
+  expect(isEnvFileName(".env.example.local")).toBe(false);
+  expect(isEnvFileName(".env.sample.local")).toBe(false);
+  expect(isEnvFileName(".env.production.local")).toBe(true);
+});
+
+test("a dangling .env symlink is reported, not silently dropped", () => {
+  const root = project({ ".env": "A=1\n" });
+  symlinkSync(join(root, "missing-target"), join(root, ".env.local"));
+  const detected = detectProject(root);
+  expect(detected.envFiles.map((f) => f.name)).toEqual([".env"]);
+  expect(detected.unreadableEnvFiles).toEqual([".env.local"]);
+});
+
+test("a malformed package.json is told apart from a missing one", () => {
+  expect(detectProject(project({ "package.json": "{ not json" })).packageJsonError).toBe("invalid");
+  expect(detectProject(project({})).packageJsonError).toBe("missing");
+  expect(detectProject(project({ "package.json": "{}" })).packageJsonError).toBeNull();
 });
