@@ -27,6 +27,10 @@ export interface DoctorFacts {
   shortcut: "linked" | "missing" | "other" | "not-applicable";
   project: ProjectStatus | null;
   cli: "ks" | "kerstel";
+  /** `process.platform`, as a fact so each platform's wording is testable anywhere. */
+  platform: NodeJS.Platform;
+  /** Kerstel's home as the user should read it: `~/.kerstel` when it is the default. */
+  home: string;
 }
 
 /** "macos" -> "macOS Keychain", etc. Falls back to the raw name if new. */
@@ -45,25 +49,47 @@ export function backendLabel(backend: string): string {
   }
 }
 
+/** The credential store Kerstel would use on `platform`, or `null` if it has none. */
+function nativeStore(platform: NodeJS.Platform): string | null {
+  switch (platform) {
+    case "darwin":
+      return "the macOS Keychain";
+    case "linux":
+      return "Secret Service";
+    case "win32":
+      return "Windows Credential Manager";
+    default:
+      return null;
+  }
+}
+
 function vaultCheck(facts: DoctorFacts): Check {
+  const secrets = `${facts.secretCount} secret${facts.secretCount === 1 ? "" : "s"}`;
   if (facts.backend === "file") {
+    // The file backend is in use because KERSTEL_KEYCHAIN_BACKEND=file asked
+    // for it, or because the native store was unreachable (a locked login
+    // Keychain over SSH, no secret-tool) when the vault was first opened.
+    // Either way vault_meta has recorded "file" by now, and context.ts refuses
+    // to open this vault with any other backend -- so "unlock the Keychain" or
+    // "install secret-tool" would turn this warning into a vault that won't
+    // open. The truthful fix is to pin the backend, which keeps every session,
+    // including one that CAN reach the native store, on this key.
+    const store = nativeStore(facts.platform);
     return {
       group: "machine",
       status: "warn",
       label: "Vault",
-      detail: `${facts.secretCount} secrets, key kept in a file`,
-      // Linux is the only platform with a native store `secret-tool` can
-      // stand in for; macOS and Windows ship their credential store, so
-      // landing on the file backend there means it was chosen on purpose
-      // (KERSTEL_KEYCHAIN_BACKEND=file), not something to "fix".
-      fix: process.platform === "linux" ? "install secret-tool (libsecret) and re-run" : undefined,
+      detail: `${secrets}, key kept in a file`,
+      fix: store
+        ? `keep KERSTEL_KEYCHAIN_BACKEND=file set in your shell profile; Kerstel can't move this key into ${store}`
+        : `keep ${facts.home} private; a key file is the only store Kerstel supports here`,
     };
   }
   return {
     group: "machine",
     status: "pass",
     label: "Vault",
-    detail: `${facts.secretCount} secrets, unlocked with your ${backendLabel(facts.backend)}`,
+    detail: `${secrets}, unlocked with your ${backendLabel(facts.backend)}`,
   };
 }
 
@@ -108,7 +134,7 @@ function permissionsCheck(facts: DoctorFacts): Check {
       group: "machine",
       status: "pass",
       label: "Permissions",
-      detail: "~/.kerstel, token, and socket are private",
+      detail: `${facts.home}, token, and socket are private`,
     };
   }
   const actualOctal = offending.actual.toString(8).padStart(4, "0");
@@ -142,6 +168,7 @@ function shortcutCheck(facts: DoctorFacts): Check | null {
         status: "warn",
         label: "Shortcut",
         detail: "ks on your PATH is a different program",
+        fix: "use kerstel, or remove the other ks from your PATH",
       };
   }
 }

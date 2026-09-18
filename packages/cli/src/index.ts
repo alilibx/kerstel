@@ -25,7 +25,7 @@ const COMMANDS = `Usage:
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
   ${cliName()} resolve kerstel://<scope>/<KEY>       Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
-  ${cliName()} doctor                                Diagnose this machine's setup
+  ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
   ${cliName()} uninstall [--dry-run] [--yes] [--force]
                                                 Restore every project and remove Kerstel
   ${cliName()} --version                             Print the version

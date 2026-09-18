@@ -31,6 +31,8 @@ function allPassFacts(overrides: Partial<DoctorFacts> = {}): DoctorFacts {
     shortcut: "linked",
     project: passingProject,
     cli: "ks",
+    platform: "darwin",
+    home: "~/.kerstel",
     ...overrides,
   };
 }
@@ -61,13 +63,34 @@ test("Vault warn: the file backend is in use", () => {
   const vault = checkFor(checks, "Vault");
   expect(vault?.status).toBe("warn");
   expect(vault?.detail).toBe("5 secrets, key kept in a file");
-  // secret-tool only exists to fix this on Linux; elsewhere the file backend
-  // was chosen on purpose (KERSTEL_KEYCHAIN_BACKEND=file), not a problem.
-  if (process.platform === "linux") {
-    expect(vault?.fix).toBe("install secret-tool (libsecret) and re-run");
-  } else {
-    expect(vault?.fix).toBeUndefined();
-  }
+});
+
+test.each([
+  ["darwin", "the macOS Keychain"],
+  ["linux", "Secret Service"],
+  ["win32", "Windows Credential Manager"],
+] as const)("Vault warn on %s: the fix pins the file backend, never a switch to %s", (platform, store) => {
+  const vault = checkFor(gatherChecks(allPassFacts({ backend: "file", platform })), "Vault");
+  expect(vault?.fix).toBe(
+    `keep KERSTEL_KEYCHAIN_BACKEND=file set in your shell profile; Kerstel can't move this key into ${store}`,
+  );
+});
+
+test("Vault warn on a platform with no native store still carries a fix", () => {
+  const vault = checkFor(
+    gatherChecks(allPassFacts({ backend: "file", platform: "freebsd", home: "/srv/kerstel" })),
+    "Vault",
+  );
+  expect(vault?.fix).toBe("keep /srv/kerstel private; a key file is the only store Kerstel supports here");
+});
+
+test("Vault: one secret is singular", () => {
+  expect(checkFor(gatherChecks(allPassFacts({ secretCount: 1 })), "Vault")?.detail).toBe(
+    "1 secret, unlocked with your macOS Keychain",
+  );
+  expect(checkFor(gatherChecks(allPassFacts({ backend: "file", secretCount: 1 })), "Vault")?.detail).toBe(
+    "1 secret, key kept in a file",
+  );
 });
 
 test("Daemon pass: running", () => {
@@ -129,6 +152,11 @@ test("Permissions pass: every path matches its expected mode", () => {
   });
 });
 
+test("Permissions pass: names a custom home by its real path", () => {
+  const checks = gatherChecks(allPassFacts({ home: "/tmp/other-home" }));
+  expect(checkFor(checks, "Permissions")?.detail).toBe("/tmp/other-home, token, and socket are private");
+});
+
 test("Permissions problem: a looser path names itself and the chmod that fixes it", () => {
   const checks = gatherChecks(
     allPassFacts({
@@ -182,13 +210,14 @@ test("Shortcut warn: missing, with a fix", () => {
   });
 });
 
-test("Shortcut warn: a different program, no fix", () => {
+test("Shortcut warn: a different program, with a fix", () => {
   const checks = gatherChecks(allPassFacts({ shortcut: "other" }));
   expect(checkFor(checks, "Shortcut")).toEqual({
     group: "machine",
     status: "warn",
     label: "Shortcut",
     detail: "ks on your PATH is a different program",
+    fix: "use kerstel, or remove the other ks from your PATH",
   });
 });
 
@@ -303,4 +332,15 @@ test("backendLabel names every backend", () => {
   expect(backendLabel("linux")).toBe("Secret Service");
   expect(backendLabel("windows")).toBe("Windows Credential Manager");
   expect(backendLabel("file")).toBe("a key file");
+});
+
+test("every warning and problem carries a Fix line", () => {
+  for (const platform of ["darwin", "linux", "win32", "freebsd"] as const) {
+    for (const shortcut of ["missing", "other"] as const) {
+      const checks = gatherChecks(
+        allPassFacts({ backend: "file", platform, shortcut, daemonRunning: false, hook: { installed: false } }),
+      );
+      for (const check of checks.filter((c) => c.status !== "pass")) expect(check.fix).toBeTruthy();
+    }
+  }
 });

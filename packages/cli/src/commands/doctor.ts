@@ -1,4 +1,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { openContext } from "../context";
 import { isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
@@ -40,6 +42,12 @@ function computeShortcut(): DoctorFacts["shortcut"] {
   } catch {
     return "other";
   }
+}
+
+/** `~/.kerstel` when KERSTEL_HOME is the default, else the real path. */
+function homeForDisplay(): string {
+  const home = kerstelHome();
+  return resolve(home) === resolve(join(homedir(), ".kerstel")) ? "~/.kerstel" : home;
 }
 
 function symbolFor(status: Check["status"]): string {
@@ -100,7 +108,7 @@ export async function doctorCommand(args: string[] = [], cwd: string = process.c
   for (const arg of args) {
     if (arg === "--verbose") verbose = true;
     else {
-      fail(`Unknown option "${arg}". kerstel doctor accepts: --verbose.`);
+      fail(`Unknown option "${arg}". ${cliName()} doctor accepts: --verbose.`);
       return 2;
     }
   }
@@ -130,6 +138,8 @@ export async function doctorCommand(args: string[] = [], cwd: string = process.c
       shortcut: computeShortcut(),
       project,
       cli: cliName(),
+      platform: process.platform,
+      home: homeForDisplay(),
     };
 
     const checks = gatherChecks(facts);

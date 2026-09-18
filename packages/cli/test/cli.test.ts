@@ -258,7 +258,7 @@ test("doctor reports the keychain backend and vault location", async () => {
 
   capture();
   expect(await runCli(["doctor"])).toBe(0);
-  expect(captured.join("\n")).toContain("secrets, key kept in a file");
+  expect(captured.join("\n")).toContain("1 secret, key kept in a file");
 
   capture();
   expect(await runCli(["doctor", "--verbose"])).toBe(0);
