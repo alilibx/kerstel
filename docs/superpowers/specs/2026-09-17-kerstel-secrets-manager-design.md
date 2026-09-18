@@ -100,7 +100,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 - **Access boundary:** a per-session bearer token, generated at `~/.kerstel/session.token` (`0600`) and compared in constant time on every request. Combined with the `0600` socket inside the `0700` home, that means only the owning user can read the token and only a caller holding it is served. The daemon does **not** verify peer UID: `node:net` exposes no peer credentials, and obtaining them would require a native module, which the single-self-contained-binary constraint rules out.
 - Unlocks the vault once per session via the OS keychain.
 - **Windows:** the POSIX mode bits above are inert on NTFS — Node does not translate them into ACLs, so `0700`/`0600` are no-ops there. What protects `~/.kerstel` on Windows is the user profile directory's inherited ACL, and the named pipe carries libuv's default security descriptor. `kerstel doctor` prints this caveat on `win32`. Tightening it (an explicit pipe DACL, an explicit directory ACL) is open work, not something v1 claims.
-- Protocol: newline-delimited JSON — `resolve`, `status`, `lock`, `shutdown`. Versioned envelope so v2 can add `approve`.
+- Protocol: newline-delimited JSON — `resolve`, `status`, `lock`, `shutdown`. Versioned envelope so v2 can add `approve`. `lock` drops the key by shutting the daemon down — the key is resident in its memory for as long as it serves, so a flag would leave it there — and the next resolution restarts it.
 - Writes an `audit_log` row per resolution (key, pid, process name, project).
 - Idles out after a configurable period and relocks.
 

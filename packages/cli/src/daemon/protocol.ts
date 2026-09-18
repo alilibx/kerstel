@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder";
+
 export const PROTOCOL_VERSION = 1;
 
 /**
@@ -98,10 +100,22 @@ export function errorResponse(id: string, code: ErrorCode, message: string): Err
 export class LineDecoder {
   private buffer = "";
 
+  /**
+   * Persistent across chunks, and that is the whole point.
+   *
+   * `chunk.toString("utf8")` decodes each chunk in isolation, so a multi-byte
+   * character split across a socket boundary -- an "e" whose two bytes land in
+   * different reads -- decodes as two U+FFFD replacement characters and the
+   * value is silently corrupted. Nothing downstream can tell: it is a
+   * well-formed string, just not the one that was sent. StringDecoder holds
+   * the incomplete tail back until the continuation bytes arrive.
+   */
+  private readonly decoder = new StringDecoder("utf8");
+
   constructor(private readonly maxChars: number = MAX_LINE_CHARS) {}
 
   push(chunk: Buffer | string): string[] {
-    this.buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
 
     const lines: string[] = [];
     let newline = this.buffer.indexOf("\n");

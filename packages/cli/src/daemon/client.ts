@@ -164,8 +164,23 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
       return response;
     },
 
+    /**
+     * Drops the vault key by shutting the daemon down.
+     *
+     * "Lock" cannot be a flag: the key is resident in the daemon's memory for
+     * as long as it serves, so the only way to really drop it is to end that
+     * process. The daemon therefore stops accepting connections after this
+     * call, exactly as `shutdown` does; the next resolution auto-starts a
+     * fresh one that re-reads the keychain.
+     */
     async lock() {
-      unwrap(await send({ op: "lock" }));
+      try {
+        unwrap(await send({ op: "lock" }));
+      } catch (error) {
+        // Same race as shutdown(): the daemon may close the socket before the
+        // ack lands, which is success, not failure.
+        if (!(error instanceof DaemonError) || error.code !== "unreachable") throw error;
+      }
     },
 
     async shutdown() {

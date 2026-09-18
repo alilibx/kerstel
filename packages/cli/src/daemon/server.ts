@@ -103,7 +103,16 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
           };
 
         case "lock":
+          // "Lock" has to mean the key is GONE, not that a boolean says no.
+          // The data key lives in this process's memory for as long as the
+          // vault is open, so flipping `unlocked` left it sitting in a heap
+          // that a core dump, a debugger, or /proc/<pid>/mem still yields --
+          // which is precisely what someone typing `lock` is trying to
+          // prevent. Take the same path the idle timer takes: ack first, then
+          // close, which ends the process and drops the key with it. The next
+          // `resolve` auto-starts a fresh daemon that re-reads the keychain.
           lock();
+          queueMicrotask(() => void close());
           return { v: PROTOCOL_VERSION, id, ok: true, op: "lock" };
 
         case "shutdown":

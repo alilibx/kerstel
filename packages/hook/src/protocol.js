@@ -6,6 +6,16 @@
  * and written to ~/.kerstel/hook/. Task 13 asserts the two stay in step.
  */
 const PROTOCOL_VERSION = 1;
+
+/**
+ * Maximum line length in UTF-16 code units (JavaScript string length).
+ * Bounds the in-memory buffer from a malicious or buggy peer. Not a byte-denominated wire limit.
+ * One megabyte is far beyond any legitimate request or secret.
+ *
+ * Mirrors MAX_LINE_CHARS in packages/cli/src/daemon/protocol.ts.
+ */
+const MAX_LINE_CHARS = 1_048_576;
+
 const REFERENCE_PROTOCOL = "kerstel://";
 const SCOPE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -31,4 +41,10 @@ function isReference(value) {
   return parseReference(value) !== null;
 }
 
-module.exports = { PROTOCOL_VERSION, REFERENCE_PROTOCOL, parseReference, isReference };
+module.exports = {
+  PROTOCOL_VERSION,
+  MAX_LINE_CHARS,
+  REFERENCE_PROTOCOL,
+  parseReference,
+  isReference,
+};

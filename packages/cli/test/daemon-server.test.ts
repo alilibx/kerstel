@@ -120,16 +120,46 @@ test("status reports the daemon state", async () => {
   expect(res).toMatchObject({ ok: true, op: "status", unlocked: true, secretCount: 1, backend: "file" });
 });
 
-test("lock stops further resolutions until restart", async () => {
+// `lock` shuts the daemon down rather than flipping a flag. The data key is
+// resident in the serving process's memory for as long as it is open, so a
+// boolean that refuses requests leaves the key exactly where someone typing
+// `lock` wants it gone from. Ending the process is what actually drops it; the
+// next resolution auto-starts a daemon that re-reads the keychain.
+test("lock acknowledges, then drops the key by shutting the daemon down", async () => {
   const { sock, token, vault } = await boot();
   vault.setSecret({ scope: "global", key: "K" }, "v");
-  await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "lock" });
 
-  const res = await request(sock, {
-    v: PROTOCOL_VERSION, id: "2", token, op: "resolve",
-    scope: "global", key: "K", pid: null, processName: null,
+  const res = await Promise.race([
+    request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "lock" }),
+    new Promise<Response>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("lock ack was not delivered to the client")), 2000),
+    ),
+  ]);
+  expect(res).toMatchObject({ ok: true, op: "lock" });
+
+  // Let the microtask-scheduled close() finish tearing the server down.
+  await Bun.sleep(50);
+
+  await new Promise<void>((resolve, reject) => {
+    const conn = createConnection(sock);
+    conn.on("connect", () => {
+      conn.destroy();
+      reject(new Error("connected to a daemon that should have locked and stopped"));
+    });
+    conn.on("error", () => resolve());
   });
-  expect(res).toMatchObject({ ok: false, error: { code: "locked" } });
+});
+
+test("a client lock resolves the closed signal", async () => {
+  const { sock, token } = await boot();
+  const handle = running.pop()!;
+
+  const res = await request(sock, { v: PROTOCOL_VERSION, id: "1", token, op: "lock" });
+  expect(res).toMatchObject({ ok: true, op: "lock" });
+
+  // `daemon serve` parks on this promise; a lock has to settle it or that
+  // process stays alive holding the very key it was told to drop.
+  await handle.closed;
 });
 
 test("the daemon relocks itself after the idle timeout", async () => {
