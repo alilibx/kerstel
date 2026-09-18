@@ -20,6 +20,9 @@ export const LIFECYCLE_SCRIPTS: readonly string[] = [
 
 export const EXEC_PREFIX = "kerstel exec -- ";
 
+/** The line `init` leaves in .gitignore in place of the env-file lines it removes. */
+export const GITIGNORE_NOTE = "# Kerstel: .env files hold references, safe to commit";
+
 export function wrapScript(command: string): string {
   return `${EXEC_PREFIX}${command}`;
 }
@@ -91,17 +94,24 @@ export function wirePackageJson(source: string): PackageJsonWiring {
     return { changed: false, contents: source, rewrites, skipped };
   }
 
-  // Keep the file's own line endings and its final newline (or lack of one),
-  // so the diff a CRLF checkout shows is the script lines and nothing else.
-  const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const body = JSON.stringify(parsed, null, detectIndent(source)).replace(/\n/g, eol);
-  const finalNewline = /\r?\n$/.test(source) ? eol : "";
   return {
     changed: true,
-    contents: body + finalNewline,
+    contents: serializePackageJson(parsed, source),
     rewrites,
     skipped,
   };
+}
+
+/**
+ * JSON.stringify with the source file's own indent, line endings, and final
+ * newline (or lack of one), so the only lines a rewrite changes are the ones
+ * whose content changed.
+ */
+export function serializePackageJson(parsed: unknown, source: string): string {
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const body = JSON.stringify(parsed, null, detectIndent(source)).replace(/\n/g, eol);
+  const finalNewline = /\r?\n$/.test(source) ? eol : "";
+  return body + finalNewline;
 }
 
 /** How many unchanged lines to show around an edit. */
