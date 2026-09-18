@@ -100,21 +100,23 @@ The landing page's "Binaries are not published yet" note is removed. Getting sta
 
 ### 6.1 Plan (read only)
 
-Open the vault without creating anything: no home, hook, token, or key is written, so `--dry-run` and every refusal leave the machine as they found it. With no vault on disk, there is nothing to restore. For each project in the `projects` table:
+Open the vault without creating anything: no home, hook, token, or key is written, so `--dry-run` and every refusal leave the machine as they found it. With no vault on disk, there is nothing to restore; if the credential store still holds a key (`exists()`, read-only), a real run deletes that orphaned key. For each project in the `projects` table:
 
 - **Reachable** when its `root_path` exists and holds a `package.json`. Otherwise it is **unreachable**.
-- **`.env` files.** Discover them as `init` does. Every value that parses as a `kerstel://` reference is replaced, through `setValue`, with the secret's current vault value. A reference the vault cannot resolve is left as it is and recorded as **unresolvable**. Files are rewritten in place: comments, order, quoting style, and line endings stay intact.
+- **`.env` files.** Discover them as `init` does. Every value that parses as a `kerstel://` reference is replaced with the secret's current vault value, written in the line's original quote style verbatim whenever the parser reads that back to the same value, and through `init`'s `setValue` rendering only when it cannot. A reference the vault cannot resolve is left as it is and recorded as **unresolvable**. Files are rewritten in place: comments, order, quoting style, and line endings stay intact.
 - **`package.json`.** A script that starts with exactly `kerstel exec -- ` loses that prefix. Anything else, including a script the user wrote that calls `kerstel`, is left alone. Line endings and the final newline are preserved, as in `wirePackageJson`.
 - **`.gitignore`.** When it contains the note `init` writes (`# Kerstel: .env files hold references, safe to commit`), that line is replaced with two lines, `.env` and `.env.*`, because the files are about to hold plaintext again.
 
 Then compute **unused secrets**: every `scope/KEY` in the vault that no reachable project's `.env` files refer to. These include `global` keys used by repositories that never ran `init`, and keys added with `kerstel set` alone.
 
+Finally compute **backup-only values**. `init` collapses a key defined in several env files, or assigned twice with different values in one file, into one vault entry; the other values survive only in its encrypted backup, which uninstall deletes with the key that opens it. For each reachable project, decrypt its latest backup in memory (never to disk) with the vault data key, and record every key with cross-file conflicts (`collectKeys(...).conflicts`) or with differing values inside one backed-up file, by key, file names, and backup directory. A project with no backup contributes nothing.
+
 ### 6.2 Show and confirm
 
 - Print every file diff with values masked, using the display masking `init` uses. No value is printed.
-- List by name every unreachable project (with its recorded path), unresolvable reference, and unused secret.
+- List by name every unreachable project (with its recorded path), unresolvable reference, unused secret, and backup-only value (key, files, and backup directory, never the value).
 - `--dry-run` exits 0 here, having written nothing, whether or not anything would be lost.
-- **Loss gate.** If any of those three lists is non-empty, stop with exit 1 unless `--force` is passed. The message names each item and says to save values first with `kerstel get <scope>/<KEY> --reveal`.
+- **Loss gate.** If any of those four lists is non-empty, stop with exit 1 unless `--force` is passed. The message names each item and says to save values first with `kerstel get <scope>/<KEY> --reveal`.
 - Ask once, defaulting to **no**: "Restore these files and delete Kerstel from this machine?" `--yes` answers yes. `--yes` never implies `--force`. Without a terminal and without `--yes`, exit 2.
 
 ### 6.3 Apply
@@ -124,14 +126,16 @@ Then compute **unused secrets**: every `scope/KEY` in the vault that no reachabl
 3. Delete `~/.kerstel` (`KERSTEL_HOME`): the vault, backups, hook, token, and socket.
 4. Delete the data key with the credential-store backend the vault was opened with. It goes after the home so a failure here leaves a harmless orphaned key rather than a vault no key can open.
 5. Delete the binary, only when running as the compiled executable (`process.execPath`'s file name is `kerstel` and the process is not the `bun` runtime). Otherwise print where the binary is.
-6. Print each restored project, and a warning that its `.env` files now hold plaintext and must stay out of git.
+6. Print each restored project, and a warning that its `.env` files now hold plaintext and must stay out of git. For each restored `.env` file that `git -C <root> ls-files` reports as tracked, name it and say to run `git rm --cached <file>` before the next commit, since a `.gitignore` entry does not untrack it. Without git, or outside a repository, only the generic warning is printed.
+
+Between steps 2 and 3, wait (up to 5 seconds) for the daemon to stop answering before deleting the home.
 
 ## 7. Testing
 
 - **`--version`:** unit test against `package.json`.
 - **Release workflow:** the verify step is a script (`scripts/release-verify.ts`) with unit tests for a matching tag, a mismatched tag, an `(unreleased)` heading, and a missing heading. The workflow is otherwise proven by running it on a pre-release tag (`v0.1.0-rc.1`) before `v0.1.0`.
 - **`install.sh`:** `shellcheck` in CI. A Bun test runs the real script against a local fake release (a directory of stub binaries and `SHA256SUMS`, served through `KERSTEL_DOWNLOAD_BASE=file://...`), with `uname` and `sysctl` shimmed on `PATH`. Cases: clean install, upgrade over an existing copy, checksum mismatch installs nothing, unsupported platform, Rosetta picks arm64, and the `PATH` hint.
-- **`uninstall`:** in a temp home with the file backend. Cases: multi-project byte-exact restore (CRLF, quoted values, comments), script unwrapping that leaves user-written `kerstel` scripts alone, the `.gitignore` swap, refusal on an unreachable project, on an unresolvable reference, and on unused secrets, `--force` past each, `--dry-run` writes nothing, `--yes` without `--force` still refuses on loss, and a failed file write deletes nothing.
+- **`uninstall`:** in a temp home with the file backend. Cases: multi-project byte-exact restore (CRLF, quoted values, comments), script unwrapping that leaves user-written `kerstel` scripts alone, the `.gitignore` swap, refusal on an unreachable project, on an unresolvable reference, on unused secrets, and on a backup-only value (cross-file and same-file), `--force` past each, `--dry-run` writes nothing, `--yes` without `--force` still refuses on loss, a failed file write deletes nothing, original quoting survives a round trip, a git-tracked `.env` gets the `git rm --cached` warning, and the real `init` followed by `uninstall --yes --force` on a gnarly fixture restores every file without a conflicting duplicate byte for byte.
 - **Compiled binary (e2e):** `init` then `uninstall` on a scratch project outside the repo restores the original `.env` values and removes `KERSTEL_HOME`.
 
 ## 8. Docs and tracking

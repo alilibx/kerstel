@@ -15,6 +15,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/alilibx/kerstel"
 TMP_DIR=""
+STAGED=""
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -24,6 +25,9 @@ die() {
 
 cleanup() {
   if [ -n "$TMP_DIR" ]; then rm -rf "$TMP_DIR"; fi
+  # A copy that failed partway leaves the hidden staged file next to the
+  # destination. After a successful rename it no longer exists.
+  if [ -n "$STAGED" ]; then rm -f "$STAGED"; fi
 }
 
 unsupported() {
@@ -95,7 +99,7 @@ path_hint() {
 main() {
   command -v curl >/dev/null 2>&1 || die "needs curl"
 
-  local asset base dir expected actual version staged
+  local asset base dir expected actual version
   asset="$(detect_asset)"
   base="$(download_base)"
   dir="${KERSTEL_INSTALL_DIR:-$HOME/.local/bin}"
@@ -116,10 +120,10 @@ main() {
   # Stage next to the destination, then rename: an upgrade swaps the file in
   # one step, even when the temp directory is on another filesystem.
   mkdir -p "$dir"
-  staged="${dir}/.kerstel-install.$$"
-  cp "${TMP_DIR}/kerstel" "$staged"
-  chmod 755 "$staged"
-  mv -f "$staged" "${dir}/kerstel"
+  STAGED="${dir}/.kerstel-install.$$"
+  cp "${TMP_DIR}/kerstel" "$STAGED" || die "could not write to ${dir}; nothing was installed"
+  chmod 755 "$STAGED"
+  mv -f "$STAGED" "${dir}/kerstel"
 
   version="$("${dir}/kerstel" --version)" || die "installed ${dir}/kerstel, but it did not run"
   say "Installed kerstel ${version} to ${dir}/kerstel"

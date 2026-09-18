@@ -23,6 +23,6 @@ The first release: a local-first secrets manager for Node and Bun projects.
 - `kerstel exec -- <command>`, which runs one command with the runtime hook wired in. `kerstel init` writes it into your scripts.
 - [kerstel.dev](https://kerstel.dev) with getting-started, CLI, resolution, teams, and security docs, plus the changelog and the [roadmap](https://kerstel.dev/roadmap).
 - `kerstel --version`.
-- `kerstel uninstall`, which restores every project's `.env` values, package scripts, and `.gitignore`, then removes `~/.kerstel`, the vault key, and the binary. It refuses, naming each one, if any secret would be lost.
+- `kerstel uninstall`, which restores every project's `.env` values in their original quoting, package scripts, and `.gitignore`, then removes `~/.kerstel`, the vault key, and the binary. It refuses, naming each one, if any secret would be lost, including a value `init` kept only in its encrypted backup. Afterwards it names every restored `.env` file git still tracks.
 - Release binaries for macOS and Linux (x64 and arm64), with SHA-256 checksums.
 - `curl -fsSL https://kerstel.dev/install.sh | bash`, which verifies the checksum and installs to `~/.local/bin` without `sudo`.
