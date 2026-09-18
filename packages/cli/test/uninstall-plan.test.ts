@@ -157,10 +157,30 @@ test("a key init collapsed across files is flagged as kept only in the backup", 
 
   const plan = planUninstall(v, dataKey);
   expect(plan.backupOnly).toEqual([
-    { project: "demo-app", key: "DB_PASSWORD", files: [".env.local", ".env"], backupDir: backup.dir },
+    // .env.local gets my-local-pw back from the vault; only .env's value is lost.
+    { project: "demo-app", key: "DB_PASSWORD", files: [".env"], backupDir: backup.dir },
   ]);
   expect(hasLoss(plan)).toBe(true);
   expect(JSON.stringify(plan.backupOnly)).not.toContain("shared-pw");
+});
+
+test("a conflicting key init left in plaintext is not flagged", async () => {
+  const v = await freshVault();
+  // `init --keep DEBUG`: both values stay in the live files, nothing in the vault.
+  const root = project({ "package.json": WIRED, ".env": "DEBUG=1\n", ".env.local": "DEBUG=0\n" });
+  v.registerProject("demo-app", root);
+  createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [
+      { name: ".env.local", contents: "DEBUG=0\n" },
+      { name: ".env", contents: "DEBUG=1\n" },
+    ],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([]);
+  expect(hasLoss(plan)).toBe(false);
 });
 
 test("a key assigned twice with different values in one file is flagged", async () => {

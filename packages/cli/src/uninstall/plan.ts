@@ -39,7 +39,7 @@ export interface UnresolvableReference {
 export interface BackupOnlyValue {
   project: string;
   key: string;
-  /** The backed-up env files that held a differing value for this key. */
+  /** The backed-up env files holding a value for this key that uninstall will not restore. */
   files: string[];
   /** The backup directory those values live in. */
   backupDir: string;
@@ -67,10 +67,14 @@ export function emptyPlan(): UninstallPlan {
 }
 
 /**
- * Keys in a project's LATEST backup whose values were collapsed by `init`.
- * The backup is decrypted in memory only; no value leaves this function.
+ * Keys in a project's LATEST backup whose values were collapsed by `init`,
+ * narrowed to the files where a backed-up value will not be back after the
+ * restore. A key `init` left in plaintext (`--keep`, or a "plaintext" answer)
+ * still holds every value in the live files, so it loses nothing and is not
+ * reported. `restored` maps each env file name to its contents after the
+ * restore. The backup is decrypted in memory only; no value leaves this function.
  */
-function backupOnlyValues(project: string, dataKey: Buffer): BackupOnlyValue[] {
+function backupOnlyValues(project: string, dataKey: Buffer, restored: Map<string, string>): BackupOnlyValue[] {
   const timestamp = listBackups(project).at(-1);
   if (!timestamp) return [];
   const backupDir = join(backupsDir(), project, timestamp);
@@ -103,14 +107,20 @@ function backupOnlyValues(project: string, dataKey: Buffer): BackupOnlyValue[] {
     for (const [key, seen] of values) if (seen.size > 1) flag(key, [entry.info.name]);
   }
 
+  const valuesOf = (source: string, key: string) =>
+    new Set(entries(parseDotenv(source)).filter((pair) => pair.key === key).map((pair) => pair.value));
+  const loses = (entry: LoadedEnvFile, key: string) => {
+    const after = valuesOf(restored.get(entry.info.name) ?? "", key);
+    return [...valuesOf(entry.original, key)].some((value) => !after.has(value));
+  };
+
   // Report files in backup (precedence) order, not discovery order.
-  const order = loaded.map((entry) => entry.info.name);
-  return [...flagged.entries()].map(([key, files]) => ({
-    project,
-    key,
-    files: order.filter((name) => files.has(name)),
-    backupDir,
-  }));
+  const result: BackupOnlyValue[] = [];
+  for (const [key, files] of flagged) {
+    const losing = loaded.filter((entry) => files.has(entry.info.name) && loses(entry, key));
+    if (losing.length > 0) result.push({ project, key, files: losing.map((entry) => entry.info.name), backupDir });
+  }
+  return result;
 }
 
 /**
@@ -150,6 +160,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
     }
 
     const restoredEnvFiles: string[] = [];
+    const restoredContents = new Map<string, string>();
     for (const loaded of loadEnvFiles(detectProject(root).envFiles)) {
       const copy = parseDotenv(loaded.original);
       for (let i = 0; i < copy.lines.length; i += 1) {
@@ -167,6 +178,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
         restoreLineValue(copy, i, value);
       }
       const after = serializeDotenv(copy);
+      restoredContents.set(loaded.info.name, after);
       if (after === loaded.original) continue;
       restoredEnvFiles.push(loaded.info.name);
       plan.files.push({
@@ -204,7 +216,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       }
     }
 
-    plan.backupOnly.push(...backupOnlyValues(project.name, dataKey));
+    plan.backupOnly.push(...backupOnlyValues(project.name, dataKey, restoredContents));
     plan.restored.push({ name: project.name, rootPath: root, envFiles: restoredEnvFiles });
   }
 
