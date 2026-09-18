@@ -32,7 +32,6 @@ description: Your .env files hold only references. The real values live in an en
 <p class="lede">A plaintext key becomes a reference, <code>kerstel init</code> migrates the project, and the same wiring runs under npm, Bun, pnpm, and Yarn.</p>
 <video class="demo-video" controls playsinline preload="metadata" poster="/brag-poster.jpg" width="1920" height="1080">
 <source src="/brag.mp4" type="video/mp4">
-Your browser does not support the video tag. <a href="/brag.mp4">Download the demo</a>.
 </video>
 </section>
 
