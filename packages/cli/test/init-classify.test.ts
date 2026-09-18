@@ -45,6 +45,30 @@ const CASES: [key: string, value: string, expected: Suggestion][] = [
   ["DEBUG", "sk-live-xxxxx", "plaintext"],
   // A literal boolean is never a secret, even under a global-credential key.
   ["OPENAI_API_KEY", "true", "plaintext"],
+  // A key that NAMES a credential is never suggested plaintext, whatever
+  // shape its value happens to have.
+  ["REDIS_PASSWORD", "redis", "project"],
+  ["PASSWORD", "secret", "project"],
+  ["DB_PASSWD", "pw", "project"],
+  ["SERVICE_AUTH", "abc", "project"],
+  ["DB_DSN", "mysql://db.internal/app", "project"],
+  ["VENDOR_CREDENTIALS", "abcd", "project"],
+  ["MY_APIKEY", "short", "project"],
+  ["AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE", "global"],
+  // A URL is only harmless while its query carries no credential.
+  ["API_URL", "https://h/?key=abc", "project"],
+  ["WEBHOOK_URL", "https://hooks.example.com/t?x=1&token=abc", "project"],
+  ["ASSET_URL", "https://cdn.example.com/a.png?sig=xyz", "project"],
+  ["REPORT_URL", "https://h/r?api_key=abc", "project"],
+  ["API_BASE", "https://api.example.com/v1?monkey=1", "plaintext"],
+  // PUBLIC_ is a declaration by the developer, and it outranks the credential
+  // word inside the same name.
+  ["PUBLIC_API_KEY", "abc", "plaintext"],
+  ["NEXT_PUBLIC_TOKEN", "x", "plaintext"],
+  // A credential word has to be a whole segment: AUTHOR is not AUTH.
+  ["AUTHOR_NAME", "ali", "plaintext"],
+  // An empty value is still nothing to encrypt.
+  ["PASSWORD", "", "plaintext"],
 ];
 
 test("suggest classifies every documented case", () => {

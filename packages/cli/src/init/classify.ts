@@ -6,7 +6,8 @@
  * The bias is deliberate: guessing "plaintext" for a real secret is the one
  * mistake that leaves a secret in a file, so every plaintext rule below is
  * shape-based and narrow (a boolean, a number, a URL with no credentials in
- * it), and anything ambiguous falls through to "project".
+ * it), the shape rules yield to a key that NAMES a credential, and anything
+ * ambiguous falls through to "project".
  */
 
 export type Suggestion = "project" | "global" | "plaintext";
@@ -41,6 +42,26 @@ export const GLOBAL_KEYS: readonly string[] = [
 const PLAINTEXT_KEYS =
   /^(NODE_ENV|PORT|HOST|LOG_LEVEL|DEBUG|CI|TZ|LANG|LC_.*|PUBLIC_.*|NEXT_PUBLIC_.*|VITE_.*)$/;
 
+/**
+ * Key names that ANNOUNCE a credential. A key matching this is never suggested
+ * plaintext on the strength of its value's shape alone: `PASSWORD=secret` and
+ * `REDIS_PASSWORD=redis` are short lowercase words, and a shape rule that
+ * cannot tell them from `NODE_ENV=production` would leave a real password in
+ * the file under `--yes`.
+ *
+ * A whole segment, not a substring: AUTHOR_NAME is not an AUTH key.
+ */
+const SECRET_KEYS =
+  /(^|[^A-Za-z0-9])(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|SECRET_?KEY|AUTH|CREDENTIALS?|DSN)($|[^A-Za-z0-9])/i;
+
+/**
+ * A query parameter that hands the credential over in the URL itself --
+ * a presigned link, a webhook with its token in the query. The parameter NAME
+ * has to end with the word, so `?monkey=1` is not a key.
+ */
+const SECRET_QUERY =
+  /[?&]([^=&]*[-_.])?(key|token|secret|password|sig|signature)=/i;
+
 const BOOLEANS = new Set(["true", "false", "yes", "no", "on", "off", "1", "0"]);
 const NUMBER = /^-?\d+(\.\d+)?$/;
 const URL_HEAD = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)/i;
@@ -59,6 +80,23 @@ function urlAuthority(value: string): string | null {
   return match[2] ?? "";
 }
 
+/** Where a key that is definitely a secret belongs. Never "plaintext". */
+function store(key: string): Suggestion {
+  return GLOBAL_KEYS.includes(key) ? "global" : "project";
+}
+
+/**
+ * The order below is the whole design, so it is worth stating:
+ *
+ *   1. A value with no content to protect (empty, a boolean, a number) is
+ *      plaintext whatever the key is called.
+ *   2. A URL is judged on its own contents first: userinfo or a credential in
+ *      the query beats every key-name convention.
+ *   3. `PUBLIC_*` and friends beat the credential words, because a developer
+ *      who named a key PUBLIC_API_KEY has declared it public.
+ *   4. A key that names a credential beats the value-SHAPE plaintext rules,
+ *      which cannot tell `PASSWORD=secret` from `NODE_ENV=production`.
+ */
 export function suggest(key: string, value: string): Suggestion {
   const trimmed = value.trim();
 
@@ -70,13 +108,16 @@ export function suggest(key: string, value: string): Suggestion {
   if (authority !== null) {
     // `postgres://user:pass@host/db` carries a credential regardless of what
     // the key is called; `https://api.example.com/v1` carries none.
-    return authority.includes("@") ? "project" : "plaintext";
+    if (authority.includes("@")) return "project";
+    if (SECRET_QUERY.test(trimmed)) return "project";
+    if (PLAINTEXT_KEYS.test(key)) return "plaintext";
+    return SECRET_KEYS.test(key) ? store(key) : "plaintext";
   }
 
-  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) return "plaintext";
   if (PLAINTEXT_KEYS.test(key)) return "plaintext";
+  if (SECRET_KEYS.test(key)) return store(key);
 
-  if (GLOBAL_KEYS.includes(key)) return "global";
+  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) return "plaintext";
 
-  return "project";
+  return store(key);
 }
