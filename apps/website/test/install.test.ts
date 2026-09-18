@@ -182,3 +182,13 @@ test("a regular file named ks in the install directory is left alone", async () 
   expect(result.code).toBe(0);
   expect(readFileSync(join(installDir, "ks"), "utf8")).toBe("mine");
 });
+
+test("a failed ln gracefully degrades to kerstel", async () => {
+  shim("ln", "exit 1");
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(existsSync(join(installDir, "kerstel"))).toBe(true);
+  expect(existsSync(join(installDir, "ks"))).toBe(false);
+  expect(result.stdout).toContain("could not create");
+  expect(result.stdout).toContain("so use kerstel");
+});

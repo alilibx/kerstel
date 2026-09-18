@@ -155,4 +155,4 @@ jobs:
           export KERSTEL_VERSION="${GITHUB_REF_NAME#v}" KERSTEL_INSTALL_DIR="$RUNNER_TEMP/bin"
           curl -fsSL https://kerstel.dev/install.sh | bash
           test "$("$KERSTEL_INSTALL_DIR/kerstel" --version)" = "$EXPECTED_VERSION"
-          test "$("$HOME/.local/bin/ks" --version)" = "$EXPECTED_VERSION"
+          test "$("$KERSTEL_INSTALL_DIR/ks" --version)" = "$EXPECTED_VERSION"

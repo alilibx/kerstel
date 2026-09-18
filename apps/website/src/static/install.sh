@@ -105,8 +105,11 @@ link_shortcut() {
   if [ -L "${dir}/ks" ]; then
     case "$(readlink "${dir}/ks")" in
       kerstel | "${dir}/kerstel")
-        ln -sf kerstel "${dir}/ks"
-        say "Linked ks -> kerstel"
+        if ln -sf kerstel "${dir}/ks" 2>/dev/null; then
+          say "Linked ks -> kerstel"
+        else
+          say "could not create ${dir}/ks, so use kerstel"
+        fi
         return
         ;;
     esac
@@ -120,7 +123,11 @@ link_shortcut() {
     say "ks is already taken by ${found}, so use kerstel"
     return
   fi
-  ln -s kerstel "${dir}/ks" && say "Linked ks -> kerstel"
+  if ln -s kerstel "${dir}/ks" 2>/dev/null; then
+    say "Linked ks -> kerstel"
+  else
+    say "could not create ${dir}/ks, so use kerstel"
+  fi
 }
 
 main() {
