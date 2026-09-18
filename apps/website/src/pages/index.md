@@ -23,7 +23,7 @@ description: Your .env files hold only references. The real values live in an en
 <section class="section">
 <div class="section-label">The problem</div>
 <h2>Plaintext .env files leak</h2>
-<p class="lede">Anything that can read files can read your secrets: AI coding agents, editor plugins, backup tools, and the commit you did not mean to make. Other tools fix this with a cloud account and a wrapper command you type on every run. Kerstel needs no account, and writes its wrapper into your scripts once, so `npm run dev` is still `npm run dev`.</p>
+<p class="lede">Anything that can read files can read your secrets: AI coding agents, editor plugins, backup tools, and the commit you did not mean to make. Other tools fix this with a cloud account and a wrapper command you type on every run. Kerstel needs no account, and writes its wrapper into your scripts once, so <code>npm run dev</code> is still <code>npm run dev</code>.</p>
 </section>
 
 <section class="section">
