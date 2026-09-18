@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUninstallArgs, uninstallCommand } from "../src/commands/uninstall";
+import { createBackup } from "../src/init/backup";
 import { ScriptedPrompter } from "../src/init/prompts";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault } from "../src/vault/store";
@@ -149,4 +150,24 @@ test("the compiled binary removes itself; a source run leaves the runtime alone"
   dirs.push(runtime);
   expect(await uninstallCommand(["--yes"], undefined, { path: runtime, compiled: false })).toBe(0);
   expect(existsSync(runtime)).toBe(true);
+});
+
+test("a value init kept only in its backup trips the gate until --force", async () => {
+  const { home } = await setup();
+  const { key } = await loadOrCreateDataKey();
+  createBackup({
+    scope: "demo-app",
+    dataKey: key,
+    files: [{ name: ".env", contents: "API_KEY=first-backup-only\nAPI_KEY=sk-restored\n" }],
+  });
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
+  expect(existsSync(home)).toBe(true);
+  const text = output.join("\n");
+  expect(text).toContain("Values init kept only in its encrypted backup");
+  expect(text).toContain("demo-app: API_KEY in .env");
+  expect(text).not.toContain("first-backup-only");
+
+  expect(await uninstallCommand(["--yes", "--force"], undefined, NO_BINARY)).toBe(0);
+  expect(existsSync(home)).toBe(false);
 });

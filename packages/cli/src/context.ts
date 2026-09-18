@@ -108,11 +108,17 @@ export async function openContext(): Promise<CliContext> {
  * `--dry-run` or a declined prompt having created `~/.kerstel` or a
  * credential-store item.
  *
- * Returns null when no vault exists yet (nothing to open, nothing created).
- * Callers must close the returned vault.
+ * With no vault on disk, `vault` is null and nothing is opened or created --
+ * but the backend is still selected and returned, so a caller can find a key
+ * left orphaned in the credential store (`backend.exists()`, read-only).
+ * Otherwise returns the open vault and its data key; callers must close it.
  */
-export async function openExistingVault(): Promise<{ vault: Vault; backend: KeychainBackend } | null> {
-  if (!existsSync(vaultPath())) return null;
+export type ExistingVault =
+  | { vault: Vault; backend: KeychainBackend; key: Buffer }
+  | { vault: null; backend: KeychainBackend; key: null };
+
+export async function openExistingVault(): Promise<ExistingVault> {
+  if (!existsSync(vaultPath())) return { vault: null, backend: await selectBackend(), key: null };
 
   // Same ordering requirement as openContext(): the recorded backend has to
   // be known before the key is fetched, so it is read with its own
@@ -147,7 +153,7 @@ export async function openExistingVault(): Promise<{ vault: Vault; backend: Keyc
           "encrypted with. Refusing to continue -- run `kerstel doctor`.",
       );
     }
-    return { vault, backend };
+    return { vault, backend, key };
   } catch (error) {
     vault.close();
     throw error;

@@ -6,7 +6,7 @@ import { TtyPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
 import { bold, fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
-import { hasLoss, planUninstall, type UninstallPlan } from "../uninstall/plan";
+import { emptyPlan, hasLoss, planUninstall, type UninstallPlan } from "../uninstall/plan";
 
 /**
  * Plan-5 spec §6. Three phases: plan (read only), show and gate, then apply:
@@ -55,6 +55,13 @@ function printPlan(plan: UninstallPlan): void {
     console.log(yellow("!  Secrets no reachable project uses, which would be deleted with the vault:"));
     for (const reference of plan.unused) info(reference);
   }
+  if (plan.backupOnly.length > 0) {
+    console.log("");
+    console.log(yellow("!  Values init kept only in its encrypted backup, which would be deleted with it:"));
+    for (const b of plan.backupOnly) {
+      info(`${b.project}: ${b.key} in ${b.files.join(", ")} (backup ${b.backupDir})`);
+    }
+  }
 }
 
 async function stopDaemonIfRunning(): Promise<void> {
@@ -81,15 +88,15 @@ export async function uninstallCommand(
   // to touch nothing, and this machine may genuinely have no vault yet.
   const existing = await openExistingVault();
   let plan: UninstallPlan;
-  if (existing) {
+  if (existing.vault) {
     try {
-      plan = planUninstall(existing.vault);
+      plan = planUninstall(existing.vault, existing.key);
     } finally {
       existing.vault.close();
     }
   } else {
     info("Kerstel has no data on this machine.");
-    plan = { files: [], restored: [], unreachable: [], unresolvable: [], unused: [] };
+    plan = emptyPlan();
   }
 
   printPlan(plan);
@@ -102,8 +109,9 @@ export async function uninstallCommand(
 
   if (hasLoss(plan) && !options.force) {
     fail(
-      "Uninstalling now would lose the secrets listed above. Save each one first with " +
-        "`kerstel get <scope>/<KEY> --reveal`, then re-run with --force.",
+      "Uninstalling now would lose the secrets and values listed above. Save each secret first with " +
+        "`kerstel get <scope>/<KEY> --reveal`. A value kept only in the backup cannot be read back " +
+        "through the CLI: if you still need it, recover it from where it came from. Then re-run with --force.",
     );
     return 1;
   }
@@ -167,7 +175,7 @@ export async function uninstallCommand(
   const home = kerstelHome();
   rmSync(home, { recursive: true, force: true });
   ok(`Deleted ${home}.`);
-  if (existing) {
+  if (existing.vault) {
     await existing.backend.delete();
     ok(`Deleted the vault key from the ${existing.backend.name} credential store.`);
   }

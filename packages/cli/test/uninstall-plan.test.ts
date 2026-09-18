@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createBackup } from "../src/init/backup";
 import { lookup, parseDotenv, restoreLineValue, serializeDotenv, setValue } from "../src/init/dotenv-file";
 import { hasLoss, planUninstall } from "../src/uninstall/plan";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
@@ -10,6 +11,7 @@ import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 const dirs: string[] = [];
 let vault: Vault | null = null;
+let dataKey: Buffer = Buffer.alloc(0);
 
 afterEach(() => {
   vault?.close();
@@ -21,6 +23,7 @@ afterEach(() => {
 async function freshVault(): Promise<Vault> {
   dirs.push(isolateEnv({ prefix: "uninstall-plan" }));
   const { key } = await loadOrCreateDataKey();
+  dataKey = key;
   vault = openVault(key);
   return vault;
 }
@@ -43,7 +46,7 @@ test("rewrites references to vault values and never puts a value in the diff", a
   });
   v.registerProject("demo-app", root);
 
-  const plan = planUninstall(v);
+  const plan = planUninstall(v, dataKey);
   const env = plan.files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe("# keep me\r\nAPI_KEY=sk-live-value\r\nPORT=3000\r\n");
   expect(env.diffBefore + env.diffAfter).not.toContain("sk-live-value");
@@ -63,7 +66,7 @@ test("swaps the .gitignore note back", async () => {
   });
   v.registerProject("demo-app", root);
 
-  const plan = planUninstall(v);
+  const plan = planUninstall(v, dataKey);
   expect(plan.files.find((f) => f.path === join(root, ".gitignore"))?.after).toBe("node_modules\n.env\n.env.*\n");
 });
 
@@ -77,7 +80,7 @@ test("records an unreachable project, an unresolvable reference, and an unused s
   const root = project({ "package.json": WIRED, ".env": "MISSING=kerstel://demo-app/MISSING\n" });
   v.registerProject("demo-app", root);
 
-  const plan = planUninstall(v);
+  const plan = planUninstall(v, dataKey);
   expect(plan.unreachable).toEqual([
     { name: "gone", rootPath: gone, reason: "the folder no longer exists" },
     { name: "no-pkg", rootPath: noPkg, reason: "it has no package.json" },
@@ -93,7 +96,7 @@ test("a malformed package.json makes the project unreachable", async () => {
   const v = await freshVault();
   const root = project({ "package.json": "{ nope" });
   v.registerProject("bad-json", root);
-  expect(planUninstall(v).unreachable[0]?.reason).toBe("its package.json is not valid JSON");
+  expect(planUninstall(v, dataKey).unreachable[0]?.reason).toBe("its package.json is not valid JSON");
 });
 
 test("a secret used only through a global reference in a project is not unused", async () => {
@@ -102,7 +105,7 @@ test("a secret used only through a global reference in a project is not unused",
   const root = project({ "package.json": WIRED, ".env": "SHARED=kerstel://global/SHARED\n" });
   mkdirSync(join(root, "sub"));
   v.registerProject("demo-app", root);
-  expect(planUninstall(v).unused).toEqual([]);
+  expect(planUninstall(v, dataKey).unused).toEqual([]);
 });
 
 test("duplicate keys with different references each get their own restored value", async () => {
@@ -115,7 +118,7 @@ test("duplicate keys with different references each get their own restored value
   });
   v.registerProject("demo-app", root);
 
-  const plan = planUninstall(v);
+  const plan = planUninstall(v, dataKey);
   const env = plan.files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe("API_KEY=api-value\nAPI_KEY=secret-value\n");
   expect(hasLoss(plan)).toBe(false);
@@ -130,9 +133,84 @@ test("duplicate keys on reference and plaintext lines preserve the plaintext", a
   });
   v.registerProject("demo-app", root);
 
-  const plan = planUninstall(v);
+  const plan = planUninstall(v, dataKey);
   const env = plan.files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe("API_KEY=restored-value\nAPI_KEY=local-plaintext-value\n");
+  expect(hasLoss(plan)).toBe(false);
+});
+
+test("a key init collapsed across files is flagged as kept only in the backup", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "DB_PASSWORD" }, "my-local-pw");
+  const reference = "DB_PASSWORD=kerstel://demo-app/DB_PASSWORD\n";
+  const root = project({ "package.json": WIRED, ".env": reference, ".env.local": reference });
+  v.registerProject("demo-app", root);
+  // What init backs up: the originals, highest precedence first.
+  const backup = createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [
+      { name: ".env.local", contents: "DB_PASSWORD=my-local-pw\n" },
+      { name: ".env", contents: "DB_PASSWORD=shared-pw\nPORT=3000\n" },
+    ],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([
+    { project: "demo-app", key: "DB_PASSWORD", files: [".env.local", ".env"], backupDir: backup.dir },
+  ]);
+  expect(hasLoss(plan)).toBe(true);
+  expect(JSON.stringify(plan.backupOnly)).not.toContain("shared-pw");
+});
+
+test("a key assigned twice with different values in one file is flagged", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_KEY" }, "second");
+  const root = project({
+    "package.json": WIRED,
+    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=kerstel://demo-app/API_KEY\n",
+  });
+  v.registerProject("demo-app", root);
+  const backup = createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [{ name: ".env", contents: "API_KEY=first\nAPI_KEY=second\nSAME=x\nSAME=x\n" }],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([{ project: "demo-app", key: "API_KEY", files: [".env"], backupDir: backup.dir }]);
+  expect(hasLoss(plan)).toBe(true);
+});
+
+test("a backup with no conflicting values, or no backup at all, contributes nothing", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_KEY" }, "same-value");
+  const root = project({
+    "package.json": WIRED,
+    ".env": "API_KEY=kerstel://demo-app/API_KEY\n",
+    ".env.local": "API_KEY=kerstel://demo-app/API_KEY\n",
+  });
+  v.registerProject("demo-app", root);
+  expect(planUninstall(v, dataKey).backupOnly).toEqual([]);
+
+  // An older backup with a conflict is superseded: only the latest one counts.
+  createBackup({
+    scope: "demo-app",
+    dataKey,
+    timestamp: "2026-01-01T00-00-00.000Z",
+    files: [{ name: ".env", contents: "API_KEY=a\nAPI_KEY=b\n" }],
+  });
+  createBackup({
+    scope: "demo-app",
+    dataKey,
+    timestamp: "2026-02-01T00-00-00.000Z",
+    files: [
+      { name: ".env.local", contents: "API_KEY=same-value\n" },
+      { name: ".env", contents: "API_KEY=same-value\nAPI_KEY=same-value\n" },
+    ],
+  });
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([]);
   expect(hasLoss(plan)).toBe(false);
 });
 
@@ -185,6 +263,6 @@ test("the plan restores values in their original quoting", async () => {
   const root = project({ "package.json": WIRED, ".env": wiredEnv });
   v.registerProject("demo-app", root);
 
-  const env = planUninstall(v).files.find((f) => f.path === join(root, ".env"))!;
+  const env = planUninstall(v, dataKey).files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe(QUOTING_CASES.join("\n") + "\n");
 });

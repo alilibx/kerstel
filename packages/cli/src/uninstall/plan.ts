@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadEnvFiles } from "../init/collect";
-import { detectProject } from "../init/detect";
+import { listBackups, readBackup } from "../init/backup";
+import { collectKeys, loadEnvFiles, type LoadedEnvFile } from "../init/collect";
+import { detectProject, envFileRank } from "../init/detect";
 import { maskForDisplay } from "../init/display";
-import { parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
+import { entries, parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
+import { backupsDir } from "../paths";
 import { formatReference, parseReference } from "../reference";
 import type { Vault } from "../vault/store";
 import { restoreGitignore, unwirePackageJson } from "./unwire";
@@ -29,6 +31,20 @@ export interface UnresolvableReference {
   reference: string;
 }
 
+/**
+ * A key whose values differed when `init` ran -- across files, or twice inside
+ * one file. `init` kept one value in the vault; the others exist only in the
+ * encrypted backup, which uninstall deletes along with the key that opens it.
+ */
+export interface BackupOnlyValue {
+  project: string;
+  key: string;
+  /** The backed-up env files that held a differing value for this key. */
+  files: string[];
+  /** The backup directory those values live in. */
+  backupDir: string;
+}
+
 export interface UninstallPlan {
   files: PlannedFile[];
   restored: { name: string; rootPath: string }[];
@@ -36,6 +52,58 @@ export interface UninstallPlan {
   unresolvable: UnresolvableReference[];
   /** kerstel:// references for vault secrets no reachable project uses. */
   unused: string[];
+  backupOnly: BackupOnlyValue[];
+}
+
+export function emptyPlan(): UninstallPlan {
+  return { files: [], restored: [], unreachable: [], unresolvable: [], unused: [], backupOnly: [] };
+}
+
+/**
+ * Keys in a project's LATEST backup whose values were collapsed by `init`.
+ * The backup is decrypted in memory only; no value leaves this function.
+ */
+function backupOnlyValues(project: string, dataKey: Buffer): BackupOnlyValue[] {
+  const timestamp = listBackups(project).at(-1);
+  if (!timestamp) return [];
+  const backupDir = join(backupsDir(), project, timestamp);
+
+  // The manifest lists files in the order init loaded them, highest
+  // precedence first, which is the order collectKeys expects.
+  const loaded: LoadedEnvFile[] = readBackup(project, timestamp, dataKey).map((file) => ({
+    info: { name: file.name, path: join(backupDir, file.name), rank: envFileRank(file.name) },
+    original: file.contents,
+    file: parseDotenv(file.contents),
+  }));
+
+  const flagged = new Map<string, Set<string>>();
+  const flag = (key: string, files: string[]) => {
+    const set = flagged.get(key) ?? new Set<string>();
+    for (const file of files) set.add(file);
+    flagged.set(key, set);
+  };
+
+  for (const key of collectKeys(loaded)) {
+    if (key.conflicts.length > 0) flag(key.key, [key.source, ...key.conflicts]);
+  }
+  for (const entry of loaded) {
+    const values = new Map<string, Set<string>>();
+    for (const pair of entries(entry.file)) {
+      const seen = values.get(pair.key) ?? new Set<string>();
+      seen.add(pair.value);
+      values.set(pair.key, seen);
+    }
+    for (const [key, seen] of values) if (seen.size > 1) flag(key, [entry.info.name]);
+  }
+
+  // Report files in backup (precedence) order, not discovery order.
+  const order = loaded.map((entry) => entry.info.name);
+  return [...flagged.entries()].map(([key, files]) => ({
+    project,
+    key,
+    files: order.filter((name) => files.has(name)),
+    backupDir,
+  }));
 }
 
 /**
@@ -44,10 +112,12 @@ export interface UninstallPlan {
  *
  * Values come from the vault, not from the encrypted backups: a backup holds
  * what the files said when `init` ran, and restoring it would silently undo
- * every rotation since.
+ * every rotation since. The latest backup is still READ (in memory, with
+ * `dataKey`), because it can hold the one thing the vault never did: the
+ * losing values of a key `init` collapsed. See `backupOnlyValues`.
  */
-export function planUninstall(vault: Vault): UninstallPlan {
-  const plan: UninstallPlan = { files: [], restored: [], unreachable: [], unresolvable: [], unused: [] };
+export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
+  const plan = emptyPlan();
   const used = new Set<string>();
 
   for (const project of vault.listProjects()) {
@@ -125,6 +195,7 @@ export function planUninstall(vault: Vault): UninstallPlan {
       }
     }
 
+    plan.backupOnly.push(...backupOnlyValues(project.name, dataKey));
     plan.restored.push({ name: project.name, rootPath: root });
   }
 
@@ -138,5 +209,7 @@ export function planUninstall(vault: Vault): UninstallPlan {
 
 /** True when applying the plan would lose a secret. See the loss gate in spec §6.2. */
 export function hasLoss(plan: UninstallPlan): boolean {
-  return plan.unreachable.length + plan.unresolvable.length + plan.unused.length > 0;
+  return (
+    plan.unreachable.length + plan.unresolvable.length + plan.unused.length + plan.backupOnly.length > 0
+  );
 }
