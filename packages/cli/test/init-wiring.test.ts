@@ -214,3 +214,42 @@ test("wireBunfig replaces a stale entry written as a TOML literal string", () =>
   const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
   expect(result.contents).toBe('preload = ["/home/dev/.kerstel/hook/preload.cjs"]\n');
 });
+
+/**
+ * `preload = "./setup.ts"` is as valid as the array form, and appending a
+ * second top-level `preload` key to a file that has one makes bun refuse to
+ * start at all ("Cannot redefine key 'preload'"), which would break every
+ * command in the project rather than just Kerstel's hook.
+ */
+test("wireBunfig promotes a string preload to an array", () => {
+  const result = wireBunfig('preload = "./setup.ts"\n', "/hook/preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe('preload = ["./setup.ts", "/hook/preload.cjs"]\n');
+});
+
+test("wireBunfig keeps the quoting style and comment of a string preload", () => {
+  const source = "preload = './setup.ts'  # our own\n[test]\npreload = './test-setup.ts'\n";
+  const result = wireBunfig(source, "/hook/preload.cjs");
+  expect(result.contents).toBe(
+    "preload = ['./setup.ts', \"/hook/preload.cjs\"]  # our own\n[test]\npreload = './test-setup.ts'\n",
+  );
+});
+
+test("wireBunfig leaves a string preload that already is the hook alone", () => {
+  const source = 'preload = "/hook/preload.cjs"\n';
+  const result = wireBunfig(source, "/hook/preload.cjs");
+  expect(result.changed).toBe(false);
+  expect(result.contents).toBe(source);
+});
+
+test("wireBunfig replaces a stale hook path in a string preload", () => {
+  const source = "preload = '/Users/ali/.kerstel/hook/preload.cjs' # kerstel\n";
+  const result = wireBunfig(source, "/home/dev/.kerstel/hook/preload.cjs");
+  expect(result.changed).toBe(true);
+  expect(result.contents).toBe('preload = "/home/dev/.kerstel/hook/preload.cjs" # kerstel\n');
+});
+
+test("wireBunfig is not fooled by a hash inside a string preload path", () => {
+  const result = wireBunfig('preload = "./set#up.ts"\n', "/hook/preload.cjs");
+  expect(result.contents).toBe('preload = ["./set#up.ts", "/hook/preload.cjs"]\n');
+});

@@ -114,6 +114,8 @@ export interface BunfigWiring {
 const SECTION_HEADER = /^\s*\[/;
 const PRELOAD_LINE = /^(\s*preload\s*=\s*)\[([^\]]*)\](\s*)$/;
 const PRELOAD_OPEN = /^\s*preload\s*=\s*\[/;
+/** The string form: `preload = "./setup.ts"`, which TOML allows and bun accepts. */
+const PRELOAD_STRING = /^(\s*preload\s*=\s*)("(?:[^"\\]|\\.)*"|'[^']*')([ \t]*(?:#.*)?)$/;
 
 /** A TOML basic ("...") or literal ('...') string, captured with its offsets. */
 const TOML_STRING = /"(?:[^"\\]|\\.)*"|'[^']*'/g;
@@ -139,6 +141,18 @@ interface BunfigEntry {
  * nested array, an inline table). Null means "do not reason about this line",
  * which is the only honest answer for a file Kerstel does not own.
  */
+/** The path a TOML string token denotes, or null when it does not parse. */
+function readTomlString(token: string): string | null {
+  if (token.startsWith("'")) return token.slice(1, -1);
+  try {
+    return JSON.parse(token) as string;
+  } catch {
+    // TOML basic strings allow escapes JSON does not (`\U0001F600`). Unreadable
+    // is not the same as absent, and guessing at it would rewrite the line wrong.
+    return null;
+  }
+}
+
 function readBunfigEntries(body: string): BunfigEntry[] | null {
   const found: BunfigEntry[] = [];
   TOML_STRING.lastIndex = 0;
@@ -146,10 +160,8 @@ function readBunfigEntries(body: string): BunfigEntry[] | null {
   for (let match = TOML_STRING.exec(body); match !== null; match = TOML_STRING.exec(body)) {
     const token = match[0];
     const start = match.index;
-    const path =
-      token.startsWith("'")
-        ? token.slice(1, -1)
-        : (JSON.parse(token) as string);
+    const path = readTomlString(token);
+    if (path === null) return null;
     found.push({ start, end: start + token.length, path });
     remainder = remainder.replace(token, " ".repeat(token.length));
   }
@@ -215,6 +227,32 @@ export function wireBunfig(source: string | null, preloadPath: string): BunfigWi
 
       const items = body.trim().replace(/,$/, "");
       parts[i] = `${head}[${items.length === 0 ? entry : `${items}, ${entry}`}]${tail}`;
+      return { changed: true, created: false, contents: parts.join("") };
+    }
+
+    const stringMatch = PRELOAD_STRING.exec(text);
+    if (stringMatch) {
+      // A string `preload` is a KEY, so appending another `preload = [...]`
+      // line below makes bun fail every launch with "Cannot redefine key
+      // 'preload'". The one safe edit is to widen this line into an array.
+      const head = stringMatch[1] ?? "";
+      const token = stringMatch[2] ?? "";
+      const tail = stringMatch[3] ?? "";
+      const existing = readTomlString(token);
+      if (existing === null) {
+        throw new Error(
+          "Kerstel cannot read the `preload` value in bunfig.toml without risking the rest of the " +
+            `file. Add ${entry} to it by hand, then re-run \`kerstel init\`.`,
+        );
+      }
+
+      if (existing === preloadPath) return { changed: false, created: false, contents: source };
+
+      // A hook path from another machine is replaced rather than joined, for
+      // the same reason it is inside an array.
+      parts[i] = HOOK_PRELOAD_PATH.test(existing)
+        ? `${head}${entry}${tail}`
+        : `${head}[${token}, ${entry}]${tail}`;
       return { changed: true, created: false, contents: parts.join("") };
     }
 
