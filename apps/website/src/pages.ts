@@ -44,16 +44,16 @@ export function collectPages(pagesDir: string): Page[] {
 }
 
 /**
- * The repo-root CHANGELOG.md, published as /changelog. It lives outside the
- * pages directory so GitHub renders it too, which is why it carries no front
- * matter and gets its meta here.
+ * A Markdown file at the repo root, such as CHANGELOG.md, published as
+ * /<slug>. These files live outside the pages directory so GitHub renders them
+ * too, which is why they carry no front matter and get their meta here.
  */
-export function changelogPage(file: string): Page {
+export function rootPage(file: string, slug: string, meta: FrontMatter): Page {
   return {
-    source: "changelog.md",
-    outPath: "changelog.html",
-    url: "/changelog",
-    meta: { title: "Changelog", description: "Every Kerstel release and what changed in it." },
+    source: `${slug}.md`,
+    outPath: `${slug}.html`,
+    url: `/${slug}`,
+    meta,
     body: readFileSync(file, "utf8"),
   };
 }

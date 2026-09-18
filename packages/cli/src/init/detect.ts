@@ -37,7 +37,7 @@ export function isEnvFileName(name: string): boolean {
  * Spec §8 / ruling 6 precedence, highest first:
  *   .env.<x>.local (3) > .env.local (2) > .env.<x> (1) > .env (0)
  *
- * v1 has no environments, so this decides only which duplicate value is the
+ * Kerstel has no environments yet, so this decides only which duplicate value is the
  * one stored in the vault. It is the convention Next.js, Vite and CRA all
  * follow, so it is the one a developer already expects.
  */

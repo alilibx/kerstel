@@ -42,8 +42,12 @@
 <li><code>kerstel resolve</code> to print one resolved value.</li>
 <li>Resolver daemon (<code>kerstel daemon serve|start|stop|status</code>) that unlocks the vault once and serves resolutions over a local socket.</li>
 <li>Runtime hook for Node and Bun that resolves references lazily from <code>process.env</code>, with no wrapper command.</li>
-<li><code>kerstel doctor</code> to diagnose the vault, the credential store, the daemon, and the hook assets.</li>
-<li><a href="https://kerstel.dev">kerstel.dev</a> with getting-started, CLI, resolution, teams, and security docs.</li>
+<li><code>kerstel doctor</code> to diagnose the vault, the credential store, the daemon, and the hook assets. Inside a project it also reports the scope, the runtime, how many scripts are wired, and how many references this vault can resolve.</li>
+<li><code>kerstel init</code>, a setup wizard that moves a project&#39;s <code>.env</code> values into the vault. It shows the full plan and every diff, asks once before writing, and backs up the originals encrypted. It rewrites only the values, keeping comments, order, and quoting intact. Then it wires the runtime hook into your <code>package.json</code> scripts, so <code>npm run dev</code> stays <code>npm run dev</code>.</li>
+<li><code>kerstel init</code> on a cloned project that already uses Kerstel prompts for each key your vault is missing, with the echo turned off.</li>
+<li><code>kerstel init</code> flags for scripts and CI: <code>--dry-run</code>, <code>--yes</code>, <code>--scope</code>, <code>--global</code>, <code>--keep</code>, <code>--non-interactive</code>, and <code>--from-stdin</code>.</li>
+<li><code>kerstel exec -- &lt;command&gt;</code>, which runs one command with the runtime hook wired in. <code>kerstel init</code> writes it into your scripts.</li>
+<li><a href="https://kerstel.dev">kerstel.dev</a> with getting-started, CLI, resolution, teams, and security docs, plus the changelog and the <a href="https://kerstel.dev/roadmap">roadmap</a>.</li>
 </ul>
 
 </main>
@@ -55,6 +59,7 @@
 <a href="/security">Security</a>
 <a href="/docs">Docs</a>
 <a href="/changelog">Changelog</a>
+<a href="/roadmap">Roadmap</a>
 <a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
 </nav>
 </div>
