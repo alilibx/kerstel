@@ -50,8 +50,16 @@
 
 function copyInstall(btn) {
   var cmd = "curl -fsSL https://kerstel.dev/install.sh | bash";
+  if (!navigator.clipboard) {
+    btn.textContent = "Copy failed";
+    setTimeout(function () { btn.textContent = "Copy"; }, 2000);
+    return;
+  }
   navigator.clipboard.writeText(cmd).then(function () {
     btn.textContent = "Copied";
+    setTimeout(function () { btn.textContent = "Copy"; }, 2000);
+  }, function () {
+    btn.textContent = "Copy failed";
     setTimeout(function () { btn.textContent = "Copy"; }, 2000);
   });
 }
