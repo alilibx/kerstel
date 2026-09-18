@@ -103,3 +103,34 @@ test("a secret used only through a global reference in a project is not unused",
   v.registerProject("demo-app", root);
   expect(planUninstall(v).unused).toEqual([]);
 });
+
+test("duplicate keys with different references each get their own restored value", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_KEY" }, "api-value");
+  v.setSecret({ scope: "demo-app", key: "SECRET" }, "secret-value");
+  const root = project({
+    "package.json": WIRED,
+    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=kerstel://demo-app/SECRET\n",
+  });
+  v.registerProject("demo-app", root);
+
+  const plan = planUninstall(v);
+  const env = plan.files.find((f) => f.path === join(root, ".env"))!;
+  expect(env.after).toBe("API_KEY=api-value\nAPI_KEY=secret-value\n");
+  expect(hasLoss(plan)).toBe(false);
+});
+
+test("duplicate keys on reference and plaintext lines preserve the plaintext", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_KEY" }, "restored-value");
+  const root = project({
+    "package.json": WIRED,
+    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=local-plaintext-value\n",
+  });
+  v.registerProject("demo-app", root);
+
+  const plan = planUninstall(v);
+  const env = plan.files.find((f) => f.path === join(root, ".env"))!;
+  expect(env.after).toBe("API_KEY=restored-value\nAPI_KEY=local-plaintext-value\n");
+  expect(hasLoss(plan)).toBe(false);
+});

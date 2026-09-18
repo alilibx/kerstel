@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { loadEnvFiles } from "../init/collect";
 import { detectProject } from "../init/detect";
 import { maskForDisplay } from "../init/display";
-import { entries, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
+import { parseDotenv, serializeDotenv, setLineValue } from "../init/dotenv-file";
+import type { DotenvPair } from "../init/dotenv-file";
 import { formatReference, parseReference } from "../reference";
 import type { Vault } from "../vault/store";
 import { restoreGitignore, unwirePackageJson } from "./unwire";
@@ -74,8 +75,10 @@ export function planUninstall(vault: Vault): UninstallPlan {
 
     for (const loaded of loadEnvFiles(detectProject(root).envFiles)) {
       const copy = parseDotenv(loaded.original);
-      for (const pair of entries(loaded.file)) {
-        const ref = parseReference(pair.value);
+      for (let i = 0; i < copy.lines.length; i += 1) {
+        const line = copy.lines[i];
+        if (!line || line.kind !== "pair") continue;
+        const ref = parseReference(line.value);
         if (!ref) continue;
         const reference = formatReference(ref.scope, ref.key);
         const value = vault.getSecret(ref);
@@ -84,7 +87,7 @@ export function planUninstall(vault: Vault): UninstallPlan {
           continue;
         }
         used.add(reference);
-        setValue(copy, pair.key, value);
+        setLineValue(copy, i, value);
       }
       const after = serializeDotenv(copy);
       if (after === loaded.original) continue;

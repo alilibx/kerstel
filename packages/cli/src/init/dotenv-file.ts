@@ -297,6 +297,28 @@ function renderValue(value: string, quote: Quote): string {
 }
 
 /**
+ * Rewrites only the value at `file.lines[index]`, which must be a pair.
+ * Uses the same rendering as `setValue` preserves quoting style.
+ * Throws if the line is not a pair.
+ */
+export function setLineValue(file: DotenvFile, index: number, value: string): void {
+  const line = file.lines[index];
+  if (!line || line.kind !== "pair") {
+    throw new Error(`Cannot rewrite value at line ${index}: line is not a pair`);
+  }
+
+  const rendered = renderValue(value, line.quote);
+  const text = line.text.slice(0, line.valueStart) + rendered + line.text.slice(line.valueEnd);
+  file.lines[index] = {
+    ...line,
+    text,
+    value,
+    valueStart: line.valueStart,
+    valueEnd: line.valueStart + rendered.length,
+  };
+}
+
+/**
  * Replaces the value of EVERY assignment of `key` and returns how many were
  * rewritten. Every occurrence, not just the effective one: a key assigned
  * twice in one file would otherwise keep plaintext on the losing line, which
@@ -307,16 +329,7 @@ export function setValue(file: DotenvFile, key: string, value: string): number {
   for (let i = 0; i < file.lines.length; i += 1) {
     const line = file.lines[i];
     if (!line || line.kind !== "pair" || line.key !== key) continue;
-
-    const rendered = renderValue(value, line.quote);
-    const text = line.text.slice(0, line.valueStart) + rendered + line.text.slice(line.valueEnd);
-    file.lines[i] = {
-      ...line,
-      text,
-      value,
-      valueStart: line.valueStart,
-      valueEnd: line.valueStart + rendered.length,
-    };
+    setLineValue(file, i, value);
     count += 1;
   }
   return count;
