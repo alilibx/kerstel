@@ -4,6 +4,7 @@ import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
+import { uninstallCommand } from "./commands/uninstall";
 import { bold, fail } from "./output";
 import { VERSION } from "./version";
 
@@ -22,6 +23,8 @@ Usage:
   kerstel resolve kerstel://<scope>/<KEY>       Print one resolved value
   kerstel daemon <serve|start|stop|status>      Manage the resolver daemon
   kerstel doctor                                Diagnose this machine's setup
+  kerstel uninstall [--dry-run] [--yes] [--force]
+                                                Restore every project and remove Kerstel
   kerstel --version                             Print the version
 
 Scopes are explicit: "global" or a project name. A reference resolves in exactly
@@ -64,6 +67,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await daemonCommand(args);
       case "doctor":
         return await doctorCommand();
+      case "uninstall":
+        return await uninstallCommand(args);
       default:
         fail(`Unknown command "${command}".`);
         console.log(USAGE);
