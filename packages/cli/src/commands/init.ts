@@ -10,9 +10,10 @@ import { entries, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-
 import { deriveScope } from "../init/project-name";
 import { describeValue, maskForDisplay } from "../init/display";
 import {
+  CancelledError,
+  ClackPrompter,
   DefaultsPrompter,
   NonInteractiveError,
-  TtyPrompter,
   type Prompter,
 } from "../init/prompts";
 import { GITIGNORE_NOTE, renderDiff, wirePackageJson } from "../init/wiring";
@@ -702,6 +703,10 @@ export async function runInit(options: InitOptions, prompter: Prompter): Promise
   try {
     return await runInitSteps(options, prompter);
   } catch (error) {
+    if (error instanceof CancelledError) {
+      fail(error.message);
+      return 130;
+    }
     if (error instanceof NonInteractiveError) {
       fail(error.message);
       return 2;
@@ -713,7 +718,7 @@ export async function runInit(options: InitOptions, prompter: Prompter): Promise
 function choosePrompter(options: InitOptions): Prompter | null {
   if (options.yes || options.nonInteractive) return new DefaultsPrompter();
   if (process.stdin.isTTY !== true) return null;
-  return new TtyPrompter();
+  return new ClackPrompter();
 }
 
 export async function initCommand(args: string[], prompterOverride?: Prompter): Promise<number> {
@@ -732,14 +737,5 @@ export async function initCommand(args: string[], prompterOverride?: Prompter): 
     return 2;
   }
 
-  try {
-    return await runInit(parsed, prompter);
-  } finally {
-    // A TtyPrompter holds one readline Interface over process.stdin, and an
-    // open interface keeps the event loop alive: without this close the CLI
-    // would finish the wizard and then hang forever. Only a prompter WE made
-    // is closed -- a caller-supplied one is the caller's to manage, and the
-    // tests pass in prompters they reuse after the call returns.
-    if (prompter !== prompterOverride && prompter instanceof TtyPrompter) prompter.close();
-  }
+  return runInit(parsed, prompter);
 }

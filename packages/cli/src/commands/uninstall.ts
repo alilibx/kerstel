@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
-import { TtyPrompter, type Prompter } from "../init/prompts";
+import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
 import { bold, fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
@@ -173,19 +173,24 @@ export async function uninstallCommand(
   }
 
   if (!options.yes) {
-    const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new TtyPrompter() : null);
+    const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new ClackPrompter() : null);
     if (!prompter) {
       fail("kerstel uninstall asks for confirmation, and this is not a terminal. Re-run with --yes.");
       return 2;
     }
+    let go: boolean;
     try {
-      const go = await prompter.confirm("Restore these files and delete Kerstel from this machine?", false);
-      if (!go) {
-        info("Nothing was changed.");
-        return 0;
+      go = await prompter.confirm("Restore these files and delete Kerstel from this machine?", false);
+    } catch (error) {
+      if (error instanceof CancelledError) {
+        fail(error.message);
+        return 130;
       }
-    } finally {
-      if (prompter !== prompterOverride && prompter instanceof TtyPrompter) prompter.close();
+      throw error;
+    }
+    if (!go) {
+      info("Nothing was changed.");
+      return 0;
     }
   }
 
