@@ -17,7 +17,7 @@ The first release: a local-first secrets manager for Node and Bun projects.
 - Resolver daemon (`kerstel daemon serve|start|stop|status`) that unlocks the vault once and serves resolutions over a local socket.
 - Runtime hook for Node and Bun that resolves references lazily from `process.env`, with no wrapper command.
 - `kerstel doctor` to diagnose the vault, the credential store, the daemon, and the hook assets. Inside a project it also reports the scope, the runtime, how many scripts are wired, and how many references this vault can resolve.
-- `kerstel init`, a setup wizard that moves a project's `.env` values into the vault. It shows the full plan and every diff, asks once before writing, and backs up the originals encrypted. It rewrites only the values, keeping comments, order, and quoting intact. Then it wires the runtime hook into your `package.json` scripts, so `npm run dev` stays `npm run dev`.
+- `kerstel init`, a setup wizard that moves a project's `.env` values into the vault. It sums up what will change in each file, shows the full masked diff on request, asks once before writing, and backs up the originals encrypted. It rewrites only the values, keeping comments, order, and quoting intact. Then it wires the runtime hook into your `package.json` scripts, so `npm run dev` stays `npm run dev`.
 - `kerstel init` on a cloned project that already uses Kerstel prompts for each key your vault is missing, with the echo turned off. Nothing is stored until you apply the plan.
 - `kerstel init` flags for scripts and CI: `--dry-run` (writes nothing, not even to `~/.kerstel`), `--yes`, `--scope`, `--global`, `--keep`, `--non-interactive`, and `--from-stdin`. `--keep` or `--global` naming a key no env file defines gets a warning.
 - `kerstel exec -- <command>`, which runs one command with the runtime hook wired in. `kerstel init` writes it into your scripts.
@@ -31,6 +31,6 @@ The first release: a local-first secrets manager for Node and Bun projects.
 
 ### Changed
 
-- `kerstel init` shows every variable and where it would go, then lets you accept the suggestions with Enter, change a few, or go one by one, with arrow-key menus.
-- `kerstel doctor` groups its checks, shows how to fix each problem, and exits 1 when something is wrong.
+- `kerstel init` shows every variable and where it would go, then lets you accept the suggestions with Enter, change a few, or go one by one, with arrow-key menus. Values appear only as their length, except configuration like `PORT=3000` that stays in plain text.
+- `kerstel doctor` groups its checks, shows how to fix each warning and problem, and exits 1 when something is wrong.
 - Bare `kerstel` lists the commands and exits 0.
