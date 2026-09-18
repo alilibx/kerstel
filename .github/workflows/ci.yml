@@ -56,5 +56,6 @@ jobs:
       - run: bun run --cwd apps/website build
       # docs/ is committed build output. A page edit without a rebuild shows up
       # here as a diff and fails the job, so kerstel.dev can never go stale.
-      - run: git diff --exit-code -- docs/
+      # Stage all changes to docs/ first to catch newly-created files too.
+      - run: git add -A -- docs/ && git diff --cached --exit-code -- docs/
       - run: bun test apps/website
