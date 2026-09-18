@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "license": "MIT",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "//test": "The hook build is inline rather than a `pretest` script. Bun 1.3.10 does honour pre/post lifecycle scripts for `bun run test` (verified, contrary to npm-vs-bun folklore), but `bun test` is a built-in subcommand that never consults package.json scripts at all, so a `pretest` entry would silently do nothing for anyone typing that. Inline is the one form that holds. The build must come first because hook-assets.ts statically imports packages/hook/dist/*.cjs at module load, so on a fresh clone every test that reaches the CLI fails until those two files exist. CI builds them via its own `bun run --cwd packages/cli build` step before calling `bun test`.",
     "test": "bun run --cwd packages/hook build && bun test",
