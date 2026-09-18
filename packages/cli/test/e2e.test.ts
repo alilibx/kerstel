@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -232,3 +232,41 @@ test.if(process.platform !== "win32")(
     expect(stdout).toBe("super-secret-e2e");
   },
 );
+
+test("the binary uninstalls: the project gets its values back and Kerstel is gone", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-uninstall-"));
+  const binDir = mkdtempSync(join(tmpdir(), "kerstel-e2e-uninstall-bin-"));
+  const copy = join(binDir, "kerstel");
+  copyFileSync(BINARY, copy);
+  chmodSync(copy, 0o755);
+
+  const project = mkdtempSync(join(tmpdir(), "kerstel-e2e-uninstall-project-"));
+  const originalEnv = "# local secrets\nAPP_KEY=super-secret-uninstall\nPORT=3000\n";
+  const originalPkg = `${JSON.stringify({ name: "e2e-uninstall", scripts: { start: "node app.js" } }, null, 2)}\n`;
+  await Bun.write(join(project, "package.json"), originalPkg);
+  await Bun.write(join(project, "package-lock.json"), "{}\n");
+  await Bun.write(join(project, ".env"), originalEnv);
+
+  const run = async (args: string[]) => {
+    const proc = Bun.spawn([copy, ...args], { cwd: project, env: env(), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) console.error(stdout + stderr);
+    return { stdout, code };
+  };
+
+  expect((await run(["init", "--yes", "--non-interactive", "--keep", "PORT"])).code).toBe(0);
+  expect(await Bun.file(join(project, ".env")).text()).toContain("kerstel://e2e-uninstall/APP_KEY");
+
+  const result = await run(["uninstall", "--yes"]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).not.toContain("super-secret-uninstall");
+
+  expect(await Bun.file(join(project, ".env")).text()).toBe(originalEnv);
+  expect(await Bun.file(join(project, "package.json")).text()).toBe(originalPkg);
+  expect(existsSync(home)).toBe(false);
+  expect(existsSync(copy)).toBe(false);
+});
