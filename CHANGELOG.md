@@ -10,6 +10,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 - The installer shows a progress bar while downloading, names your platform, ticks off each step, and ends with a short note on what Kerstel does and the three commands to run next. Piped output stays plain, and `NO_COLOR` is respected.
 - `kerstel doctor` no longer tells you to start the daemon by hand. An idle daemon is normal, since it starts on its own the first time a script needs a secret, so `doctor` now reports it as information rather than a warning. Outside a project, or in one that isn't set up yet, `doctor` ends with a short "How it works" note.
 
+### Fixed
+
+- The `kerstel init` overview strips Unicode bidi and zero-width characters from the config values it shows, so a value can no longer reorder or hide the text around it in the terminal. Secret values were never shown.
+
 ## 0.1.0 (2026-09-19)
 
 The first release: a local-first secrets manager for Node and Bun projects.
