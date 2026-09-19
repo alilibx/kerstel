@@ -25,7 +25,6 @@ export interface Choice<T extends string> {
 }
 
 export interface Prompter {
-  confirm(question: string, defaultValue: boolean): Promise<boolean>;
   select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T>;
   multiselect<T extends string>(question: string, choices: Choice<T>[], initial: T[]): Promise<T[]>;
   text(question: string, options?: TextOptions): Promise<string>;
@@ -65,10 +64,6 @@ function settled<T>(value: T | symbol): T {
  * select"), and drops it once answered, which is what spec §4.3 asks for.
  */
 export class ClackPrompter implements Prompter {
-  async confirm(question: string, defaultValue: boolean): Promise<boolean> {
-    return settled<boolean>(await clack.confirm({ message: question, initialValue: defaultValue }));
-  }
-
   async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
     // clack.select's `options` type is a conditional type keyed on its own
     // generic parameter, which TypeScript can't resolve against a
@@ -112,9 +107,9 @@ export class ScriptedPrompter implements Prompter {
   readonly asked: string[] = [];
   private index = 0;
 
-  constructor(private readonly answers: (string | boolean | string[])[]) {}
+  constructor(private readonly answers: (string | string[])[]) {}
 
-  private next(question: string): string | boolean | string[] {
+  private next(question: string): string | string[] {
     this.asked.push(question);
     if (this.index >= this.answers.length) {
       throw new Error(
@@ -122,15 +117,7 @@ export class ScriptedPrompter implements Prompter {
           `Asked so far: ${this.asked.join(" | ")}`,
       );
     }
-    return this.answers[this.index++] as string | boolean | string[];
-  }
-
-  async confirm(question: string, _defaultValue: boolean): Promise<boolean> {
-    const answer = this.next(question);
-    if (typeof answer !== "boolean") {
-      throw new Error(`ScriptedPrompter expected a boolean for "${question}", got ${JSON.stringify(answer)}`);
-    }
-    return answer;
+    return this.answers[this.index++] as string | string[];
   }
 
   async select<T extends string>(question: string, choices: Choice<T>[], _defaultValue: T): Promise<T> {
@@ -166,10 +153,6 @@ export class ScriptedPrompter implements Prompter {
 
 /** `--yes` and `--non-interactive`: every default, no questions. */
 export class DefaultsPrompter implements Prompter {
-  async confirm(_question: string, defaultValue: boolean): Promise<boolean> {
-    return defaultValue;
-  }
-
   async select<T extends string>(_question: string, _choices: Choice<T>[], defaultValue: T): Promise<T> {
     return defaultValue;
   }

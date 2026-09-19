@@ -799,11 +799,6 @@ class CancellingPrompter extends ScriptedPrompter {
     this.remaining -= 1;
   }
 
-  override async confirm(question: string, defaultValue: boolean): Promise<boolean> {
-    this.take();
-    return super.confirm(question, defaultValue);
-  }
-
   override async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
     this.take();
     return super.select(question, choices, defaultValue);
