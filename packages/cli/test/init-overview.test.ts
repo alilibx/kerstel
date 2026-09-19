@@ -93,8 +93,16 @@ test("a shown value loses bidi and zero-width characters, which can reorder or h
   expect(valueColumn("abc\u202edef", true)).toBe("abcdef");
   // Every embedding, override, and isolate, plus the marks that close them.
   expect(valueColumn("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061cx", true)).toBe("x");
-  // Zero-width characters and the byte-order mark: invisible, so a value can look shorter than it is.
+  // Invisible formatters: zero-width characters, word joiner and invisible
+  // operators, soft hyphen, Mongolian vowel separator, and the byte-order mark.
   expect(valueColumn("a\u200bb\u200cc\u200dd\ufeffe", true)).toBe("abcde");
+  expect(valueColumn("a\u2060b\u2061c\u2062d\u2063e\u2064f\u00adg\u180eh", true)).toBe("abcdefgh");
+  // Line and paragraph separators would split the table row in a terminal that honours them.
+  expect(valueColumn("one\u2028two\u2029three", true)).toBe("onetwothree");
+  // The cut at 40 columns is measured AFTER stripping: invisible characters must
+  // neither count towards the width nor push a visible character off the end.
+  const padded = "a\u200b".repeat(40);
+  expect(valueColumn(padded, true)).toBe("a".repeat(40));
   // The masked column never rendered the value, and its length counts every code unit.
   expect(valueColumn("abc\u202edef", false)).toBe("•••• 7 chars");
 });

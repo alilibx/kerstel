@@ -29,12 +29,17 @@ const MAX_VALUE_COLUMNS = 40;
  *     U+2066–U+2069) and the marks U+200E, U+200F, and U+061C, which reorder
  *     the text around them, so `abc<RLO>def` renders as `abcfed` and can swap
  *     the columns after it;
- *   - the zero-width characters U+200B–U+200D and the byte-order mark U+FEFF,
- *     which are invisible, so a value looks shorter than its printed length.
+ *   - the invisible formatters: the zero-width characters U+200B–U+200D, the
+ *     word joiner and invisible operators U+2060–U+2064, the soft hyphen
+ *     U+00AD, the Mongolian vowel separator U+180E, and the byte-order mark
+ *     U+FEFF, so a value cannot look shorter than its printed length;
+ *   - the line and paragraph separators U+2028 and U+2029, which some
+ *     terminals honour as a line break and would split the table row.
  * The masked column (`•••• N chars`) never renders the value, so it needs none
  * of this.
  */
-const UNSAFE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+const UNSAFE_CHARACTERS =
+  /[\u0000-\u001f\u007f-\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 /**
  * A shown value made safe for the terminal: unsafe characters removed, so a
