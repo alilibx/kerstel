@@ -28,6 +28,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] Audit log view ([#11](https://github.com/alilibx/kerstel/issues/11))
 - [ ] Lock and unlock the vault ([#12](https://github.com/alilibx/kerstel/issues/12))
 - [ ] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall` ([#13](https://github.com/alilibx/kerstel/issues/13))
+- [ ] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))
 
 ## Next: access gating
 
