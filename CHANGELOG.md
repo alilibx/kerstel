@@ -10,6 +10,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 - The installer shows a progress bar while downloading, names your platform, ticks off each step, and ends with a short note on what Kerstel does and the three commands to run next. Piped output stays plain, and `NO_COLOR` is respected.
 - `kerstel doctor` no longer tells you to start the daemon by hand. An idle daemon is normal, since it starts on its own the first time a script needs a secret, so `doctor` now reports it as information rather than a warning. Outside a project, or in one that isn't set up yet, `doctor` ends with a short "How it works" note.
 
+### Fixed
+
+- When a session's credential store is not the one holding the vault key, the error now gives advice for the store that actually holds it. A vault keyed in a file names the key file and says to run with `KERSTEL_KEYCHAIN_BACKEND=file`, instead of telling you to unlock the Keychain.
+
 ## 0.1.0 (2026-09-19)
 
 The first release: a local-first secrets manager for Node and Bun projects.

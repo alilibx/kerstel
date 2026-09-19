@@ -11,7 +11,8 @@ import {
   type KeychainBackend,
 } from "../src/vault/keychain";
 import { addPasswordCommand } from "../src/vault/keychain/macos";
-import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, readVaultMeta } from "../src/vault/meta";
+import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, backendMismatchError, readVaultMeta } from "../src/vault/meta";
+import { kerstelHome } from "../src/paths";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 function isolate(): string {
@@ -390,4 +391,38 @@ test("an explicit rotate is still allowed to replace the key", async () => {
   const rotated = Buffer.alloc(32, 4);
   await backend.set(rotated, { rotate: true });
   expect((await backend.get())?.equals(rotated)).toBe(true);
+});
+
+test("the mismatch advice matches the store that holds the key", () => {
+  isolate();
+  // A vault keyed in the macOS Keychain, opened over SSH: the Keychain is the
+  // thing to unlock.
+  const macos = backendMismatchError("macos", "file").message;
+  expect(macos).toContain("macOS Keychain");
+  expect(macos).toContain("Unlock");
+  expect(macos).not.toContain("KERSTEL_KEYCHAIN_BACKEND");
+
+  // A vault keyed in the Secret Service or the Credential Manager gets the
+  // same shape of advice for its own store, never the Keychain's.
+  const linux = backendMismatchError("linux", "file").message;
+  expect(linux).toContain("Secret Service");
+  expect(linux).not.toContain("Keychain");
+  const windows = backendMismatchError("windows", "file").message;
+  expect(windows).toContain("Credential Manager");
+  expect(windows).not.toContain("Keychain");
+
+  // A vault keyed in a file, opened from a session where the native store IS
+  // reachable: the file is right here, so "unlock it" and "run from a GUI
+  // session" are both wrong. The fix is to pin the backend to the file.
+  const file = backendMismatchError("file", "macos").message;
+  expect(file).toContain(join(kerstelHome(), "vault.key"));
+  expect(file).toContain("KERSTEL_KEYCHAIN_BACKEND=file");
+  expect(file).not.toContain("not reachable");
+  expect(file).not.toContain("Unlock");
+  expect(file).not.toContain("GUI session");
+
+  // A vault that predates vault_meta cannot say which store minted its key.
+  const unknown = backendMismatchError("another", "file").message;
+  expect(unknown).toContain("doctor");
+  expect(unknown).not.toContain("Unlock");
 });
