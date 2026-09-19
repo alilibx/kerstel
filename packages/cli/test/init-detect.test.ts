@@ -60,13 +60,24 @@ test("editor and shell backup copies are not env files", () => {
     ".env.rej",
     ".env.local.bak",
     ".env.production.swp",
+    ".env~",
     ".env.local~",
     ".env.bak.local",
   ]) {
     expect(isEnvFileName(name)).toBe(false);
     expect(isBackupEnvFileName(name)).toBe(true);
   }
-  for (const name of [".env", ".env.local", ".env.production.local", ".env.example", ".envrc", "notes.bak"]) {
+  for (const name of [
+    ".env",
+    ".env.local",
+    ".env.production.local",
+    ".env.example",
+    ".envrc",
+    ".envrc~",
+    ".env.~",
+    "notes.bak",
+    "~",
+  ]) {
     expect(isBackupEnvFileName(name)).toBe(false);
   }
 });

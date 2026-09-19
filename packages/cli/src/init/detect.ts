@@ -60,8 +60,10 @@ function withoutLocal(name: string): string {
 
 /** An `.env*` name that is a backup copy rather than a file any loader reads. */
 export function isBackupEnvFileName(name: string): boolean {
-  if (!name.startsWith(".env")) return false;
-  if (name.endsWith("~")) return true;
+  // `.env~` and `.env.local~` are Emacs and Vim backups of env files; `.envrc~`
+  // is a backup of something Kerstel never reads, so judge the name under the
+  // tilde, not the tilde alone.
+  if (name.endsWith("~")) return hasEnvPrefix(name.slice(0, -1));
   if (!hasEnvPrefix(name)) return false;
   const base = withoutLocal(name);
   return BACKUP_SUFFIXES.some((suffix) => base.endsWith(suffix));
