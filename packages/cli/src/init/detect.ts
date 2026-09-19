@@ -28,18 +28,51 @@ export interface DetectedProject {
   envFiles: EnvFileInfo[];
   /** `.env*` names that could not be read, such as a dangling symlink. */
   unreadableEnvFiles: string[];
+  /**
+   * `.env*` names that are editor or shell backup copies (`.env.bak`,
+   * `.env.swp`, `.env.local~`). Skipped, and named so the user can delete the
+   * plaintext they most likely still hold.
+   */
+  backupEnvFiles: string[];
 }
 
 /** Names that are templates for humans, never sources of real values. */
 const TEMPLATE_SUFFIXES = [".example", ".sample", ".template", ".dist"];
 
+/**
+ * Suffixes editors, `patch`, `cp -b`, and people leave behind. A copy like
+ * `.env.bak` is not an environment any loader reads, and treating it as one
+ * did two wrong things at once: its stale value outranked `.env` (rank 1 beats
+ * rank 0), so the wrong secret went into the vault, and a Vim swap file got
+ * parsed and rewritten in place.
+ */
+const BACKUP_SUFFIXES = [".bak", ".orig", ".old", ".save", ".backup", ".swp", ".swo", ".tmp", ".rej"];
+
+/** `.env` or `.env.<something>`, before any template or backup judgement. */
+function hasEnvPrefix(name: string): boolean {
+  return name === ".env" || (name.startsWith(".env.") && name !== ".env.");
+}
+
+/** Judge a name without its `.local` suffix: `.env.example.local` is still a template. */
+function withoutLocal(name: string): string {
+  return name.endsWith(".local") ? name.slice(0, -".local".length) : name;
+}
+
+/** An `.env*` name that is a backup copy rather than a file any loader reads. */
+export function isBackupEnvFileName(name: string): boolean {
+  // `.env~` and `.env.local~` are Emacs and Vim backups of env files; `.envrc~`
+  // is a backup of something Kerstel never reads, so judge the name under the
+  // tilde, not the tilde alone.
+  if (name.endsWith("~")) return hasEnvPrefix(name.slice(0, -1));
+  if (!hasEnvPrefix(name)) return false;
+  const base = withoutLocal(name);
+  return BACKUP_SUFFIXES.some((suffix) => base.endsWith(suffix));
+}
+
 export function isEnvFileName(name: string): boolean {
-  if (name !== ".env" && !name.startsWith(".env.")) return false;
-  if (name === ".env.") return false;
-  // `.env.example.local` is a developer's local copy of a template, and still
-  // a template: judge the name without its `.local` suffix.
-  const base = name.endsWith(".local") ? name.slice(0, -".local".length) : name;
-  return !TEMPLATE_SUFFIXES.some((suffix) => base.endsWith(suffix));
+  if (!hasEnvPrefix(name)) return false;
+  if (isBackupEnvFileName(name)) return false;
+  return !TEMPLATE_SUFFIXES.some((suffix) => withoutLocal(name).endsWith(suffix));
 }
 
 /**
@@ -60,6 +93,7 @@ export function envFileRank(name: string): number {
 interface EnvFileScan {
   found: EnvFileInfo[];
   unreadable: string[];
+  backups: string[];
 }
 
 function scanEnvFiles(root: string): EnvFileScan {
@@ -67,13 +101,15 @@ function scanEnvFiles(root: string): EnvFileScan {
   try {
     names = readdirSync(root);
   } catch {
-    return { found: [], unreadable: [] };
+    return { found: [], unreadable: [], backups: [] };
   }
 
   const found: EnvFileInfo[] = [];
   const unreadable: string[] = [];
+  const backups: string[] = [];
   for (const name of names) {
-    if (!isEnvFileName(name)) continue;
+    const backup = isBackupEnvFileName(name);
+    if (!backup && !isEnvFileName(name)) continue;
     const path = join(root, name);
     try {
       // A directory called `.env.d` is a real thing in some setups; reading it
@@ -82,16 +118,18 @@ function scanEnvFiles(root: string): EnvFileScan {
     } catch {
       // statSync follows symlinks, so a dangling one lands here. It names an
       // env file the user expects to be migrated, so it is reported, not hidden.
-      unreadable.push(name);
+      // A dangling backup holds nothing, so it is not worth a line.
+      if (!backup) unreadable.push(name);
       continue;
     }
-    found.push({ name, path, rank: envFileRank(name) });
+    if (backup) backups.push(name);
+    else found.push({ name, path, rank: envFileRank(name) });
   }
 
   // Rank descending, then name ascending so the order is stable across
   // filesystems that do not enumerate in a fixed order.
   found.sort((a, b) => b.rank - a.rank || a.name.localeCompare(b.name));
-  return { found, unreadable: unreadable.sort() };
+  return { found, unreadable: unreadable.sort(), backups: backups.sort() };
 }
 
 export function discoverEnvFiles(root: string): EnvFileInfo[] {
@@ -184,5 +222,6 @@ export function detectProject(root: string): DetectedProject {
     framework: detectFramework(packageJson),
     envFiles: envScan.found,
     unreadableEnvFiles: envScan.unreadable,
+    backupEnvFiles: envScan.backups,
   };
 }
