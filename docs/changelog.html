@@ -56,6 +56,8 @@
 <div class="release-body">
 <section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
 <li>The <a href="https://kerstel.dev/changelog">changelog</a> on kerstel.dev is a timeline, one entry per release, with the 0.1.0 release video at the top.</li>
+<li>The installer shows a progress bar while downloading, names your platform, ticks off each step, and ends with a short note on what Kerstel does and the three commands to run next. Piped output stays plain, and <code>NO_COLOR</code> is respected.</li>
+<li><code>kerstel doctor</code> no longer tells you to start the daemon by hand. An idle daemon is normal, since it starts on its own the first time a script needs a secret, so <code>doctor</code> now reports it as information rather than a warning. Outside a project, or in one that isn&#39;t set up yet, <code>doctor</code> ends with a short &quot;How it works&quot; note.</li>
 </ul></section>
 </div>
 </li>

@@ -14,7 +14,7 @@ order: 1
 curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
-The installer downloads the binary for your Mac or Linux machine, checks it against the SHA-256 checksum published with the release, and puts it at `~/.local/bin/kerstel`. It never uses `sudo` and never touches your vault. If `~/.local/bin` is not on your `PATH`, it prints the line to add.
+The installer downloads the binary for your Mac or Linux machine with a progress bar, checks it against the SHA-256 checksum published with the release, and puts it at `~/.local/bin/kerstel`. It ends with a short note on what Kerstel does and the three commands to run next. Piped into a log, or with `NO_COLOR` set, it prints plain lines instead. It never uses `sudo` and never touches your vault. If `~/.local/bin` is not on your `PATH`, it prints the line to add.
 
 The installer also adds `ks`, a shortcut for `kerstel` in the same directory. The rest of this guide uses `ks` — it's the same binary, so anywhere you see `ks` you can type `kerstel` instead. If something else on your machine is already called `ks`, the installer leaves it alone and tells you to use `kerstel`.
 
@@ -70,7 +70,7 @@ Projects wired with the runtime hook skip both steps: the hook resolves `kerstel
 ks doctor
 ```
 
-`doctor` groups its checks under **This machine** (vault, daemon, runtime hook, file permissions, and whether `ks` is on your `PATH`) and, inside a project, **This project** (scripts wired, references that resolve, and any env file it could not read). Each warning or problem prints a `Fix:` line naming the command that resolves it. Add `--verbose` for the paths and permission modes behind each check. `doctor` exits `1` if any check reports a problem, `0` otherwise — a warning alone still exits `0`. See the [CLI reference](/docs/cli) for what each check reports.
+`doctor` groups its checks under **This machine** (vault, daemon, runtime hook, file permissions, and whether `ks` is on your `PATH`) and, inside a project, **This project** (scripts wired, references that resolve, and any env file it could not read). Each warning or problem prints a `Fix:` line naming the command that resolves it. An idle daemon is not a warning: it starts on its own the first time a script needs a secret, so `doctor` reports it as `·  Daemon  idle`. Outside a project, or in one you haven't run `ks init` in yet, `doctor` ends with a short **How it works** note. Add `--verbose` for the paths and permission modes behind each check. `doctor` exits `1` if any check reports a problem, `0` otherwise — a warning alone still exits `0`. See the [CLI reference](/docs/cli) for what each check reports.
 
 ## Set up a project
 

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { howItWorksNote } from "../src/commands/doctor";
 import { backendLabel, exitCode, gatherChecks, type DoctorFacts } from "../src/doctor/checks";
 import type { ProjectStatus } from "../src/init/status";
 
@@ -103,20 +104,15 @@ test("Daemon pass: running", () => {
   });
 });
 
-test("Daemon warn: not running, fix uses the invoked name", () => {
+test("Daemon info: idle is the normal state, not a warning, and needs no fix", () => {
   const checks = gatherChecks(allPassFacts({ daemonRunning: false, cli: "ks" }));
   expect(checkFor(checks, "Daemon")).toEqual({
     group: "machine",
-    status: "warn",
+    status: "info",
     label: "Daemon",
-    detail: "not running",
-    fix: "ks daemon start",
+    detail: "idle — starts on its own the first time a script needs a secret",
   });
-});
-
-test("Daemon warn: fix says kerstel when invoked as kerstel", () => {
-  const checks = gatherChecks(allPassFacts({ daemonRunning: false, cli: "kerstel" }));
-  expect(checkFor(checks, "Daemon")?.fix).toBe("kerstel daemon start");
+  expect(exitCode(checks)).toBe(0);
 });
 
 test("Runtime hook pass: installed", () => {
@@ -340,7 +336,9 @@ test("every warning and problem carries a Fix line", () => {
       const checks = gatherChecks(
         allPassFacts({ backend: "file", platform, shortcut, daemonRunning: false, hook: { installed: false } }),
       );
-      for (const check of checks.filter((c) => c.status !== "pass")) expect(check.fix).toBeTruthy();
+      for (const check of checks.filter((c) => c.status === "warn" || c.status === "problem")) {
+        expect(check.fix).toBeTruthy();
+      }
     }
   }
 });
@@ -357,4 +355,16 @@ test("Permissions fix quotes a path the shell would split", () => {
     }),
   );
   expect(checkFor(checks, "Permissions")?.fix).toBe(`chmod 0700 '${spaced}'`);
+});
+
+test("the how-it-works note appears outside a project and in an unwired one, never in a wired one", () => {
+  const outside = howItWorksNote({ project: null, cli: "ks" });
+  expect(outside).toContain("starts on its own");
+  expect(outside).toContain("Run `ks init` inside a project");
+
+  const unwired = howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 2, wired: 0 } }, cli: "kerstel" });
+  expect(unwired).toContain("`kerstel init`");
+  expect(unwired).not.toContain("inside a project to get started");
+
+  expect(howItWorksNote({ project: passingProject, cli: "ks" })).toBeNull();
 });
