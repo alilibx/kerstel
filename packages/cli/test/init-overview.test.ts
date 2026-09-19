@@ -87,3 +87,14 @@ test("a shown value loses its control characters and is cut at 40 columns", () =
   expect(valueColumn("a".repeat(40), true)).toBe("a".repeat(40));
   expect(valueColumn(long, false)).toBe("•••• 60 chars");
 });
+
+test("a shown value loses bidi and zero-width characters, which can reorder or hide text", () => {
+  // Right-to-left override: rendered, "abc" reads as "cba" and the line after it is reversed.
+  expect(valueColumn("abc\u202edef", true)).toBe("abcdef");
+  // Every embedding, override, and isolate, plus the marks that close them.
+  expect(valueColumn("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061cx", true)).toBe("x");
+  // Zero-width characters and the byte-order mark: invisible, so a value can look shorter than it is.
+  expect(valueColumn("a\u200bb\u200cc\u200dd\ufeffe", true)).toBe("abcde");
+  // The masked column never rendered the value, and its length counts every code unit.
+  expect(valueColumn("abc\u202edef", false)).toBe("•••• 7 chars");
+});
