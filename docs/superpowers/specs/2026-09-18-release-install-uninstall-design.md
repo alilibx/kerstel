@@ -19,11 +19,13 @@ Anyone on macOS or Linux can install Kerstel with one command, and remove it wit
 | `uninstall` scope | The whole machine: every registered project, then all Kerstel data, then the binary. |
 | Restore source | Current vault values, not the encrypted backups. |
 
-Out of scope: Windows binaries and `install.ps1`, musl (Alpine) builds, macOS notarization, Homebrew, and auto-update.
+Out of scope: Windows binaries and `install.ps1`, musl (Alpine) builds, macOS notarization, and Homebrew. Auto-update was out of scope for 0.1.0; 0.1.1 added `kerstel update [--check]`, which repeats the installer's steps (download the asset and `SHA256SUMS`, verify, stage next to the binary, rename over it) from inside the CLI, and stops a running daemon afterwards so the next resolution starts the new binary.
 
 ## 3. `kerstel --version`
 
 A new top-level flag (and `kerstel version`) prints the version from `packages/cli/package.json`, imported at build time so the compiled binary carries it. Output is the bare version, `0.1.0`, so scripts can compare it.
+
+Since 0.1.1, when stdout is a terminal it also asks GitHub Releases for the newest version (one `HEAD` on `/releases/latest`, reading the redirect, 3s timeout) and writes one dim line to stderr: `Up to date.`, `<version> is available. Run <cli> update.`, or `Could not check for updates.` Stdout stays the bare version, and piped output never touches the network, so the installer and the release smoke tests are unaffected. `KERSTEL_RELEASES_URL` redirects the lookup to a mirror; the test suite points it at a refused port.
 
 ## 4. Release pipeline
 
