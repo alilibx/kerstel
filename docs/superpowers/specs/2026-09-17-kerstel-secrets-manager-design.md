@@ -10,7 +10,7 @@
 
 ## 2. Product statement
 
-Kerstel is a local-first secrets manager for Node and Bun projects. Secrets live in an encrypted vault on the developer's machine, unlocked via the OS credential store. `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. A setup wizard migrates projects without changing how the developer works: `npm run dev` stays `npm run dev`. A local web portal manages the vault. No account, no cloud, no telemetry, no AI — fully deterministic and offline.
+Kerstel is a local-first secrets manager for Node and Bun projects. Secrets live in an encrypted vault on the developer's machine, unlocked via the OS credential store. `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. A setup wizard migrates projects without changing how the developer works: `npm run dev` stays `npm run dev`. A local web portal manages the vault. No account, no cloud, no telemetry, no AI — fully deterministic, and offline apart from the update check that `update`, `--version` on a terminal, and `doctor` make against GitHub Releases (added in 0.1.1).
 
 **Non-goals for the first release (0.1.0):** cloud sync, team sharing, environments (dev/staging/prod), per-process access approval. All are roadmap items the first release's architecture must not block (see §10).
 
