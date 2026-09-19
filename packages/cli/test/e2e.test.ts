@@ -47,6 +47,16 @@ afterEach(async () => {
   await kerstel(["daemon", "stop"]);
 });
 
+/** Polls until `condition` holds, up to `timeoutMs`. Returns whether it did. */
+async function eventually(condition: () => boolean, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (condition()) return true;
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(25);
+  }
+}
+
 test("the compiled binary stores and lists a secret", async () => {
   home = mkdtempSync(join(tmpdir(), "kerstel-e2e-"));
   expect((await kerstel(["set", "global/OPENAI_API_KEY", "--value", "sk-e2e"])).code).toBe(0);
@@ -229,7 +239,11 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   expect(first.length).toBeGreaterThan(20);
 
   expect((await kerstel(["daemon", "stop"])).code).toBe(0);
-  expect(existsSync(tokenFile)).toBe(false);
+  // `daemon stop` waits for the socket to stop answering, which is deliberately
+  // not the same as the daemon process having finished exiting; the token is
+  // removed on the way out, just after. Wait for the exit rather than assuming
+  // a speed: a busy CI runner loses that race where a laptop wins it.
+  expect(await eventually(() => !existsSync(tokenFile))).toBe(true);
 
   expect((await kerstel(["daemon", "start"])).code).toBe(0);
   const second = (await Bun.file(tokenFile).text()).trim();
