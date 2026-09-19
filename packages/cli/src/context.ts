@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { ensureToken } from "./daemon/token";
 import { installHookAssets, type HookInstallResult } from "./hook-assets";
 import { ensureHome, vaultPath } from "./paths";
 import { cliName } from "./ui/cli-name";
@@ -26,7 +25,6 @@ export interface CliContext {
    * stored". The vault object already closes over the same bytes.
    */
   dataKey: Buffer;
-  token: string;
   /** True when this call created the vault key for the first time. */
   firstRun: boolean;
   /** Directory the runtime hook was installed into. */
@@ -102,7 +100,6 @@ export async function openContext(): Promise<CliContext> {
       vault,
       backend: backend.name,
       dataKey: key,
-      token: ensureToken(),
       firstRun: created,
       hookDir: hookInstall.dir,
       hookInstall,

@@ -30,6 +30,21 @@ export function clearToken(): void {
   rmSync(tokenPath(), { force: true });
 }
 
+/**
+ * Removes the token file only when it still holds `expected`.
+ *
+ * A daemon clears its token as it stops. It must not clear a SUCCESSOR's: two
+ * daemons can briefly overlap (`startDaemon` takes over an existing socket
+ * path, so a second `daemon serve` binds over the first), and an unconditional
+ * delete by the one that exits first would leave the survivor listening with a
+ * token no client can read. Comparing first means a daemon only ever removes
+ * what it wrote.
+ */
+export function clearTokenIf(expected: string): void {
+  if (readToken() !== expected) return;
+  clearToken();
+}
+
 /** Returns the existing session token, creating one when absent. */
 export function ensureToken(): string {
   return readToken() ?? writeToken(createToken());
