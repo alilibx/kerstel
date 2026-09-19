@@ -1,3 +1,5 @@
+import { accessSync, constants, statSync } from "node:fs";
+import { join } from "node:path";
 import { cliName } from "../../ui/cli-name";
 
 export interface ExecResult {
@@ -13,39 +15,93 @@ export interface ExecResult {
  * `kerstel exec` is what `init` writes into every package script. A dependency
  * that declared `"bin": {"security": "./steal.js"}` would otherwise run in
  * place of the real tool the next time a script opened the vault, and read the
- * data key straight off the pipe. Only root-owned system directories qualify.
+ * data key straight off the pipe.
+ *
+ * Listing a directory here is not enough on its own: `resolveHelperIn` also
+ * checks that the directory and the file are owned by root and writable by
+ * nobody else, so a `/usr/local/bin` that someone chowned to themselves is
+ * skipped rather than trusted.
  */
-export function trustedPath(): string {
+export function trustedDirs(): string[] {
   switch (process.platform) {
     case "darwin":
-      return "/usr/bin:/bin";
+      return ["/usr/bin", "/bin"];
     case "win32": {
-      const root = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
-      return `${root}\\System32\\WindowsPowerShell\\v1.0;${root}\\System32`;
+      // A fixed root, on purpose. `SystemRoot` and `windir` come from the
+      // caller's environment, and the caller is who this guards against.
+      const root = "C:\\Windows";
+      return [`${root}\\System32\\WindowsPowerShell\\v1.0`, `${root}\\System32`];
     }
     default:
       // /usr/local/bin for a distro-less install from source; NixOS and Guix
-      // link their system profiles under /run/current-system. All root-owned.
-      return "/usr/bin:/bin:/usr/local/bin:/run/current-system/sw/bin:/run/current-system/profile/bin";
+      // link their system profiles under /run/current-system.
+      return ["/usr/bin", "/bin", "/usr/local/bin", "/run/current-system/sw/bin", "/run/current-system/profile/bin"];
+  }
+}
+
+/** `trustedDirs()` as one search-path string, for messages. */
+export function trustedPath(): string {
+  return trustedDirs().join(process.platform === "win32" ? ";" : ":");
+}
+
+/**
+ * Owned by root and writable only by root. `statSync` follows symlinks, so a
+ * NixOS or Guix profile link is judged by the root-owned store path it points
+ * at. Windows has no POSIX ownership; there the fixed drive-letter root in
+ * `trustedDirs` is the whole guarantee.
+ */
+function isSystemOwned(path: string): boolean {
+  if (process.platform === "win32") return true;
+  try {
+    const stat = statSync(path);
+    return stat.uid === 0 && (stat.mode & 0o022) === 0;
+  } catch {
+    return false;
   }
 }
 
 /**
- * The absolute path of a helper by bare name, searched only in
- * `trustedPath()`, or null when no trusted directory has it. Anything with a
- * path separator is refused: callers name tools, they never point at files.
+ * The absolute path of a helper by bare name, searched only in `dirs`, or null
+ * when none holds an executable of that name that passes `isSystemOwned` for
+ * both the directory and the file. Anything with a path separator is refused:
+ * callers name tools, they never point at files.
  */
-export function resolveHelper(name: string): string | null {
+export function resolveHelperIn(name: string, dirs: string[]): string | null {
   if (name.length === 0 || name.includes("/") || name.includes("\\")) return null;
-  return Bun.which(name, { PATH: trustedPath() }) ?? null;
+  for (const dir of dirs) {
+    const candidates = process.platform === "win32" ? [join(dir, `${name}.exe`), join(dir, name)] : [join(dir, name)];
+    for (const path of candidates) {
+      let file;
+      try {
+        file = statSync(path);
+      } catch {
+        continue;
+      }
+      if (!file.isFile()) continue;
+      try {
+        accessSync(path, constants.X_OK);
+      } catch {
+        continue;
+      }
+      if (!isSystemOwned(dir) || !isSystemOwned(path)) continue;
+      return path;
+    }
+  }
+  return null;
+}
+
+/** `resolveHelperIn` over `trustedDirs()`. */
+export function resolveHelper(name: string): string | null {
+  return resolveHelperIn(name, trustedDirs());
 }
 
 /** The error for a helper that no trusted directory holds, with the way out. */
 export function helperNotFoundError(name: string): Error {
   return new Error(
-    `${name} was not found in ${trustedPath()}. Kerstel looks for it only there, never on PATH. ` +
-      `Install it under one of those directories, or set KERSTEL_KEYCHAIN_BACKEND=file to keep the ` +
-      `vault key in a 0600 file instead; \`${cliName()} doctor\` shows which store this vault uses.`,
+    `${name} was not found in ${trustedPath()}. Kerstel runs it only from one of those directories, ` +
+      `and only when the directory and the file are owned by root and writable by nobody else; it never ` +
+      `looks on PATH. Install it there, or set KERSTEL_KEYCHAIN_BACKEND=file to keep the vault key in a ` +
+      `0600 file instead; \`${cliName()} doctor\` shows which store this vault uses.`,
   );
 }
 

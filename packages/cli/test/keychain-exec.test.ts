@@ -2,10 +2,21 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandExists, resolveHelper, run, trustedPath } from "../src/vault/keychain/exec";
+import {
+  commandExists,
+  resolveHelper,
+  resolveHelperIn,
+  run,
+  trustedDirs,
+  trustedPath,
+} from "../src/vault/keychain/exec";
 
 const originalPath = process.env.PATH;
 const created: string[] = [];
+const posix = process.platform !== "win32";
+// Root owns everything it creates, so the ownership tests would pass for the
+// wrong reason under sudo or in a root container.
+const posixNonRoot = posix && process.getuid?.() !== 0;
 
 afterEach(() => {
   process.env.PATH = originalPath;
@@ -25,7 +36,7 @@ function shadowDir(name: string): string {
   return dir;
 }
 
-test.if(process.platform !== "win32")("a helper that exists only on the caller's PATH is never used", async () => {
+test.if(posix)("a helper that exists only on the caller's PATH is never used", async () => {
   const dir = shadowDir("kerstel-fake-helper");
   process.env.PATH = `${dir}:${process.env.PATH}`;
 
@@ -37,15 +48,24 @@ test.if(process.platform !== "win32")("a helper that exists only on the caller's
   await expect(run(["kerstel-fake-helper"])).rejects.toThrow(/kerstel-fake-helper/);
 });
 
-test.if(process.platform !== "win32")("the trusted search path holds only system directories", () => {
-  for (const dir of trustedPath().split(":")) {
+test.if(posixNonRoot)("a directory the user owns is not trusted even when it is listed", () => {
+  const dir = shadowDir("kerstel-fake-helper");
+  // Same name, same executable bit, but the directory and file belong to the
+  // test user rather than root: a chowned /usr/local/bin looks exactly like this.
+  expect(resolveHelperIn("kerstel-fake-helper", [dir])).toBeNull();
+  expect(resolveHelperIn("kerstel-fake-helper", [dir, "/bin"])).toBeNull();
+});
+
+test.if(posix)("the trusted directories are fixed system paths", () => {
+  for (const dir of trustedDirs()) {
     expect(dir.startsWith("/")).toBe(true);
     expect(dir).not.toContain("node_modules");
     expect(dir.startsWith(tmpdir())).toBe(false);
   }
+  expect(trustedPath()).toBe(trustedDirs().join(":"));
 });
 
-test.if(process.platform !== "win32")("a system binary resolves to its trusted directory even when a shadow comes first on PATH", async () => {
+test.if(posix)("a system binary resolves to its trusted directory even when a shadow comes first on PATH", async () => {
   const dir = shadowDir("sh");
   process.env.PATH = `${dir}:${process.env.PATH}`;
 
@@ -73,6 +93,8 @@ test.if(process.platform === "darwin")("security resolves to /usr/bin even when 
   expect(res.stdout + res.stderr).not.toContain("SHADOWED");
 });
 
-test("an absolute path is not accepted as a helper name", () => {
+test("a path is not accepted as a helper name", () => {
   expect(resolveHelper("/bin/sh")).toBeNull();
+  expect(resolveHelper("bin/sh")).toBeNull();
+  expect(resolveHelper("")).toBeNull();
 });
