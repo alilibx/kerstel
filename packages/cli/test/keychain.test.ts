@@ -10,9 +10,9 @@ import {
   serviceName,
   type KeychainBackend,
 } from "../src/vault/keychain";
+import { keyFilePath } from "../src/vault/keychain/file";
 import { addPasswordCommand } from "../src/vault/keychain/macos";
 import { META_KEYCHAIN_BACKEND, META_KEY_CHECK, backendMismatchError, readVaultMeta } from "../src/vault/meta";
-import { kerstelHome } from "../src/paths";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 function isolate(): string {
@@ -395,6 +395,9 @@ test("an explicit rotate is still allowed to replace the key", async () => {
 
 test("the mismatch advice matches the store that holds the key", () => {
   isolate();
+  // `isolate()` forces the file backend through the variable; this test is
+  // about the selection falling through on its own, so clear it.
+  delete process.env.KERSTEL_KEYCHAIN_BACKEND;
   // A vault keyed in the macOS Keychain, opened over SSH: the Keychain is the
   // thing to unlock.
   const macos = backendMismatchError("macos", "file").message;
@@ -415,7 +418,7 @@ test("the mismatch advice matches the store that holds the key", () => {
   // reachable: the file is right here, so "unlock it" and "run from a GUI
   // session" are both wrong. The fix is to pin the backend to the file.
   const file = backendMismatchError("file", "macos").message;
-  expect(file).toContain(join(kerstelHome(), "vault.key"));
+  expect(file).toContain(keyFilePath());
   expect(file).toContain("KERSTEL_KEYCHAIN_BACKEND=file");
   expect(file).not.toContain("not reachable");
   expect(file).not.toContain("Unlock");
@@ -425,4 +428,29 @@ test("the mismatch advice matches the store that holds the key", () => {
   const unknown = backendMismatchError("another", "file").message;
   expect(unknown).toContain("doctor");
   expect(unknown).not.toContain("Unlock");
+});
+
+test("a mismatch forced by KERSTEL_KEYCHAIN_BACKEND names the variable, not an unreachable store", () => {
+  isolate();
+  // A GUI session with the Keychain unlocked, and the variable pointing at the
+  // file backend anyway: the store IS reachable, so "unlock it" is wrong, and
+  // the fix is the variable.
+  process.env.KERSTEL_KEYCHAIN_BACKEND = "file";
+  const forced = backendMismatchError("macos", "file").message;
+  expect(forced).toContain("macOS Keychain");
+  expect(forced).toContain("KERSTEL_KEYCHAIN_BACKEND=file");
+  expect(forced).toContain('set it to "macos"');
+  expect(forced).not.toContain("not reachable");
+  expect(forced).not.toContain("Unlock");
+
+  // The variable naming some OTHER backend than the one selected is not what
+  // caused this mismatch, so the unreachable-store advice stands.
+  process.env.KERSTEL_KEYCHAIN_BACKEND = "linux";
+  expect(backendMismatchError("macos", "file").message).toContain("not reachable");
+
+  // A file-keyed vault under a forced native backend keeps the file advice.
+  process.env.KERSTEL_KEYCHAIN_BACKEND = "macos";
+  const file = backendMismatchError("file", "macos").message;
+  expect(file).toContain("KERSTEL_KEYCHAIN_BACKEND=file");
+  expect(file).not.toContain("Unset");
 });

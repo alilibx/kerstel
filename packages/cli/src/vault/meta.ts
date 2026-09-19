@@ -1,9 +1,8 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { kerstelHome } from "../paths";
 import { cliName } from "../ui/cli-name";
 import { decrypt, encrypt } from "./crypto";
+import { keyFilePath } from "./keychain/file";
 
 /** Which credential store minted the data key this vault is encrypted with. */
 export const META_KEYCHAIN_BACKEND = "keychain_backend";
@@ -117,6 +116,11 @@ export function verifyKeyCheck(stored: string, dataKey: Buffer): boolean {
  * so selection preferred it. Telling that user to "unlock the Keychain" sends
  * them to a store that has never held their key. The truthful fix is to pin
  * the backend to the file, the same advice `kerstel doctor` gives.
+ *
+ * A third case sits across both: `KERSTEL_KEYCHAIN_BACKEND` forced the
+ * selection, so the native store may be perfectly reachable. Then the store is
+ * not "unreachable" and the fix is the variable, which `selectBackend` reads
+ * and this error reads again so it can name it.
  */
 export function backendMismatchError(recorded: string, selected: string): Error {
   const consequence =
@@ -124,11 +128,11 @@ export function backendMismatchError(recorded: string, selected: string): Error 
     "different key: every secret already in the vault would fail to decrypt, and anything " +
     "stored now would be unreadable from your normal session.";
   const refusal = "Kerstel will not create a second key.";
+  const forced = process.env.KERSTEL_KEYCHAIN_BACKEND === selected;
 
   if (recorded === "file") {
-    const keyFile = join(kerstelHome(), "vault.key");
     return new Error(
-      `Kerstel's vault key lives in the file ${keyFile}, because that is where it was created. ` +
+      `Kerstel's vault key lives in the file ${keyFilePath()}, because that is where it was created. ` +
         `${consequence} Run this command with KERSTEL_KEYCHAIN_BACKEND=file, and keep that set ` +
         `in your shell profile so every session opens the vault with the same key. ${refusal}`,
     );
@@ -137,23 +141,37 @@ export function backendMismatchError(recorded: string, selected: string): Error 
   const native =
     recorded === "macos"
       ? {
-          where: "the macOS Keychain, which is not reachable in this session (locked keychain / no GUI)",
+          store: "the macOS Keychain",
+          unreachable: "locked keychain / no GUI",
           fix: "Unlock your login keychain, or run from a GUI session.",
         }
       : recorded === "linux"
         ? {
-            where: "the Secret Service, which is not reachable in this session (no D-Bus session bus)",
+            store: "the Secret Service",
+            unreachable: "no D-Bus session bus",
             fix: "Run from a desktop session, or one with a D-Bus session bus and a Secret Service provider.",
           }
         : recorded === "windows"
           ? {
-              where: "the Windows Credential Manager, which is not reachable in this session",
+              store: "the Windows Credential Manager",
+              unreachable: null,
               fix: "Run from the Windows session of the user who set Kerstel up.",
             }
           : null;
 
+  if (native && forced) {
+    return new Error(
+      `Kerstel's vault key was created in ${native.store}, but KERSTEL_KEYCHAIN_BACKEND=${selected} ` +
+        `is set in this session. ${consequence} Unset KERSTEL_KEYCHAIN_BACKEND, or set it to ` +
+        `"${recorded}". ${refusal}`,
+    );
+  }
+
   if (native) {
-    return new Error(`Kerstel's vault key was created in ${native.where}. ${consequence} ${native.fix} ${refusal}`);
+    const where = native.unreachable
+      ? `${native.store}, which is not reachable in this session (${native.unreachable})`
+      : `${native.store}, which is not reachable in this session`;
+    return new Error(`Kerstel's vault key was created in ${where}. ${consequence} ${native.fix} ${refusal}`);
   }
 
   // A vault from before vault_meta, whose secrets a brand-new key cannot
