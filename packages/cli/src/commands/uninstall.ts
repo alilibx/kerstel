@@ -1,6 +1,6 @@
-import { accessSync, constants, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
@@ -52,38 +52,74 @@ export function parseUninstallArgs(args: string[]): UninstallOptions | { error: 
   return options;
 }
 
+export interface LinkSearch {
+  /**
+   * The path the binary was invoked through (`process.argv0`). Bun resolves
+   * symlinks into `process.execPath`, so this is the only record of the folder
+   * the user's `kerstel` link lives in when that folder is not on PATH.
+   */
+  invokedAs?: string;
+  /** Folders to search for links, `PATH` split on the platform delimiter by default. */
+  pathDirs?: string[];
+}
+
+/** The names install.sh creates: the binary or a link to it, and the shortcut. */
+const LINK_NAMES = ["kerstel", "ks"] as const;
+
 /**
- * Removes `<dirname(binaryPath)>/ks` when, and only when, it is a symlink
- * that resolves to the binary being removed. Both sides go through
- * `realpathSync` before comparing: on macOS `/tmp` (and the test runner's own
- * tmpdir) is a symlink into `/private/tmp`, so a bare string comparison of
- * the raw resolved target against `binaryPath` would false-negative even for
- * a link this installer created.
+ * Removes every `kerstel` and `ks` symlink that resolves to `binaryPath`, in
+ * the binary's own folder, the folder it was invoked from, and every folder
+ * on PATH. Returns the paths it removed.
+ *
+ * Only symlinks that resolve to THIS binary go. A `ks` that is a real file,
+ * or a link to something else, or a dangling link, belongs to someone else
+ * and stays. Both sides go through `realpathSync` before comparing: on macOS
+ * `/tmp` (and the test runner's own tmpdir) is a symlink into `/private/tmp`,
+ * so a bare string comparison would false-negative even for a link this
+ * installer created.
+ *
+ * Every candidate is resolved BEFORE anything is deleted. `ks -> kerstel` is
+ * relative to a `kerstel` that may itself be a link; delete that link first
+ * and `ks` dangles, resolves to nothing, and would be kept as "not ours".
  *
  * Callers must invoke this BEFORE deleting `binaryPath` -- `realpathSync` on
- * an already-deleted binary throws, which would turn a real link into a
- * false "not-ours".
+ * an already-deleted binary throws, which would turn every real link into a
+ * false "not ours".
  */
-export function removeShortcut(binaryPath: string): "removed" | "absent" | "not-ours" {
-  const link = join(dirname(binaryPath), "ks");
-  let stat: ReturnType<typeof lstatSync>;
+export function removeLinks(binaryPath: string, search: LinkSearch): string[] {
+  let target: string;
   try {
-    stat = lstatSync(link);
+    target = realpathSync(binaryPath);
   } catch {
-    return "absent";
-  }
-  if (!stat.isSymbolicLink()) return "not-ours";
-
-  try {
-    const target = realpathSync(resolve(dirname(link), readlinkSync(link)));
-    if (target !== realpathSync(binaryPath)) return "not-ours";
-  } catch {
-    // A dangling link (or an unreadable binary) is never ours to remove.
-    return "not-ours";
+    return [];
   }
 
-  rmSync(link);
-  return "removed";
+  const pathDirs = search.pathDirs ?? (process.env.PATH ?? "").split(delimiter).filter((d) => d.length > 0);
+  const folders = new Set<string>([dirname(binaryPath)]);
+  if (search.invokedAs && isAbsolute(search.invokedAs)) folders.add(dirname(search.invokedAs));
+  for (const dir of pathDirs) folders.add(dir);
+
+  const ours: string[] = [];
+  for (const folder of folders) {
+    for (const name of LINK_NAMES) {
+      const link = join(folder, name);
+      let stat: ReturnType<typeof lstatSync>;
+      try {
+        stat = lstatSync(link);
+      } catch {
+        continue;
+      }
+      if (!stat.isSymbolicLink()) continue;
+      try {
+        if (realpathSync(link) === target) ours.push(link);
+      } catch {
+        // A dangling link, or one through a folder we cannot read: never ours.
+      }
+    }
+  }
+
+  for (const link of ours) rmSync(link);
+  return ours;
 }
 
 function printPlan(plan: UninstallPlan): void {
@@ -166,7 +202,11 @@ function gitTrackedEnvFiles(project: RestoredProject): string[] | null {
 export async function uninstallCommand(
   args: string[],
   prompterOverride?: Prompter,
-  binary: { path: string; compiled: boolean } = { path: process.execPath, compiled: isCompiledBinary() },
+  binary: { path: string; compiled: boolean } & LinkSearch = {
+    path: process.execPath,
+    compiled: isCompiledBinary(),
+    invokedAs: process.argv0,
+  },
 ): Promise<number> {
   const options = parseUninstallArgs(args);
   if ("error" in options) {
@@ -311,13 +351,12 @@ export async function uninstallCommand(
   }
 
   if (binary.compiled) {
-    // The shortcut check has to run before the binary is gone: it
-    // realpath()s binary.path, which throws once nothing is there to
-    // resolve.
-    const shortcut = removeShortcut(binary.path);
+    // The link sweep has to run before the binary is gone: it realpath()s
+    // binary.path, which throws once nothing is there to resolve.
+    const links = removeLinks(binary.path, binary);
     rmSync(binary.path, { force: true });
     ok(`Removed ${binary.path}.`);
-    if (shortcut === "removed") ok(`Removed ${join(dirname(binary.path), "ks")}.`);
+    for (const link of links) ok(`Removed ${link}.`);
   } else {
     info(`Running from source, so ${binary.path} was left in place.`);
   }
