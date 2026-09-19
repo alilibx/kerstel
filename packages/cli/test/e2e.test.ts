@@ -155,6 +155,31 @@ test("resolve starts the daemon by itself and audits the resolution", async () =
   expect((await kerstel(["daemon", "status"])).code).toBe(0);
 });
 
+test("the daemon that resolve starts does not inherit BUN_OPTIONS", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-scrub-"));
+  expect((await kerstel(["set", "global/SCRUB", "--value", "scrubbed"])).code).toBe(0);
+
+  // A preload that records which process ran it. The compiled binary is a Bun
+  // runtime, so BUN_OPTIONS reaches the one-shot `resolve` (that is what
+  // `doctor` warns about); the daemon it spawns must not see it.
+  const marker = join(home, "preload-ran.log");
+  const preload = join(home, "preload.js");
+  await Bun.write(
+    preload,
+    `require("node:fs").appendFileSync(${JSON.stringify(marker)}, process.argv.join(" ") + "\\n");`,
+  );
+
+  expect((await kerstel(["daemon", "status"])).code).toBe(1);
+  const resolved = await kerstel(["resolve", "kerstel://global/SCRUB"], { BUN_OPTIONS: `--preload ${preload}` });
+  expect(resolved.code).toBe(0);
+  expect(resolved.stdout.trim()).toBe("scrubbed");
+  expect((await kerstel(["daemon", "status"])).code).toBe(0);
+
+  const ran = existsSync(marker) ? await Bun.file(marker).text() : "";
+  expect(ran).toContain("resolve");
+  expect(ran).not.toContain("daemon serve");
+});
+
 test("the vault file holds no plaintext after a full round trip", async () => {
   home = mkdtempSync(join(tmpdir(), "kerstel-e2e-enc-"));
   await kerstel(["set", "global/CANARY", "--value", "PLAINTEXT_CANARY_E2E"]);

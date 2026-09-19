@@ -179,7 +179,8 @@ export async function doctorCommand(
       home: homeForDisplay(),
       version: VERSION,
       latestVersion: await latestVersion,
-      bunOptions: process.env.BUN_OPTIONS ?? null,
+      // Set-but-empty injects nothing, so it is not worth a warning.
+      bunOptions: process.env.BUN_OPTIONS?.trim() ? process.env.BUN_OPTIONS : null,
     };
 
     const checks = gatherChecks(facts);
