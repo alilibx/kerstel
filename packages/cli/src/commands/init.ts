@@ -29,7 +29,6 @@ import { interactive, note, step, withSpinner } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { theme } from "../ui/theme";
 import { VERSION } from "../version";
-import { loadOrCreateDataKey } from "../vault/keychain";
 import { readStoredReferences } from "../vault/meta";
 import type { Vault } from "../vault/store";
 
@@ -825,12 +824,13 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       "Backing up your originals",
       (result) => `Encrypted backup of your originals: ${result.dir}`,
       async () => {
-        // openContext() holds the data key privately; this reads the same key
-        // from the same credential store rather than widening CliContext.
-        const { key: dataKey } = await loadOrCreateDataKey();
+        // The key the vault is already open with. Fetching it again from the
+        // credential store, as this once did, was a second subprocess pipe
+        // carrying the key and, on Linux, a second chance for a failing bus to
+        // read as "no key stored" (see CliContext.dataKey).
         return createBackup({
           scope,
-          dataKey,
+          dataKey: ctx!.dataKey,
           files: loaded.map((entry) => ({ name: entry.info.name, contents: entry.original })),
         });
       },

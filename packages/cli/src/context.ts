@@ -8,6 +8,7 @@ import {
   META_KEYCHAIN_BACKEND,
   META_KEY_CHECK,
   backendMismatchError,
+  readStoredReferences,
   readVaultMeta,
   sealKeyCheck,
   verifyKeyCheck,
@@ -17,6 +18,14 @@ import { openVault, type Vault } from "./vault/store";
 export interface CliContext {
   vault: Vault;
   backend: string;
+  /**
+   * The data key the vault is open with. Here so a command that needs it for
+   * a second purpose (`init` sealing its backup) uses THIS copy instead of
+   * fetching the key again: a second fetch is a second subprocess pipe carrying
+   * the key, and on Linux a second chance for a failing bus to read as "no key
+   * stored". The vault object already closes over the same bytes.
+   */
+  dataKey: Buffer;
   token: string;
   /** True when this call created the vault key for the first time. */
   firstRun: boolean;
@@ -55,7 +64,13 @@ export async function openContext(): Promise<CliContext> {
     throw backendMismatchError(recordedBackend, backend.name);
   }
 
-  const { key, created } = await loadOrCreateDataKey(backend);
+  // A key may be minted only where no vault sealed with one exists. Decided
+  // BEFORE the fetch, from the vault file alone: a `key_check` or any stored
+  // secret means a key exists somewhere, and "cannot read it" must fail
+  // loudly rather than mint a replacement. The post-open checks below still
+  // catch a wrong key; this stops the overwrite that used to happen first.
+  const sealed = meta[META_KEY_CHECK] !== undefined || readStoredReferences(vaultPath()).size > 0;
+  const { key, created } = await loadOrCreateDataKey(backend, { allowCreate: !sealed });
   const vault = openVault(key);
 
   try {
@@ -86,6 +101,7 @@ export async function openContext(): Promise<CliContext> {
     return {
       vault,
       backend: backend.name,
+      dataKey: key,
       token: ensureToken(),
       firstRun: created,
       hookDir: hookInstall.dir,

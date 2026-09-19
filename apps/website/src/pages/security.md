@@ -23,7 +23,7 @@ The 256-bit data key is generated on first run and stored only in your operating
 | macOS | Keychain |
 | Linux | Secret Service (libsecret) |
 
-The key is never written to the vault file, never logged, and never printed. Windows is not supported yet. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with `0600` permissions and warns you every time it does.
+The key is never written to the vault file, never logged, and never printed. It is also never replaced by accident: a new key is minted only on a machine with no vault sealed with one, and a credential store that fails to answer is treated as holding a key, so the outcome is an error naming the store rather than a fresh key over the real one. Windows is not supported yet. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with `0600` permissions and warns you every time it does.
 
 Kerstel reaches the credential store through the operating system's own tool: `security` on macOS, `secret-tool` on Linux. It runs that tool only from a fixed list of system directories (`/usr/bin` and `/bin`, plus `/usr/local/bin` and the NixOS and Guix system profiles on Linux), and only when the directory and the file are owned by root and writable by nobody else. It never looks on `PATH`: `npm run` and `bun run` put `node_modules/.bin` first on `PATH`, so a dependency could otherwise ship a fake `security` and receive the data key the next time a wired script opened the vault. If the tool is not in one of those directories, Kerstel says so, and how to install it there or switch to the key file instead.
 
