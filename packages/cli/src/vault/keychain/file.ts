@@ -3,9 +3,12 @@ import { join } from "node:path";
 import { ensureHome, kerstelHome } from "../../paths";
 import type { KeychainBackend, SetOptions } from "./types";
 
-function keyFile(): string {
+/** Where the file backend keeps the data key. Named in errors, so exported. */
+export function keyFilePath(): string {
   return join(kerstelHome(), "vault.key");
 }
+
+const keyFile = keyFilePath;
 
 function alreadyStored(): Error {
   return new Error(
