@@ -242,8 +242,12 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
       process.platform === "darwin" ? `script -q /dev/null ${inner}` : `script -qec '${inner}' /dev/null`;
     const proc = Bun.spawn(["sh", "-c", `cat | ${scripted}`], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     proc.stdin.end();
-    const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    expect(code).toBe(0);
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) throw new Error(`exit ${code}\nstderr:\n${stderr}\nstdout:\n${stdout}`);
     expect(stdout).toContain("\x1b[");
     expect(stdout).toMatch(/█{30}(\x1b\[0m)? 100%/);
     expect(stdout).toContain("KB");
