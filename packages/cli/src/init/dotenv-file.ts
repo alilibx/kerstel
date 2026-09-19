@@ -142,9 +142,12 @@ function lineLabel(lineNumber: number): string {
  * digits, no underscore, and nothing after the `=` but more padding.
  */
 function looksLikeBase64Line(key: string, rest: string): boolean {
+  // `_` is allowed so base64url (JWT segments) is caught too; a real name
+  // this long with lower AND upper case AND digits AND an empty value is rarer
+  // than the token it would otherwise print.
   return (
     key.length >= 16 &&
-    /^[A-Za-z0-9]+$/.test(key) &&
+    /^[A-Za-z0-9_]+$/.test(key) &&
     /[a-z]/.test(key) &&
     /[A-Z]/.test(key) &&
     /[0-9]/.test(key) &&
@@ -286,6 +289,10 @@ export function parseDotenv(source: string): DotenvFile {
   // Inside an unquoted PEM block (see PEM_BEGIN): every line through the
   // footer is body, carried raw and never inspected, for the same reason.
   let inPem = false;
+  // The entry for the open PEM block, so a missing footer can be added to its
+  // reason: everything after an unterminated block is left untouched too, and
+  // the user has to be told that no later key was migrated.
+  let pemEntry: UnsupportedValue | null = null;
 
   for (let i = 0; i < parts.length; i += 2) {
     const text = parts[i] ?? "";
@@ -313,19 +320,25 @@ export function parseDotenv(source: string): DotenvFile {
       PEM_BEGIN.test(parsed.line.value) &&
       !PEM_END.test(parsed.line.value)
     ) {
-      unsupported.push({
+      pemEntry = {
         key: parsed.line.key,
         line: lineNumber,
         reason:
           "the value is a PEM block spanning several lines; store it with `kerstel set` " +
           "(pipe the file in) and reference it, or put it on one line in double quotes with \\n",
-      });
+      };
+      unsupported.push(pemEntry);
       lines.push({ kind: "raw", text, eol });
       inPem = true;
       continue;
     }
     openQuote = parsed.openQuote;
     lines.push(parsed.line);
+  }
+
+  if (inPem && pemEntry) {
+    pemEntry.reason +=
+      "; its -----END line is missing, so every line after it was treated as part of the block and left untouched";
   }
 
   return { lines, unsupported };

@@ -206,11 +206,22 @@ test("an unquoted PEM block is one unsupported value, and its body is never a ke
 });
 
 test("a base64 line outside a PEM block is reported by line number, not read as a key", () => {
-  const file = parseDotenv("GOOD=1\nkL0tuEJ6abcdEFGH1234567890abcdefghij==\na+b/c9Q==\n");
+  const file = parseDotenv("GOOD=1\nkL0tuEJ6abcdEFGH1234567890abcdefghij==\na+b/c9Q==\neyJhbGciOi_JIUzI1NiJ9_abcDEF123==\n");
   expect(entries(file).map((e) => e.key)).toEqual(["GOOD"]);
-  expect(file.unsupported.map((u) => u.key)).toEqual(["line 2", "line 3"]);
+  expect(file.unsupported.map((u) => u.key)).toEqual(["line 2", "line 3", "line 4"]);
   expect(JSON.stringify(file.unsupported)).not.toContain("kL0tu");
   expect(JSON.stringify(file.unsupported)).not.toContain("a+b");
+  expect(JSON.stringify(file.unsupported)).not.toContain("eyJhbG");
+});
+
+test("a PEM block with no footer is named as such, and nothing after it is mined", () => {
+  const source = "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgPEMBODY\nkL0tuEJ6abcdEFGH1234567890abcdefghij==\nSTRIPE_SECRET=sk_live_after\n";
+  const file = parseDotenv(source);
+  expect(entries(file)).toEqual([]);
+  expect(file.unsupported.map((u) => u.key)).toEqual(["PRIVATE_KEY"]);
+  expect(file.unsupported[0]?.reason).toContain("-----END line is missing");
+  expect(JSON.stringify(file.unsupported)).not.toContain("sk_live");
+  expect(serializeDotenv(file)).toBe(source);
 });
 
 test("a name too long to be a variable is reported by line number", () => {
