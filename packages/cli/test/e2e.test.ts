@@ -239,7 +239,9 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   // because its worker reads the file when it needs it.
   const project = mkdtempSync(join(tmpdir(), "kerstel-project-token-"));
   const app = join(project, "app.cjs");
-  await Bun.write(app, "process.stdout.write(process.env.T);");
+  // Compares in memory and prints a verdict, never the resolved value: the
+  // same shape as `init`'s own self-check probe.
+  await Bun.write(app, `process.stdout.write(process.env.T === "rotated" ? "OK" : "MISMATCH");`);
   const run = () =>
     Bun.spawn(["node", "--require", join(home, "hook", "preload.cjs"), app], {
       env: env({
@@ -252,12 +254,12 @@ test("the session token is minted per daemon lifetime and gone while none runs",
       stderr: "pipe",
     });
   const before = run();
-  expect(await new Response(before.stdout).text()).toBe("rotated");
+  expect(await new Response(before.stdout).text()).toBe("OK");
 
   expect((await kerstel(["daemon", "stop"])).code).toBe(0);
   expect((await kerstel(["daemon", "start"])).code).toBe(0);
   const after = run();
-  expect(await new Response(after.stdout).text()).toBe("rotated");
+  expect(await new Response(after.stdout).text()).toBe("OK");
   // The child's own environment carried a path, never a token.
   expect(env({ KERSTEL_TOKEN_FILE: tokenFile })).not.toHaveProperty("KERSTEL_TOKEN");
 });
