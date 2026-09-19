@@ -15,7 +15,7 @@ order: 2
 | Command | What it does |
 | --- | --- |
 | `kerstel init [--yes] [--dry-run]` | Show every `.env` variable grouped by where it suggests putting it, then walk through **"Look right?"** (accept every suggestion, change some from a checklist, or go through them one by one), an optional `.gitignore` question, and **"Apply these changes?"** (apply, show the full diff first, or cancel). Once applied: store each value in the vault, rewrite the files with references, and wire the runtime hook into your scripts. Run it from the project root; it needs a readable `package.json`. |
-| `kerstel exec -- <command>` | Run one command with the runtime hook wired in. It resolves nothing itself: it sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN` and `KERSTEL_HOOK_DIR`, appends `--require <the hook>` to `NODE_OPTIONS`, and adds `--preload=<the hook>` for a `bun` or `bunx` command, which `NODE_OPTIONS` does not reach. This is what `init` writes into your scripts. |
+| `kerstel exec -- <command>` | Run one command with the runtime hook wired in. It resolves nothing itself: it sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN_FILE` (the path of the session token file, never the token) and `KERSTEL_HOOK_DIR`, appends `--require <the hook>` to `NODE_OPTIONS`, and adds `--preload=<the hook>` for a `bun` or `bunx` command, which `NODE_OPTIONS` does not reach. This is what `init` writes into your scripts. |
 
 ### `kerstel init` flags
 

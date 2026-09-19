@@ -3,7 +3,7 @@ import { openContext } from "../context";
 import { ensureDaemon } from "../daemon/client";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { fail } from "../output";
-import { socketPath } from "../paths";
+import { socketPath, tokenPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 
 /**
@@ -25,7 +25,8 @@ export function preloadPathFor(hookDir: string): string {
 export function buildExecEnv(options: {
   base: NodeJS.ProcessEnv;
   socketPath: string;
-  token: string;
+  /** Path of the session token file. The token itself never enters an environment. */
+  tokenFile: string;
   hookDir: string;
 }): Record<string, string> {
   const env: Record<string, string> = {};
@@ -34,7 +35,11 @@ export function buildExecEnv(options: {
   }
 
   env.KERSTEL_SOCKET = options.socketPath;
-  env.KERSTEL_TOKEN = options.token;
+  // Three paths and no secret: the hook's worker reads the 0600 token file
+  // itself, per request, so a child's environment (and every grandchild's,
+  // and `ps -E`, and `console.log(process.env)`) carries nothing that unlocks
+  // the vault, and the daemon can rotate the token whenever it starts.
+  env.KERSTEL_TOKEN_FILE = options.tokenFile;
   env.KERSTEL_HOOK_DIR = options.hookDir;
 
   const preload = preloadPathFor(options.hookDir);
@@ -116,11 +121,12 @@ export async function execCommand(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Opening the context is what installs/refreshes ~/.kerstel/hook/ and mints
-  // the session token. The vault itself is not needed here -- `exec` never
-  // reads a secret -- so it is closed before anything long-running starts.
+  // Opening the context is what installs/refreshes ~/.kerstel/hook/. The vault
+  // itself is not needed here -- `exec` never reads a secret -- so it is closed
+  // before anything long-running starts. The token is not needed either: the
+  // daemon mints it, and the child gets only the path of its file.
   const ctx = await openContext();
-  const { token, hookDir, hookInstall } = ctx;
+  const { hookDir, hookInstall } = ctx;
   ctx.vault.close();
 
   if (!hookInstall.installed) {
@@ -143,7 +149,7 @@ export async function execCommand(args: string[]): Promise<number> {
   }
   client.close();
 
-  const env = buildExecEnv({ base: process.env, socketPath: socketPath(), token, hookDir });
+  const env = buildExecEnv({ base: process.env, socketPath: socketPath(), tokenFile: tokenPath(), hookDir });
   const argv = withBunPreload(command, hookDir);
   const child = Bun.spawn(argv, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   return await child.exited;

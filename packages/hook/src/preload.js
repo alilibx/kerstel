@@ -12,9 +12,14 @@ if (!process.env.KERSTEL_ACTIVE) {
 
 function install() {
   const socketPath = process.env.KERSTEL_SOCKET;
-  const token = process.env.KERSTEL_TOKEN;
+  // The PATH of the token file, never the token. A value in the environment
+  // is inherited by every descendant of this process, shows up in `ps -E` and
+  // in any `console.log(process.env)`, and would unlock the whole vault for as
+  // long as it stayed valid. A path unlocks nothing: the worker reads the 0600
+  // file when it needs it, and the file is the daemon's to rotate.
+  const tokenFile = process.env.KERSTEL_TOKEN_FILE;
 
-  if (!socketPath || !token) {
+  if (!socketPath || !tokenFile) {
     // Nothing to resolve against. Leave process.env exactly as found so an
     // unconfigured machine behaves like a machine without Kerstel installed.
     return;
@@ -49,7 +54,7 @@ function install() {
     if (!bridge) {
       bridge = createBridge({
         socketPath,
-        token,
+        tokenFile,
         timeoutMs: Number(process.env.KERSTEL_TIMEOUT_MS) || 5_000,
         workerFile: hook.workerFile,
       });
@@ -102,7 +107,7 @@ function install() {
   // apart, and a non-Node child could not resolve a reference anyway.
   raw.KERSTEL_ACTIVE = "1";
   raw.KERSTEL_SOCKET = socketPath;
-  raw.KERSTEL_TOKEN = token;
+  raw.KERSTEL_TOKEN_FILE = tokenFile;
   raw.KERSTEL_HOOK_DIR = hookDir;
 
   const preloadPath = path.join(hookDir, "preload.cjs");

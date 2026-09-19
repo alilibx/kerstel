@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("node:fs");
 const net = require("node:net");
 const { StringDecoder } = require("node:string_decoder");
 const { workerData } = require("node:worker_threads");
@@ -8,7 +9,26 @@ const { MAX_LINE_CHARS, PROTOCOL_VERSION } = require("./protocol.js");
 // `port` is the MessagePort half handed over by the bridge. Results go back on
 // it rather than on parentPort, because the bridge drains replies with
 // receiveMessageOnPort() while its own thread is blocked in Atomics.wait().
-const { socketPath, token, timeoutMs, control, port } = workerData;
+const { socketPath, tokenFile, timeoutMs, control, port } = workerData;
+
+/**
+ * The current session token, read from its 0600 file on every request.
+ *
+ * Per request, not once: the daemon mints a new token each time it starts and
+ * removes the file when it stops, so a token cached at boot would go stale the
+ * first time the daemon restarted under a long-running app. The file is tiny,
+ * requests are memoized per process, and reading it is what keeps the token
+ * out of this process's environment and argv altogether. Missing file: send
+ * an empty token, which the daemon refuses; that is the honest "no daemon"
+ * answer and the caller's error says so.
+ */
+function readToken() {
+  try {
+    return fs.readFileSync(tokenFile, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
 
 const status = new Int32Array(control);
 
@@ -105,7 +125,9 @@ function reply(seq, ok, payload) {
 }
 
 port.on("message", (request) => {
-  const id = `w${++counter}`;
+  // The id of the attempt currently in flight. A retry (below) issues a new
+  // one, and the timeout must drop whichever is current.
+  let id = null;
   let settled = false;
   const settle = (ok, payload) => {
     if (settled) return;
@@ -115,7 +137,7 @@ port.on("message", (request) => {
     // ids it answers, so without this a request that ends by timeout would
     // leave its waiter behind and the map would grow without bound against a
     // daemon that accepts connections but never replies.
-    pending.delete(id);
+    if (id !== null) pending.delete(id);
     reply(request.seq, ok, payload);
   };
 
@@ -134,33 +156,43 @@ port.on("message", (request) => {
   }, timeoutMs);
   timer.unref();
 
-  let conn;
-  try {
-    conn = connect();
-  } catch (error) {
-    settle(false, { code: "unreachable", message: error.message });
-    return;
-  }
+  const send = (attempt) => {
+    let conn;
+    try {
+      conn = connect();
+    } catch (error) {
+      settle(false, { code: "unreachable", message: error.message });
+      return;
+    }
 
-  pending.set(id, (message) => {
-    if (message.ok) settle(true, { value: message.value });
-    else settle(false, message.error || { code: "internal", message: "Unknown daemon error" });
-  });
+    id = `w${++counter}`;
+    pending.set(id, (message) => {
+      if (message.ok) return settle(true, { value: message.value });
+      const error = message.error || { code: "internal", message: "Unknown daemon error" };
+      // The token file was read moments ago, but the daemon may have restarted
+      // in between with a fresh token. One re-read and one more try; a second
+      // refusal is a real refusal.
+      if (error.code === "unauthorized" && attempt === 0) return send(1);
+      settle(false, error);
+    });
 
-  const line = `${JSON.stringify({
-    v: PROTOCOL_VERSION,
-    id,
-    token,
-    op: "resolve",
-    scope: request.scope,
-    key: request.key,
-    pid: request.pid,
-    processName: request.processName,
-  })}\n`;
+    const line = `${JSON.stringify({
+      v: PROTOCOL_VERSION,
+      id,
+      token: readToken(),
+      op: "resolve",
+      scope: request.scope,
+      key: request.key,
+      pid: request.pid,
+      processName: request.processName,
+    })}\n`;
 
-  const write = () => conn.write(line);
-  if (conn.connecting) conn.once("connect", write);
-  else write();
+    const write = () => conn.write(line);
+    if (conn.connecting) conn.once("connect", write);
+    else write();
+  };
+
+  send(0);
 });
 
 // A port handed over through workerData does not deliver messages until started.

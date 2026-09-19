@@ -80,7 +80,6 @@ test("a node app reads the real secret from a reference-only .env", async () => 
   expect(existsSync(preload)).toBe(true);
   expect(existsSync(join(installedHookDir, "worker.cjs"))).toBe(true);
 
-  const token = (await Bun.file(join(home, "session.token")).text()).trim();
   const socket = join(home, "kerstel.sock");
 
   const proc = Bun.spawn(["node", "--require", preload, app], {
@@ -88,7 +87,8 @@ test("a node app reads the real secret from a reference-only .env", async () => 
       // This is exactly what a committed .env would contain.
       OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY",
       KERSTEL_SOCKET: socket,
-      KERSTEL_TOKEN: token,
+      // The path, as `kerstel exec` sets it. The value stays in the 0600 file.
+      KERSTEL_TOKEN_FILE: join(home, "session.token"),
       KERSTEL_HOOK_DIR: installedHookDir,
     }),
     stdout: "pipe",
@@ -217,6 +217,49 @@ test("a foreground daemon serve re-executes itself without BUN_OPTIONS", async (
   const ran = existsSync(marker) ? await Bun.file(marker).text() : "";
   const serveLines = ran.split("\n").filter((line) => line.includes("daemon serve"));
   expect(serveLines.length).toBe(1);
+});
+
+test("the session token is minted per daemon lifetime and gone while none runs", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-token-"));
+  const tokenFile = join(home, "session.token");
+  expect((await kerstel(["set", "global/T", "--value", "rotated"])).code).toBe(0);
+
+  expect((await kerstel(["daemon", "start"])).code).toBe(0);
+  const first = (await Bun.file(tokenFile).text()).trim();
+  expect(first.length).toBeGreaterThan(20);
+
+  expect((await kerstel(["daemon", "stop"])).code).toBe(0);
+  expect(existsSync(tokenFile)).toBe(false);
+
+  expect((await kerstel(["daemon", "start"])).code).toBe(0);
+  const second = (await Bun.file(tokenFile).text()).trim();
+  expect(second).not.toBe(first);
+
+  // A hooked child given only the PATH keeps working across the rotation,
+  // because its worker reads the file when it needs it.
+  const project = mkdtempSync(join(tmpdir(), "kerstel-project-token-"));
+  const app = join(project, "app.cjs");
+  await Bun.write(app, "process.stdout.write(process.env.T);");
+  const run = () =>
+    Bun.spawn(["node", "--require", join(home, "hook", "preload.cjs"), app], {
+      env: env({
+        T: "kerstel://global/T",
+        KERSTEL_SOCKET: join(home, "kerstel.sock"),
+        KERSTEL_TOKEN_FILE: tokenFile,
+        KERSTEL_HOOK_DIR: join(home, "hook"),
+      }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  const before = run();
+  expect(await new Response(before.stdout).text()).toBe("rotated");
+
+  expect((await kerstel(["daemon", "stop"])).code).toBe(0);
+  expect((await kerstel(["daemon", "start"])).code).toBe(0);
+  const after = run();
+  expect(await new Response(after.stdout).text()).toBe("rotated");
+  // The child's own environment carried a path, never a token.
+  expect(env({ KERSTEL_TOKEN_FILE: tokenFile })).not.toHaveProperty("KERSTEL_TOKEN");
 });
 
 test("the vault file holds no plaintext after a full round trip", async () => {

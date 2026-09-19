@@ -3,6 +3,7 @@ import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/c
 import { daemonEnv, isScrubbedEnvironment } from "../daemon/env";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
+import { clearToken, createToken, writeToken } from "../daemon/token";
 import { fail, info, ok } from "../output";
 import { socketPath } from "../paths";
 import { cliName } from "../ui/cli-name";
@@ -63,6 +64,14 @@ async function serveCommand(): Promise<number> {
 
   const ctx = await openContext();
 
+  // A fresh token for this daemon's lifetime, written to the 0600 file the
+  // hook's worker and the CLI read. Rotating here is what makes the token
+  // "per session" in fact: whatever a previous daemon accepted, and whatever a
+  // backup of ~/.kerstel or a stray `ps -E` from the old design may hold, is
+  // refused from this point on. Cleared again when this daemon stops, so no
+  // valid token exists while nothing is listening.
+  const token = writeToken(createToken());
+
   let handle: DaemonHandle;
   try {
     // `handle` is assigned by the time this fires (idle is hours away by
@@ -71,7 +80,7 @@ async function serveCommand(): Promise<number> {
     handle = await startDaemon({
       vault: ctx.vault,
       socketPath: socketPath(),
-      token: ctx.token,
+      token,
       backendName: ctx.backend,
       idleMs: configuredIdleMs(),
       onIdle: () => {
@@ -82,6 +91,7 @@ async function serveCommand(): Promise<number> {
     });
   } catch (error) {
     ctx.vault.close();
+    clearToken();
     throw error;
   }
 
@@ -94,6 +104,7 @@ async function serveCommand(): Promise<number> {
   // parked forever, holding an open vault, if another daemon bound the path.
   await handle.closed;
   ctx.vault.close();
+  clearToken();
   return 0;
 }
 
