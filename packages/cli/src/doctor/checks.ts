@@ -41,6 +41,8 @@ export interface DoctorFacts {
   version: string;
   /** The newest release on GitHub, or null when the check could not reach it. */
   latestVersion: string | null;
+  /** `BUN_OPTIONS` as this process saw it, or null when unset. */
+  bunOptions: string | null;
 }
 
 /** "macos" -> "macOS Keychain", etc. Falls back to the raw name if new. */
@@ -188,6 +190,25 @@ function permissionsCheck(facts: DoctorFacts): Check {
   };
 }
 
+/**
+ * The compiled `kerstel` is a Bun runtime and honours `BUN_OPTIONS`, so a
+ * `--preload` there runs inside every Kerstel process, including the ones that
+ * hold the vault key, before any Kerstel code does. The daemon is started with
+ * a scrubbed environment, so this reaches only the one-shot commands, but a
+ * developer who set it for their own Bun projects should know it reaches
+ * Kerstel too. Only reported when set: an unset variable is not a check.
+ */
+function environmentCheck(facts: DoctorFacts): Check | null {
+  if (facts.bunOptions === null) return null;
+  return {
+    group: "machine",
+    status: "warn",
+    label: "Environment",
+    detail: `BUN_OPTIONS is set, and Kerstel's own process honours it`,
+    fix: `unset BUN_OPTIONS before running ${facts.cli}; the daemon already ignores it`,
+  };
+}
+
 function shortcutCheck(facts: DoctorFacts): Check | null {
   switch (facts.shortcut) {
     case "not-applicable":
@@ -273,6 +294,9 @@ export function gatherChecks(facts: DoctorFacts): Check[] {
     runtimeHookCheck(facts),
     permissionsCheck(facts),
   ];
+
+  const environment = environmentCheck(facts);
+  if (environment) checks.push(environment);
 
   const shortcut = shortcutCheck(facts);
   if (shortcut) checks.push(shortcut);

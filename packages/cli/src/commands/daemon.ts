@@ -1,5 +1,6 @@
 import { openContext } from "../context";
 import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/client";
+import { daemonEnv, isScrubbedEnvironment } from "../daemon/env";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
 import { fail, info, ok } from "../output";
@@ -42,6 +43,24 @@ function configuredIdleMs(): number | undefined {
  * vault is no longer needed and this function is about to return).
  */
 async function serveCommand(): Promise<number> {
+  // `daemon start` and `ensureDaemon` spawn this command through daemonEnv.
+  // Run by hand from a shell it arrives with the shell's environment instead,
+  // and under a nested `kerstel exec` that environment already holds resolved
+  // plaintext. So a foreground serve re-executes itself through the same
+  // allowlist before the vault is opened, with stdio inherited so it stays a
+  // command you can watch. A BUN_OPTIONS preload has already run in THIS
+  // process by now; it never gets the key, because this process never opens
+  // the vault.
+  if (!isScrubbedEnvironment()) {
+    const child = Bun.spawn(daemonServeCommand(), {
+      env: daemonEnv(),
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    return await child.exited;
+  }
+
   const ctx = await openContext();
 
   let handle: DaemonHandle;
@@ -90,7 +109,10 @@ async function startCommand(): Promise<number> {
     return 0;
   }
 
+  // Never this process's environment: see daemonEnv for what an inherited
+  // BUN_OPTIONS would do to the process that holds the vault key.
   Bun.spawn(daemonServeCommand(), {
+    env: daemonEnv(),
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

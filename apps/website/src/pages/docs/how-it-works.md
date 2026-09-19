@@ -28,6 +28,8 @@ A per-user resolver daemon unlocks the vault once, using the credential store, a
 
 `kerstel run` never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need the daemon, and `kerstel exec` (which `init` writes into your scripts) starts it on demand, as does `kerstel resolve`; you never start it by hand. If the hook can't reach it, the error names the reference and tells you to run `kerstel doctor`. `kerstel daemon status` shows whether it is up at any time, and `kerstel daemon start` is there if you want to start it yourself, or to read why it won't start.
 
+The daemon is started with a small environment of its own: `PATH`, `HOME`, locale, the session bus and display on Linux, and Kerstel's own `KERSTEL_*` settings. It never inherits the environment of the script that needed it, and a `kerstel daemon serve` you run yourself re-executes itself through the same list before opening the vault. That keeps your project's variables, an outer script's already-resolved values, and runtime flags such as `BUN_OPTIONS` or `NODE_OPTIONS` out of the process that holds the vault key.
+
 ## Two ways to resolve
 
 ### `kerstel run`
