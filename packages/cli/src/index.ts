@@ -6,6 +6,7 @@ import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
 import { updateCommand, versionCommand } from "./commands/update";
+import { isScrubbedEnvironment } from "./daemon/env";
 import { bold, fail } from "./output";
 import { ignoreProjectSettings } from "./project-env";
 import { printBanner } from "./ui/banner";
@@ -41,10 +42,18 @@ export async function runCli(argv: string[]): Promise<number> {
   // FIRST, before any command and before anything reads a KERSTEL_* setting:
   // Bun has already loaded this directory's .env into process.env, and in
   // Kerstel's model that file is committed. See project-env.ts.
-  for (const setting of ignoreProjectSettings()) {
-    process.stderr.write(
-      `Ignoring ${setting.name} from ${setting.file}: Kerstel's own settings are not read from a project's env files.\n`,
-    );
+  //
+  // Not in the daemon: its environment is an allowlist built by a parent that
+  // has already been through this, so nothing in it came from a project, and
+  // re-running the check there would let a `.env` in its own directory strip
+  // the KERSTEL_HOME it was deliberately given.
+  if (!isScrubbedEnvironment()) {
+    for (const setting of ignoreProjectSettings()) {
+      process.stderr.write(
+        `Ignoring ${setting.name}: ${setting.file} names it, and Kerstel never takes its own settings ` +
+          `from a project's env files. Remove that line, or set it somewhere else.\n`,
+      );
+    }
   }
 
   const [command, ...args] = argv;

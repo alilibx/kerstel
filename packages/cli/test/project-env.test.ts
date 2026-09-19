@@ -47,11 +47,16 @@ test("a KERSTEL_* the project's .env defines, and that Bun loaded, is reported",
   expect(ignored[0]?.file).toBe(".env");
 });
 
-test("a real environment value that the project's .env does not match is kept", () => {
+test("a KERSTEL_* the file names is dropped whatever its value, and one it does not name is kept", () => {
   const root = project({ ".env": "KERSTEL_HOME=./.kerstel-local\n" });
-  // The user exported their own; Bun does not override a real variable, so
-  // what survives in process.env is theirs and must be honoured.
-  expect(projectSettings(root, { KERSTEL_HOME: "/Users/ada/.kerstel" })).toEqual([]);
+  // Named, so dropped even though the value is the user's own: the two cannot
+  // be told apart, and honouring the repository's choice is the one outcome
+  // that must not happen. See project-env.ts.
+  expect(projectSettings(root, { KERSTEL_HOME: "/Users/ada/.kerstel" })).toEqual([
+    { name: "KERSTEL_HOME", file: ".env" },
+  ]);
+  // Not named, so untouched.
+  expect(projectSettings(root, { KERSTEL_IDLE_MS: "60000" })).toEqual([]);
 });
 
 test("a KERSTEL_* named in a variant file is caught too, and named by its file", () => {
@@ -81,17 +86,15 @@ test("a repeated key is caught by its last assignment, not a harmless decoy", ()
   ]);
 });
 
-test("an escape Bun decodes and the parser does not is still caught", () => {
-  // Bun turns \\r into a carriage return; the parser keeps it literal. The
-  // attacker still gets a directory they control, so the match has to see it.
-  const root = project({ ".env": String.raw`KERSTEL_HOME="/tmp/evil\r"` + "\n" });
-  expect(projectSettings(root, { KERSTEL_HOME: "/tmp/evil\r" })).toEqual([
-    { name: "KERSTEL_HOME", file: ".env" },
-  ]);
-  // And the undecoded spelling, for a loader that leaves it alone.
-  expect(projectSettings(root, { KERSTEL_HOME: String.raw`/tmp/evil\r` })).toEqual([
-    { name: "KERSTEL_HOME", file: ".env" },
-  ]);
+test("a value the parser and the loader read differently is still caught", () => {
+  // Every gap between Bun's parser and this repo's is a smuggling route, so
+  // the check must not depend on them agreeing. Bun expands `$ATTACK` and
+  // decodes `\\r` (both verified on 1.4.2); parseDotenv does neither.
+  const root = project({
+    ".env": ["ATTACK=9999999999", "KERSTEL_IDLE_MS=$ATTACK", String.raw`KERSTEL_HOME="/tmp/evil\r"`, ""].join("\n"),
+  });
+  const ignored = projectSettings(root, { KERSTEL_IDLE_MS: "9999999999", KERSTEL_HOME: "/tmp/evil\r" });
+  expect(ignored.map((s) => s.name).sort()).toEqual(["KERSTEL_HOME", "KERSTEL_IDLE_MS"]);
 });
 
 test("a project with no env files reports nothing", () => {

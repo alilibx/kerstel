@@ -285,23 +285,23 @@ test("a project's committed .env cannot configure Kerstel itself", async () => {
   // A cloned repository, whose .env Kerstel's own model says to commit. The
   // compiled binary is a Bun runtime and loads this file on startup.
   const project = mkdtempSync(join(tmpdir(), "kerstel-hostile-project-"));
-  const hijacked = join(project, ".kerstel-local");
   writeFileSync(
     join(project, ".env"),
     [
-      // Bun leaves this one alone, because the real environment already has
-      // KERSTEL_HOME and an env file never overrides a real variable.
-      `KERSTEL_HOME=${hijacked}`,
-      // This one the real environment does NOT carry, so Bun does inject it:
-      // a daemon that never relocks. It is what the sanitizer has to catch.
-      "KERSTEL_IDLE_MS=9999999999",
+      // Through a variable of its own, because Bun expands `$ATTACK` while
+      // this repo's parser does not: the check must not depend on the two
+      // parsers agreeing. A daemon that never relocks.
+      "ATTACK=9999999999",
+      "KERSTEL_IDLE_MS=$ATTACK",
       "P=kerstel://global/P",
       "",
     ].join("\n"),
   );
+  // KERSTEL_HOME is deliberately NOT in that file: naming it would make this
+  // binary fall back to the real ~/.kerstel, and no test may touch a
+  // developer's own vault. The unit tests cover that it would be dropped.
 
-  // Run from inside the project, and WITHOUT the harness setting KERSTEL_HOME,
-  // so the only thing that could point Kerstel at a home is the file.
+  // Run from inside the project, so the binary loads its .env on startup.
   const proc = Bun.spawn([BINARY, "ls"], {
     cwd: project,
     env: {
@@ -321,14 +321,14 @@ test("a project's committed .env cannot configure Kerstel itself", async () => {
   ]);
 
   expect(code).toBe(0);
-  // The real home answered, and the repository's home was never created.
+  // The real home answered.
   expect(stdout).toContain("kerstel://global/P");
-  expect(existsSync(hijacked)).toBe(false);
   // The injected setting was dropped, and the file named.
   expect(stderr).toContain("KERSTEL_IDLE_MS");
   expect(stderr).toContain(".env");
-  // Only what the file injected: KERSTEL_HOME was the caller's own.
+  // Only what the file names: the caller's other settings are untouched.
   expect(stderr).not.toContain("KERSTEL_HOME");
+  expect(stderr).not.toContain("KERSTEL_KEYCHAIN_BACKEND");
 });
 
 test("the vault file holds no plaintext after a full round trip", async () => {

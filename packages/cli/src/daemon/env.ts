@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { ensureHome, kerstelHome } from "../paths";
 
 /**
  * The environment a detached `daemon serve` is started with.
@@ -65,17 +65,25 @@ const KERSTEL_SETTINGS = ["KERSTEL_HOME", "KERSTEL_KEYCHAIN_BACKEND", "KERSTEL_K
 export const SCRUBBED_MARKER = "KERSTEL_DAEMON_SCRUBBED";
 
 /**
- * Where a spawned daemon should stand.
+ * Where a spawned daemon should stand: Kerstel's own home.
  *
  * Never the project directory. The compiled binary is a Bun runtime and loads
  * the working directory's `.env` on startup, and that file is committed in
- * Kerstel's model, so a daemon left in the project would read its settings
+ * Kerstel's model, so a daemon left in the project would take its settings
  * from the repository (see project-env.ts, which handles the CLI's own
- * process). The home directory has no `.env` of its own, and the daemon has no
- * reason to hold a handle on a project anyway.
+ * process).
+ *
+ * Kerstel's home rather than the user's: `~` is a directory anyone's tooling
+ * may drop a `.env` into, and one there naming `KERSTEL_HOME` would send the
+ * daemon to a different vault and bind its socket where no client looks.
+ * `~/.kerstel` is created by Kerstel, `0700`, and nothing here ever writes a
+ * `.env` into it. Anyone who can is already inside the vault directory.
  */
 export function daemonCwd(): string {
-  return homedir();
+  // The daemon cannot start in a directory that does not exist yet, and
+  // `daemon start` spawns before anything has opened the vault.
+  ensureHome();
+  return kerstelHome();
 }
 
 export function daemonEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {

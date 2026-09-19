@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { discoverEnvFiles } from "./init/detect";
-import { entries, parseDotenv, type DotenvPair } from "./init/dotenv-file";
+import { entries, parseDotenv } from "./init/dotenv-file";
 
 /**
  * Kerstel's own settings must never come from the project it is protecting.
  *
  * The compiled binary is a Bun runtime, and Bun loads an `.env` from the
- * working directory into `process.env` before any of this code runs. Kerstel's
+ * working directory into `process.env` before any of this code runs (measured
+ * on Bun 1.4.2; no build flag or environment variable turns it off). Kerstel's
  * whole model is "your `.env` holds only references, so commit it" -- which
  * makes a cloned repository's `.env` attacker-influenced input that would
  * otherwise configure Kerstel itself:
@@ -16,48 +17,29 @@ import { entries, parseDotenv, type DotenvPair } from "./init/dotenv-file";
  *   KERSTEL_IDLE_MS=9999999999             a daemon that never relocks
  *   KERSTEL_RELEASES_URL=http://…          `update` pointed elsewhere
  *
- * So any `KERSTEL_*` whose value matches what an env file here defines is
- * dropped before a command reads it, and named once on stderr.
+ * So a `KERSTEL_*` that an env file here NAMES is dropped before any command
+ * reads it, and named once on stderr.
  *
- * THE RULE IS A VALUE MATCH, not provenance: nothing in `process.env` records
- * where a variable came from. A developer who exports the same value in their
- * shell AND has it in the project's `.env` therefore loses it too. That is the
- * safe direction (the alternative is honouring a value the repository chose),
- * it is rare, and the warning says exactly which file to look at.
+ * THE TEST IS THE NAME, NOT THE VALUE. Comparing values looks more precise --
+ * Bun only injects a variable the real environment lacks, so a value that
+ * matches the file is the injected one -- but it cannot be done correctly.
+ * Reproducing what Bun puts in `process.env` means reproducing its parser:
+ * `KERSTEL_IDLE_MS=$ATTACK` expands (verified), `"...\r"` decodes, and this
+ * repo's parser deliberately does neither, because it has to round-trip a file
+ * it rewrites. Every gap between the two parsers is a way to smuggle a setting
+ * past the check, so the check does not depend on them agreeing.
+ *
+ * The cost is a variable you set yourself, in a project whose env file happens
+ * to name it: that is dropped too, and Kerstel falls back to its default. The
+ * warning says which file to take the line out of. The alternative -- honouring
+ * a value a repository chose -- is the one outcome that must not happen.
  */
 export interface IgnoredSetting {
   name: string;
   file: string;
 }
 
-/**
- * Every string Bun could have put in `process.env` for this assignment.
- *
- * `parseDotenv` decodes only `\n`, because it has to round-trip a file it
- * rewrites (see its own notes on which escapes each runtime decodes). Bun
- * decodes more than that, so comparing against the parser's value alone would
- * let `KERSTEL_HOME="/tmp/evil\r"` through: Bun stores a carriage return, the
- * parser reports a literal backslash-r, the two differ, and the injected
- * setting survives. Offering Bun's decoding as an alternative closes that,
- * without widening the match for anything that has no escapes.
- */
-function candidateValues(pair: DotenvPair): string[] {
-  const values = [pair.value];
-  if (pair.quote === '"') {
-    const body = pair.text.slice(pair.valueStart + 1, pair.valueEnd - 1);
-    values.push(
-      body.replace(/\\(.)/g, (match, char: string) => {
-        if (char === "n") return "\n";
-        if (char === "r") return "\r";
-        if (char === "$") return "$";
-        return match;
-      }),
-    );
-  }
-  return values;
-}
-
-/** Every `KERSTEL_*` in `env` that an env file under `cwd` defines to the same value. */
+/** Every `KERSTEL_*` set in `env` that an env file under `cwd` also names. */
 export function projectSettings(cwd: string, env: NodeJS.ProcessEnv = process.env): IgnoredSetting[] {
   const found: IgnoredSetting[] = [];
   const seen = new Set<string>();
@@ -71,15 +53,9 @@ export function projectSettings(cwd: string, env: NodeJS.ProcessEnv = process.en
       // `doctor` both name such a file. Nothing was injected from it either.
       continue;
     }
-    // EVERY occurrence, not the first. A loader takes the last assignment of a
-    // repeated key, so a file that opens with a harmless `KERSTEL_HOME=/tmp/ok`
-    // and repeats it further down would otherwise have only the decoy compared
-    // and the real one skipped.
     for (const pair of entries(parsed)) {
       if (!pair.key.startsWith("KERSTEL_")) continue;
-      const value = env[pair.key];
-      if (value === undefined) continue;
-      if (!candidateValues(pair).includes(value)) continue;
+      if (env[pair.key] === undefined) continue;
       if (seen.has(pair.key)) continue;
       seen.add(pair.key);
       found.push({ name: pair.key, file: info.name });
