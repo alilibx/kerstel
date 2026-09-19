@@ -1,5 +1,12 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { openContext } from "../src/context";
 import { daemonEnv, isScrubbedEnvironment, SCRUBBED_MARKER } from "../src/daemon/env";
+import { clearTokenIf, createToken, writeToken } from "../src/daemon/token";
+import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
+
+afterEach(restoreEnv);
 
 const caller: NodeJS.ProcessEnv = {
   PATH: "/usr/bin:/bin",
@@ -53,6 +60,32 @@ test("the caller's own variables, tokens, and plaintext never reach the daemon",
 test("unset variables are left out rather than passed as empty strings", () => {
   const env = daemonEnv({ PATH: "/bin" });
   expect(Object.keys(env).sort()).toEqual([SCRUBBED_MARKER, "PATH"].sort());
+});
+
+test("a daemon clears only the token it published", () => {
+  const home = isolateEnv({ prefix: "token-clear" });
+  const file = join(home, "session.token");
+
+  // Daemon A publishes, then B takes over the socket path and publishes its
+  // own. A exits last; it must leave B's token alone.
+  const a = writeToken(createToken());
+  const b = writeToken(createToken());
+  expect(b).not.toBe(a);
+
+  clearTokenIf(a);
+  expect(readFileSync(file, "utf8").trim()).toBe(b);
+
+  clearTokenIf(b);
+  expect(existsSync(file)).toBe(false);
+});
+
+test("opening the vault does not mint a token", async () => {
+  const home = isolateEnv({ prefix: "token-no-mint" });
+  const ctx = await openContext();
+  ctx.vault.close();
+  // Only a listening daemon publishes one; a file here would authenticate
+  // nothing and contradict what the security page promises.
+  expect(existsSync(join(home, "session.token"))).toBe(false);
 });
 
 test("the marker tells a foreground serve whether it was started through the allowlist", () => {

@@ -3,6 +3,7 @@ import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/c
 import { daemonEnv, isScrubbedEnvironment } from "../daemon/env";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
+import { clearTokenIf, createToken, writeToken } from "../daemon/token";
 import { fail, info, ok } from "../output";
 import { socketPath } from "../paths";
 import { cliName } from "../ui/cli-name";
@@ -63,6 +64,16 @@ async function serveCommand(): Promise<number> {
 
   const ctx = await openContext();
 
+  // A fresh token for this daemon's lifetime. Rotating per start is what makes
+  // the token "per session" in fact: whatever a previous daemon accepted, and
+  // whatever a backup of ~/.kerstel or a stray `ps -E` from the old design may
+  // hold, is refused from this point on.
+  //
+  // Minted here, PUBLISHED only once the server is listening. A daemon that
+  // fails to start must not leave its token in the file: another daemon may be
+  // serving, and the file is what its clients read.
+  const token = createToken();
+
   let handle: DaemonHandle;
   try {
     // `handle` is assigned by the time this fires (idle is hours away by
@@ -71,7 +82,7 @@ async function serveCommand(): Promise<number> {
     handle = await startDaemon({
       vault: ctx.vault,
       socketPath: socketPath(),
-      token: ctx.token,
+      token,
       backendName: ctx.backend,
       idleMs: configuredIdleMs(),
       onIdle: () => {
@@ -85,6 +96,9 @@ async function serveCommand(): Promise<number> {
     throw error;
   }
 
+  // Listening: from here the token is the one clients must present.
+  writeToken(token);
+
   ok(`Kerstel daemon listening on ${handle.socketPath}`);
 
   // A remote `daemon stop` closes the server from inside startDaemon() with no
@@ -94,6 +108,10 @@ async function serveCommand(): Promise<number> {
   // parked forever, holding an open vault, if another daemon bound the path.
   await handle.closed;
   ctx.vault.close();
+  // Only if it is still ours: a daemon that took over the socket path while
+  // this one was serving has published its own, and deleting that would leave
+  // it listening with a token nobody can read.
+  clearTokenIf(token);
   return 0;
 }
 

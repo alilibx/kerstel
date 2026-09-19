@@ -24,7 +24,9 @@ const STATE_PENDING = 0;
  */
 function createBridge(options) {
   const socketPath = options.socketPath;
-  const token = options.token;
+  // A path, read by the worker per request; see preload.js for why no token
+  // value ever crosses into this process's environment.
+  const tokenFile = options.tokenFile;
   const timeoutMs = options.timeoutMs || 5_000;
   const configuredWorkerFile = options.workerFile;
 
@@ -48,7 +50,7 @@ function createBridge(options) {
     const workerFile = configuredWorkerFile || locateHook().workerFile;
 
     worker = new Worker(workerFile, {
-      workerData: { socketPath, token, timeoutMs, control, port: channel.port2 },
+      workerData: { socketPath, tokenFile, timeoutMs, control, port: channel.port2 },
       transferList: [channel.port2],
       stdout: false,
       stderr: false,

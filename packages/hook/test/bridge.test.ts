@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DaemonHandle } from "../../cli/src/daemon/server";
@@ -12,6 +12,9 @@ const running: DaemonHandle[] = [];
 const vaults: Vault[] = [];
 const bridges: { dispose(): void }[] = [];
 const TOKEN = "bridge-test-token-98765";
+// The bridge takes the token file's PATH; the worker reads it per request.
+const TOKEN_FILE = join(mkdtempSync(join(tmpdir(), "kerstel-bridge-token-")), "session.token");
+writeFileSync(TOKEN_FILE, TOKEN, { mode: 0o600 });
 
 afterEach(async () => {
   while (bridges.length) bridges.pop()!.dispose();
@@ -73,7 +76,7 @@ async function boot(): Promise<{ sock: string; vault: Vault }> {
 }
 
 function bridgeFor(sock: string, timeoutMs = 5_000) {
-  const bridge = createBridge({ socketPath: sock, token: TOKEN, timeoutMs });
+  const bridge = createBridge({ socketPath: sock, tokenFile: TOKEN_FILE, timeoutMs });
   bridges.push(bridge);
   return bridge;
 }
@@ -135,7 +138,7 @@ test("the bridge does not keep the event loop alive", async () => {
   // The probe creates a bridge, resolves a value, and returns WITHOUT
   // disposing, then exits only because the worker and its socket are unref'd.
   // The wait is bounded so a regression fails loudly instead of hanging CI.
-  const proc = Bun.spawn([process.execPath, UNREF_PROBE, sock, TOKEN], { stdout: "ignore" });
+  const proc = Bun.spawn([process.execPath, UNREF_PROBE, sock, TOKEN_FILE], { stdout: "ignore" });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const hung = new Promise<"hung">((resolve) => {

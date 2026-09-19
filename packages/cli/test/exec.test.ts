@@ -42,17 +42,35 @@ test("buildExecEnv wires the hook without resolving anything", () => {
   const env = buildExecEnv({
     base: { PATH: "/usr/bin", OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY" },
     socketPath: "/tmp/k.sock",
-    token: "tok",
+    tokenFile: "/home/dev/.kerstel/session.token",
     hookDir: "/home/dev/.kerstel/hook",
   });
 
   expect(env.PATH).toBe("/usr/bin");
   expect(env.KERSTEL_SOCKET).toBe("/tmp/k.sock");
-  expect(env.KERSTEL_TOKEN).toBe("tok");
+  expect(env.KERSTEL_TOKEN_FILE).toBe("/home/dev/.kerstel/session.token");
+  // The token VALUE never enters an environment, under any name.
+  expect(env).not.toHaveProperty("KERSTEL_TOKEN");
+  expect(JSON.stringify(env)).not.toContain("session-token-value");
   expect(env.KERSTEL_HOOK_DIR).toBe("/home/dev/.kerstel/hook");
   // A reference stays a reference: resolving is `run`'s job, never `exec`'s.
   expect(env.OPENAI_API_KEY).toBe("kerstel://global/OPENAI_API_KEY");
   expect(env.NODE_OPTIONS).toBe(`--require ${JSON.stringify(preloadPathFor("/home/dev/.kerstel/hook"))}`);
+});
+
+test("buildExecEnv drops a KERSTEL_TOKEN inherited from an older Kerstel", () => {
+  // The upgrade window: this process was hooked by a previous version, so its
+  // environment still carries a live bearer token. It must not reach the child.
+  const env = buildExecEnv({
+    base: { PATH: "/usr/bin", KERSTEL_TOKEN: "session-token-value" },
+    socketPath: "/tmp/k.sock",
+    tokenFile: "/home/dev/.kerstel/session.token",
+    hookDir: "/home/dev/.kerstel/hook",
+  });
+
+  expect(env).not.toHaveProperty("KERSTEL_TOKEN");
+  expect(JSON.stringify(env)).not.toContain("session-token-value");
+  expect(env.KERSTEL_TOKEN_FILE).toBe("/home/dev/.kerstel/session.token");
 });
 
 test("buildExecEnv appends to an existing NODE_OPTIONS and never duplicates", () => {
@@ -60,14 +78,14 @@ test("buildExecEnv appends to an existing NODE_OPTIONS and never duplicates", ()
   const first = buildExecEnv({
     base: { NODE_OPTIONS: "--max-old-space-size=4096" },
     socketPath: "/tmp/k.sock",
-    token: "tok",
+    tokenFile: "/home/dev/.kerstel/session.token",
     hookDir,
   });
   expect(first.NODE_OPTIONS).toBe(
     `--max-old-space-size=4096 --require ${JSON.stringify(preloadPathFor(hookDir))}`,
   );
 
-  const second = buildExecEnv({ base: first, socketPath: "/tmp/k.sock", token: "tok", hookDir });
+  const second = buildExecEnv({ base: first, socketPath: "/tmp/k.sock", tokenFile: "/home/dev/.kerstel/session.token", hookDir });
   expect(second.NODE_OPTIONS).toBe(first.NODE_OPTIONS);
 });
 
@@ -75,7 +93,7 @@ test("buildExecEnv quotes a hook directory containing spaces", () => {
   const env = buildExecEnv({
     base: {},
     socketPath: "/tmp/k.sock",
-    token: "tok",
+    tokenFile: "/home/dev/.kerstel/session.token",
     hookDir: "/Users/dev name/.kerstel/hook",
   });
   expect(env.NODE_OPTIONS).toBe(

@@ -1,11 +1,16 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Vault } from "../../cli/src/vault/store";
 import { bootDaemon, cleanupDaemons } from "../../cli/test/helpers/boot-daemon";
 
 const TOKEN = "preload-test-token-4242";
+// The hook receives the token file's PATH, never the token; the worker reads
+// the file itself. One file for the whole suite: every fixture daemon here is
+// booted with the same TOKEN.
+const TOKEN_FILE = join(mkdtempSync(join(tmpdir(), "kerstel-preload-token-")), "session.token");
+writeFileSync(TOKEN_FILE, TOKEN, { mode: 0o600 });
 const DIST = resolve(import.meta.dir, "../dist");
 const FIXTURES = resolve(import.meta.dir, "fixtures");
 
@@ -49,7 +54,7 @@ async function runHooked(
     env: {
       ...process.env,
       KERSTEL_SOCKET: sock,
-      KERSTEL_TOKEN: TOKEN,
+      KERSTEL_TOKEN_FILE: TOKEN_FILE,
       ...(hookDirEnv === null ? { KERSTEL_HOOK_DIR: undefined } : { KERSTEL_HOOK_DIR: hookDirEnv }),
       NODE_OPTIONS: "",
       ...env,
