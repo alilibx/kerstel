@@ -56,7 +56,21 @@ export interface DataKeyResult {
  * tests can drive the "stored but unreadable" path, which no real backend can
  * be put into on demand.
  */
-export async function loadOrCreateDataKey(override?: KeychainBackend): Promise<DataKeyResult> {
+export interface LoadKeyOptions {
+  /**
+   * False when the caller knows a vault sealed with a key already exists, so
+   * "no key readable" can only mean the credential store is unreachable or
+   * emptied, never "first run". Creating a key in that state would not unlock
+   * anything and, on Linux, `secret-tool store` would overwrite the real one.
+   * Default true: a machine with no vault yet is exactly where a key is minted.
+   */
+  allowCreate?: boolean;
+}
+
+export async function loadOrCreateDataKey(
+  override?: KeychainBackend,
+  options: LoadKeyOptions = {},
+): Promise<DataKeyResult> {
   const backend = override ?? (await selectBackend());
   const existing = await backend.get();
   if (existing) return { key: existing, backend: backend.name, created: false };
@@ -74,6 +88,16 @@ export async function loadOrCreateDataKey(override?: KeychainBackend): Promise<D
         "even though one is stored. On macOS, re-run and click \"Always Allow\" on the " +
         `Keychain prompt, or run \`${cliName()} doctor\`. Kerstel will never overwrite a ` +
         "stored key automatically.",
+    );
+  }
+
+  if (options.allowCreate === false) {
+    throw new Error(
+      `Kerstel found no vault key in the ${backend.name} credential store, but this vault was ` +
+        "sealed with one. Refusing to create a new key: it would not open the vault, and storing it " +
+        "could replace the real one. Reconnect the credential store (Linux: a running Secret Service " +
+        "on your session bus; macOS: an unlocked login Keychain) and re-run, or run " +
+        `\`${cliName()} doctor\`.`,
     );
   }
 

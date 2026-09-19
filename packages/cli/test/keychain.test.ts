@@ -221,6 +221,46 @@ test("loadOrCreateDataKey refuses to create when a key is stored but unreadable"
   expect(message).toContain("never overwrite");
 });
 
+test("loadOrCreateDataKey refuses to create when the caller says a sealed vault exists", async () => {
+  isolate();
+  let setCalls = 0;
+  const empty: KeychainBackend = {
+    name: "linux",
+    async isAvailable() {
+      return true;
+    },
+    async get() {
+      return null;
+    },
+    async exists() {
+      return false;
+    },
+    async set() {
+      setCalls += 1;
+    },
+    async delete() {},
+  };
+  await expect(loadOrCreateDataKey(empty, { allowCreate: false })).rejects.toThrow(/sealed with one|Refusing to create/);
+  expect(setCalls).toBe(0);
+});
+
+test("openContext never mints a new key over a vault that already has one", async () => {
+  const home = isolate();
+  // First open: a genuine first run, which mints and stores the key.
+  const first = await openContext();
+  first.vault.close();
+  expect(existsSync(keyFilePath())).toBe(true);
+  const before = statSync(join(home, "vault.db")).size;
+
+  // The credential store "loses" the key: the file backend's version of a bus
+  // that answers nothing. Before the fix this read as a first run, a fresh key
+  // was stored, and only THEN did the key check fail -- with the real key gone.
+  rmSync(keyFilePath());
+  await expect(openContext()).rejects.toThrow(/sealed with one|Refusing to create/);
+  expect(existsSync(keyFilePath())).toBe(false);
+  expect(statSync(join(home, "vault.db")).size).toBe(before);
+});
+
 test("loadOrCreateDataKey still creates when nothing is stored", async () => {
   isolate();
 
@@ -362,7 +402,11 @@ test("an existing vault with secrets refuses a newly minted key", async () => {
   db.close();
   rmSync(join(dir, "vault.key"));
 
-  await expect(openContext()).rejects.toThrow(/will not create a second key/);
+  // Refused BEFORE a key is minted: the stored secrets alone prove a key
+  // exists, so no replacement is ever written to the credential store. (The
+  // post-open "will not create a second key" check remains as the backstop.)
+  await expect(openContext()).rejects.toThrow(/sealed with one|Refusing to create/);
+  expect(existsSync(join(dir, "vault.key"))).toBe(false);
 });
 
 // --- exclusive create, not check-then-write (Finding 5) --------------------

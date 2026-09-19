@@ -62,7 +62,8 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
 - **File:** `~/.kerstel/vault.db`, SQLite.
 - **Crypto:** AES-256-GCM per value, random 96-bit nonce per encryption. The 256-bit data key is generated at first run and stored only in the OS credential store:
   - macOS: Keychain (via `security` / Security.framework bindings)
-  - Linux: Secret Service API (libsecret); fallback to a key file with `0600` perms plus a loud warning when no secret service exists
+  - Linux: Secret Service API (libsecret); fallback to a key file with `0600` perms plus a loud warning when no secret service exists. `secret-tool lookup` exiting 1 with an empty stderr is the only answer read as "no key stored"; any other failure counts as "stored", because `secret-tool store` overwrites silently and a transient bus failure must not mint a replacement.
+  - A key is minted only when the vault file has neither a `key_check` nor any secret. Otherwise "no key readable" is an error naming the store, decided before any fetch, so a lost or unreachable store never causes a fresh key to be written over the real one.
   - Windows: Credential Manager (DPAPI)
 - **Schema (versioned, `schema_version` pragma):**
   - `projects(id, name, root_path, created_at)`

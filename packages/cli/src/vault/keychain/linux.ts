@@ -1,9 +1,27 @@
-import { commandExists, run } from "./exec";
+import { commandExists, run, type ExecResult } from "./exec";
 import { ACCOUNT_NAME, serviceName, type KeychainBackend, type SetOptions } from "./types";
 
 /** Rebuilt on every call so a test-time `KERSTEL_KEYCHAIN_SERVICE` override is honoured. */
 function attrs(): string[] {
   return ["service", serviceName(), "account", ACCOUNT_NAME];
+}
+
+/**
+ * What one `secret-tool lookup` said about the item.
+ *
+ * `secret-tool` has no metadata-only query, so `lookup` is the only way to ask
+ * whether an item exists, and its exit code alone cannot say why it found
+ * nothing. A missing item exits 1 with NOTHING on stderr. A D-Bus hiccup, an
+ * agent that is still starting, or a session with no bus also exit non-zero,
+ * with a message. Reading all of those as "absent" is what let a transient
+ * failure mint a fresh key over the only copy of the real one: `store`
+ * overwrites silently. So only the exact shape of "not found" is absent;
+ * everything else is unknown, and the caller treats unknown as present.
+ */
+export function interpretLookup(result: ExecResult): "present" | "absent" | "unknown" {
+  if (result.code === 0) return result.stdout.trim() === "" ? "unknown" : "present";
+  if (result.code === 1 && result.stderr.trim() === "") return "absent";
+  return "unknown";
 }
 
 export const linuxBackend: KeychainBackend = {
@@ -28,14 +46,21 @@ export const linuxBackend: KeychainBackend = {
   async exists(): Promise<boolean> {
     // Unlike macOS, this DOES read the secret: the Secret Service CLI offers no
     // metadata-only query, so `lookup` is the only way to ask whether an item
-    // is there and it returns the item's value. That is acceptable here because
-    // the gap this method closes on macOS does not exist on Linux in the same
-    // form -- there is no per-application data ACL that can deny a read while
-    // leaving the item findable, so `lookup` succeeding and `get()` succeeding
-    // are the same event. The value is discarded without being logged or
-    // returned; only the yes/no leaves this function.
-    const res = await run(["secret-tool", "lookup", ...attrs()]);
-    return res.code === 0 && res.stdout.trim() !== "";
+    // is there and it returns the item's value. The value is discarded without
+    // being logged or returned; only the yes/no leaves this function.
+    //
+    // The gap this closes is different from macOS's. There is no per-app ACL
+    // here, so "stored but denied" does not happen; what does happen is a
+    // failing bus. `interpretLookup` keeps that from reading as "absent": the
+    // cost of a false "exists" is a clear error the user can act on, the cost
+    // of a false "absent" is a vault nobody can open again.
+    let res: ExecResult;
+    try {
+      res = await run(["secret-tool", "lookup", ...attrs()]);
+    } catch {
+      return true;
+    }
+    return interpretLookup(res) !== "absent";
   },
 
   async set(key: Buffer, options: SetOptions = {}): Promise<void> {
