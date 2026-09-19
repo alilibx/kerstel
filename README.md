@@ -48,8 +48,9 @@ ks exec -- <command>                        # Run a command with the hook wired 
 ks resolve kerstel://<scope>/<KEY>          # Print one resolved value
 ks daemon <serve|start|stop|status>         # Manage the resolver daemon
 ks doctor [--verbose]                       # Diagnose this machine's setup
+ks update [--check]                         # Install the latest release
 ks uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
-ks --version                                # Print the version
+ks --version                                # Print the version, and whether it's current
 ```
 
 `ks run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
@@ -60,7 +61,7 @@ ks --version                                # Print the version
 curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
-macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Re-run it to upgrade, or set `KERSTEL_VERSION=0.1.0` to pin a version.
+macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Run `ks update` to upgrade in place, or set `KERSTEL_VERSION=0.1.0` when installing to pin a version. `ks --version` and `ks doctor` tell you when a newer release exists.
 
 The installer also adds `ks`, a shortcut for `kerstel`. If something else on your `PATH` is already called `ks`, it leaves that alone and tells you to use `kerstel` instead. Everything below works the same either way — `ks` and `kerstel` are the same binary.
 

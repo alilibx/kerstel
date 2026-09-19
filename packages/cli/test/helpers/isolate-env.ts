@@ -17,6 +17,7 @@ const MANAGED = [
   "KERSTEL_SOCKET",
   "KERSTEL_TOKEN",
   "KERSTEL_IDLE_MS",
+  "KERSTEL_RELEASES_URL",
 ] as const;
 
 const snapshot = new Map<string, string | undefined>(
@@ -44,6 +45,10 @@ export function isolateEnv(options: IsolateOptions = {}): string {
   process.env.KERSTEL_HOME = dir;
   process.env.KERSTEL_KEYCHAIN_BACKEND = options.backend ?? "file";
   process.env.KERSTEL_KEYCHAIN_SERVICE = options.service ?? "dev.kerstel.vault.test";
+  // Port 9 (discard) refuses connections at once on a normal machine, so
+  // every `doctor` and `--version` in the suite reports "could not check"
+  // instead of calling github.com.
+  process.env.KERSTEL_RELEASES_URL = "http://127.0.0.1:9";
   return dir;
 }
 

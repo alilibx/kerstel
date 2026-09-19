@@ -161,11 +161,15 @@
 </tr>
 <tr>
 <td><code>kerstel doctor [--verbose]</code></td>
-<td>Diagnose this machine, grouped under <strong>This machine</strong> (vault, daemon, runtime hook, file permissions, and whether <code>ks</code> resolves to this binary; an idle daemon is shown as information, since it starts on its own when a script needs a secret) and, inside a project with a <code>package.json</code>, <strong>This project</strong> (how many of the wrappable scripts are wired through <code>kerstel exec</code>, how many references in your <code>.env*</code> files this vault can resolve, and any env file it could not read). Every warning or problem prints a <code>Fix:</code> line naming the command that resolves it. <code>--verbose</code> adds the paths and permission modes behind each check: home, vault, token, socket, and hook. Exits <code>1</code> if any check reports a problem, <code>0</code> otherwise — warnings alone still exit <code>0</code>.</td>
+<td>Diagnose this machine, grouped under <strong>This machine</strong> (version, vault, daemon, runtime hook, file permissions, and whether <code>ks</code> resolves to this binary; an idle daemon is shown as information, since it starts on its own when a script needs a secret; the version row is a warning with <code>Fix: kerstel update</code> when a newer release exists, and information when the release page could not be reached) and, inside a project with a <code>package.json</code>, <strong>This project</strong> (how many of the wrappable scripts are wired through <code>kerstel exec</code>, how many references in your <code>.env*</code> files this vault can resolve, and any env file it could not read). Every warning or problem prints a <code>Fix:</code> line naming the command that resolves it. <code>--verbose</code> adds the paths and permission modes behind each check: home, vault, token, socket, and hook. Exits <code>1</code> if any check reports a problem, <code>0</code> otherwise — warnings alone still exit <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>kerstel update [--check]</code></td>
+<td>Install the latest release over this binary. It reads the newest version from GitHub Releases, downloads the binary for this platform and the release&#39;s <code>SHA256SUMS</code>, verifies the checksum, runs the new binary once to confirm it reports that version, and only then swaps it into place. <code>ks</code> keeps working, since it links to the same file. If a resolver daemon is running it is stopped, so the next resolution starts the new version. It says so and exits <code>0</code> when you already have the latest release, and exits <code>1</code> when GitHub cannot be reached; a failed checksum or download installs nothing. <code>--check</code> only reports whether a newer release exists. Run from source there is no binary to replace, so <code>update</code> refuses; <code>--check</code> still works.</td>
 </tr>
 <tr>
 <td><code>kerstel --version</code></td>
-<td>Print the version, such as <code>0.1.0</code>.</td>
+<td>Print the version, such as <code>0.1.0</code>. On a terminal it also checks GitHub and adds a second line on stderr: <code>Up to date.</code>, <code>0.1.1 is available. Run kerstel update.</code>, or <code>Could not check for updates.</code> Piped or redirected, it prints only the version and never touches the network.</td>
 </tr>
 <tr>
 <td><code>kerstel uninstall</code></td>
@@ -191,6 +195,10 @@
 <tr>
 <td><code>KERSTEL_KEYCHAIN_BACKEND</code></td>
 <td>Force a credential store backend. Set to <code>file</code> for a <code>0600</code> key file instead of the OS store. Kerstel warns whenever this fallback is in use.</td>
+</tr>
+<tr>
+<td><code>KERSTEL_RELEASES_URL</code></td>
+<td>Where <code>update</code>, <code>doctor</code>, and <code>--version</code> look for releases, instead of <code>https://github.com/alilibx/kerstel</code>. For mirrors and tests; it must serve the same <code>/releases/latest</code> redirect and <code>/releases/download/v&lt;version&gt;/</code> files as GitHub.</td>
 </tr>
 </tbody></table>
 </div><h2>Exit codes</h2>

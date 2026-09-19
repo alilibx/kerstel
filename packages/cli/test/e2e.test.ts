@@ -25,6 +25,9 @@ function env(extra: Record<string, string> = {}): Record<string, string> {
     ...(process.env as Record<string, string>),
     KERSTEL_HOME: home,
     KERSTEL_KEYCHAIN_BACKEND: "file",
+    // Keeps `doctor` off github.com: port 9 refuses at once, so it reports
+    // "could not check for updates" instead of waiting on the network.
+    KERSTEL_RELEASES_URL: "http://127.0.0.1:9",
     NODE_OPTIONS: "",
     ...extra,
   };

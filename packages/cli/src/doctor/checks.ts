@@ -1,4 +1,5 @@
 import type { ProjectStatus } from "../init/status";
+import { compareVersions } from "../update/versions";
 
 /** A path as the shell needs it pasted: unchanged when safe, single-quoted otherwise. */
 function shellQuote(path: string): string {
@@ -36,6 +37,10 @@ export interface DoctorFacts {
   platform: NodeJS.Platform;
   /** Kerstel's home as the user should read it: `~/.kerstel` when it is the default. */
   home: string;
+  /** This binary's version. */
+  version: string;
+  /** The newest release on GitHub, or null when the check could not reach it. */
+  latestVersion: string | null;
 }
 
 /** "macos" -> "macOS Keychain", etc. Falls back to the raw name if new. */
@@ -66,6 +71,33 @@ function nativeStore(platform: NodeJS.Platform): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * `·` rather than `!` when the release page was unreachable: an offline
+ * machine is not a fault in Kerstel, and `doctor` must never fail for it.
+ * A build newer than the latest release (a dev build, or a release whose
+ * page has not propagated yet) counts as up to date.
+ */
+function versionCheck(facts: DoctorFacts): Check {
+  if (facts.latestVersion === null) {
+    return {
+      group: "machine",
+      status: "info",
+      label: "Version",
+      detail: `${facts.version} (could not check for updates)`,
+    };
+  }
+  if (compareVersions(facts.version, facts.latestVersion) < 0) {
+    return {
+      group: "machine",
+      status: "warn",
+      label: "Version",
+      detail: `${facts.version}, ${facts.latestVersion} available`,
+      fix: `${facts.cli} update`,
+    };
+  }
+  return { group: "machine", status: "pass", label: "Version", detail: `${facts.version}, up to date` };
 }
 
 function vaultCheck(facts: DoctorFacts): Check {
@@ -234,7 +266,13 @@ function envFilesCheck(project: ProjectStatus): Check | null {
 
 /** Spec §6. Order matches the mockup: machine checks, then project checks. */
 export function gatherChecks(facts: DoctorFacts): Check[] {
-  const checks: Check[] = [vaultCheck(facts), daemonCheck(facts), runtimeHookCheck(facts), permissionsCheck(facts)];
+  const checks: Check[] = [
+    versionCheck(facts),
+    vaultCheck(facts),
+    daemonCheck(facts),
+    runtimeHookCheck(facts),
+    permissionsCheck(facts),
+  ];
 
   const shortcut = shortcutCheck(facts);
   if (shortcut) checks.push(shortcut);

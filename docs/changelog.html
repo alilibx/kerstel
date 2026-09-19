@@ -54,6 +54,11 @@
 <span class="release-date release-unreleased">Unreleased</span>
 </div>
 <div class="release-body">
+<section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
+<li><code>kerstel update</code> installs the latest release in place: it downloads the binary for your platform, verifies its checksum against the release&#39;s <code>SHA256SUMS</code>, confirms the new binary reports the expected version, and then swaps it in. <code>--check</code> only tells you whether a newer release exists.</li>
+<li><code>kerstel --version</code> on a terminal says whether you&#39;re up to date, and names the newer release when there is one. Piped, it still prints only the version and never touches the network.</li>
+<li><code>kerstel doctor</code> starts with a version row: up to date, a newer release with <code>Fix: kerstel update</code>, or a note that the release page could not be reached.</li>
+</ul></section>
 <section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
 <li>The <a href="https://kerstel.dev/changelog">changelog</a> on kerstel.dev is a timeline, one entry per release, with the 0.1.0 release video at the top.</li>
 <li>The installer shows a progress bar while downloading, names your platform, ticks off each step, and ends with a short note on what Kerstel does and the three commands to run next. Piped output stays plain, and <code>NO_COLOR</code> is respected.</li>

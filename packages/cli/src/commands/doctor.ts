@@ -12,6 +12,7 @@ import { printBanner } from "../ui/banner";
 import { note, step } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
+import { githubReleases } from "../update/release-source";
 import { VERSION } from "../version";
 import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
 
@@ -128,7 +129,16 @@ function summaryLine(checks: Check[]): string {
   );
 }
 
-export async function doctorCommand(args: string[] = [], cwd: string = process.cwd()): Promise<number> {
+/** Where `doctor` looks for the newest release. Injectable so tests never call GitHub. */
+export interface DoctorDeps {
+  latestVersion: () => Promise<string | null>;
+}
+
+export async function doctorCommand(
+  args: string[] = [],
+  cwd: string = process.cwd(),
+  deps: DoctorDeps = { latestVersion: () => githubReleases().latestVersion() },
+): Promise<number> {
   let verbose = false;
   for (const arg of args) {
     if (arg === "--verbose") verbose = true;
@@ -149,6 +159,8 @@ export async function doctorCommand(args: string[] = [], cwd: string = process.c
   }
 
   try {
+    // Started first, so the network round trip overlaps the local checks.
+    const latestVersion = deps.latestVersion();
     const project = projectStatus(cwd, ctx.vault);
     const facts: DoctorFacts = {
       backend: ctx.backend,
@@ -165,6 +177,8 @@ export async function doctorCommand(args: string[] = [], cwd: string = process.c
       cli: cliName(),
       platform: process.platform,
       home: homeForDisplay(),
+      version: VERSION,
+      latestVersion: await latestVersion,
     };
 
     const checks = gatherChecks(facts);

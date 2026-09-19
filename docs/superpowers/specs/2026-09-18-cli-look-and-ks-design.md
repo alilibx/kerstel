@@ -172,6 +172,7 @@ When a project's files already hold references and this machine lacks some value
 
 ```
 ◇  This machine
+│  ✓ Version        0.1.0, up to date
 │  ✓ Vault          12 secrets, unlocked with your macOS Keychain
 │  ✓ Daemon         running
 │  ✓ Runtime hook   installed
@@ -186,7 +187,7 @@ When a project's files already hold references and this machine lacks some value
 ```
 
 - It runs the same checks as today, plus one new check: whether a `ks` that resolves to this binary is on `PATH` (a warning, never a problem).
-- **This machine:** vault (secret count and credential store: "macOS Keychain", "Secret Service", or "a key file"), daemon, runtime hook, file permissions, and the shortcut.
+- **This machine:** version (added in 0.1.1: `up to date`, or a warning naming the newer release with `Fix: ks update`, or `·` information when GitHub Releases could not be reached, so an offline machine never fails `doctor`), vault (secret count and credential store: "macOS Keychain", "Secret Service", or "a key file"), daemon, runtime hook, file permissions, and the shortcut.
 - **This project**, only inside a project: scripts wired, references that resolve, and values this machine is missing.
 - Every warning and problem carries a `Fix:` line naming the command, using `cliName()`.
 - `--verbose` adds the paths and permission modes shown today: home, vault, token, socket, and hook.

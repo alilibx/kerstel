@@ -34,6 +34,8 @@ function allPassFacts(overrides: Partial<DoctorFacts> = {}): DoctorFacts {
     cli: "ks",
     platform: "darwin",
     home: "~/.kerstel",
+    version: "0.1.0",
+    latestVersion: "0.1.0",
     ...overrides,
   };
 }
@@ -183,6 +185,49 @@ test("Permissions: a missing path (null actual) is never a problem", () => {
     }),
   );
   expect(checkFor(checks, "Permissions")?.status).toBe("pass");
+});
+
+test("Version pass: the latest release is this one", () => {
+  const checks = gatherChecks(allPassFacts({ version: "0.1.0", latestVersion: "0.1.0" }));
+  expect(checkFor(checks, "Version")).toEqual({
+    group: "machine",
+    status: "pass",
+    label: "Version",
+    detail: "0.1.0, up to date",
+  });
+});
+
+test("Version pass: a build newer than the latest release is not an update", () => {
+  const checks = gatherChecks(allPassFacts({ version: "0.2.0", latestVersion: "0.1.9" }));
+  expect(checkFor(checks, "Version")?.status).toBe("pass");
+});
+
+test("Version warn: a newer release exists, with the update command as the fix", () => {
+  const checks = gatherChecks(allPassFacts({ version: "0.1.0", latestVersion: "0.1.1", cli: "ks" }));
+  expect(checkFor(checks, "Version")).toEqual({
+    group: "machine",
+    status: "warn",
+    label: "Version",
+    detail: "0.1.0, 0.1.1 available",
+    fix: "ks update",
+  });
+  expect(exitCode(checks)).toBe(0);
+});
+
+test("Version info: an unreachable release page is reported, not failed", () => {
+  const checks = gatherChecks(allPassFacts({ version: "0.1.0", latestVersion: null }));
+  expect(checkFor(checks, "Version")).toEqual({
+    group: "machine",
+    status: "info",
+    label: "Version",
+    detail: "0.1.0 (could not check for updates)",
+  });
+  expect(exitCode(checks)).toBe(0);
+});
+
+test("Version is the first machine check", () => {
+  const checks = gatherChecks(allPassFacts());
+  expect(checks[0]?.label).toBe("Version");
 });
 
 test("Shortcut pass: linked", () => {
