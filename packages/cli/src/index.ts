@@ -5,10 +5,12 @@ import { initCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
+import { updateCommand, versionCommand } from "./commands/update";
 import { bold, fail } from "./output";
 import { printBanner } from "./ui/banner";
 import { cliName } from "./ui/cli-name";
 import { theme } from "./ui/theme";
+import { githubReleases } from "./update/release-source";
 import { VERSION } from "./version";
 
 const HEADER = `${bold("kerstel")} — local-first secrets for your projects`;
@@ -26,9 +28,10 @@ const COMMANDS = `Usage:
   ${cliName()} resolve kerstel://<scope>/<KEY>       Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
+  ${cliName()} update [--check]                      Install the latest release
   ${cliName()} uninstall [--dry-run] [--yes] [--force]
                                                 Restore every project and remove Kerstel
-  ${cliName()} --version                             Print the version
+  ${cliName()} --version                             Print the version, and whether it's current
 
 Scopes are explicit: "global" or a project name. A reference resolves in exactly
 one scope — there is no fallback.`;
@@ -50,8 +53,13 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   if (command === "--version" || command === "version") {
-    console.log(VERSION);
-    return 0;
+    return versionCommand({
+      isTTY: process.stdout.isTTY === true,
+      source: githubReleases(),
+      currentVersion: VERSION,
+      cli: cliName(),
+      stderr: (text) => process.stderr.write(text),
+    });
   }
 
   try {
@@ -80,6 +88,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await doctorCommand(args);
       case "uninstall":
         return await uninstallCommand(args);
+      case "update":
+        return await updateCommand(args);
       default:
         fail(`Unknown command "${command}".`);
         console.log(COMMANDS);

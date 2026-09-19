@@ -38,7 +38,7 @@
 </code></pre>
 <p>The installer downloads the binary for your Mac or Linux machine with a progress bar, checks it against the SHA-256 checksum published with the release, and puts it at <code>~/.local/bin/kerstel</code>. It ends with a short note on what Kerstel does and the three commands to run next. Piped into a log, or with <code>NO_COLOR</code> set, it prints plain lines instead. It never uses <code>sudo</code> and never touches your vault. If <code>~/.local/bin</code> is not on your <code>PATH</code>, it prints the line to add.</p>
 <p>The installer also adds <code>ks</code>, a shortcut for <code>kerstel</code> in the same directory. The rest of this guide uses <code>ks</code> — it&#39;s the same binary, so anywhere you see <code>ks</code> you can type <code>kerstel</code> instead. If something else on your machine is already called <code>ks</code>, the installer leaves it alone and tells you to use <code>kerstel</code>.</p>
-<p>Run the same command again to upgrade. To install a specific version, set <code>KERSTEL_VERSION</code>:</p>
+<p>To upgrade later, run <code>ks update</code>. It fetches the latest release, verifies its checksum, and swaps it into place. <code>ks --version</code> and <code>ks doctor</code> both tell you when a newer release exists. To install a specific version, set <code>KERSTEL_VERSION</code>:</p>
 <pre><code class="language-bash">curl -fsSL https://kerstel.dev/install.sh | KERSTEL_VERSION=0.1.0 bash
 </code></pre>
 <p>Windows is not supported yet. Run <code>ks doctor</code> afterwards to confirm the vault and credential store are reachable.</p>

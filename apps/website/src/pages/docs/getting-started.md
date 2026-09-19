@@ -18,7 +18,7 @@ The installer downloads the binary for your Mac or Linux machine with a progress
 
 The installer also adds `ks`, a shortcut for `kerstel` in the same directory. The rest of this guide uses `ks` — it's the same binary, so anywhere you see `ks` you can type `kerstel` instead. If something else on your machine is already called `ks`, the installer leaves it alone and tells you to use `kerstel`.
 
-Run the same command again to upgrade. To install a specific version, set `KERSTEL_VERSION`:
+To upgrade later, run `ks update`. It fetches the latest release, verifies its checksum, and swaps it into place. `ks --version` and `ks doctor` both tell you when a newer release exists. To install a specific version, set `KERSTEL_VERSION`:
 
 ```bash
 curl -fsSL https://kerstel.dev/install.sh | KERSTEL_VERSION=0.1.0 bash

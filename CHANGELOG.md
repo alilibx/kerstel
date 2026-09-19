@@ -4,6 +4,12 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.1 (unreleased)
 
+### Added
+
+- `kerstel update` installs the latest release in place: it downloads the binary for your platform, verifies its checksum against the release's `SHA256SUMS`, confirms the new binary reports the expected version, and then swaps it in. `--check` only tells you whether a newer release exists.
+- `kerstel --version` on a terminal says whether you're up to date, and names the newer release when there is one. Piped, it still prints only the version and never touches the network.
+- `kerstel doctor` starts with a version row: up to date, a newer release with `Fix: kerstel update`, or a note that the release page could not be reached.
+
 ### Changed
 
 - The [changelog](https://kerstel.dev/changelog) on kerstel.dev is a timeline, one entry per release, with the 0.1.0 release video at the top.

@@ -323,6 +323,19 @@ test("an unknown command exits 2 with usage", async () => {
   expect(captured.join("\n")).toMatch(/usage/i);
 });
 
+test("update is a command, and its usage error names --check", async () => {
+  isolate();
+  capture();
+  expect(await runCli(["update", "--bogus"])).toBe(2);
+  expect(captured.join("\n")).toContain("--check");
+});
+
+test("help lists update", async () => {
+  capture();
+  expect(await runCli(["--help"])).toBe(0);
+  expect(captured.join("\n")).toMatch(/update \[--check\]/);
+});
+
 test("--version and version print the bare package version", async () => {
   const pkg = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as { version: string };
   for (const flag of ["--version", "version"]) {
