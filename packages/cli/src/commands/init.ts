@@ -483,7 +483,7 @@ export function summaryLines(options: {
     "The migration itself completed: your values are in the vault, your .env files hold references, and your scripts are wired.",
     `Your originals are in the encrypted backup at ${options.backupDir}.`,
     `Only the self-check failed, so a wired process cannot reach the daemon yet. Run \`${cliName()} doctor\` in this directory, ` +
-      `and \`${cliName()} daemon start\` if it reports the daemon is down.`,
+      `then \`${cliName()} daemon start\` to see why the daemon will not start.`,
   );
   return lines;
 }

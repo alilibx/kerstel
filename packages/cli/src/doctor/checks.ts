@@ -5,8 +5,8 @@ function shellQuote(path: string): string {
   return /^[A-Za-z0-9_\/.~:@%+=,-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
 }
 
-/** Spec §6: three states, rendered as ✓ / ! / ✗. */
-export type CheckStatus = "pass" | "warn" | "problem";
+/** Spec §6: ✓ / ! / ✗, plus `·` for a fact that needs no action, like an idle daemon. */
+export type CheckStatus = "pass" | "warn" | "problem" | "info";
 
 export interface Check {
   group: "machine" | "project";
@@ -102,12 +102,15 @@ function daemonCheck(facts: DoctorFacts): Check {
   if (facts.daemonRunning) {
     return { group: "machine", status: "pass", label: "Daemon", detail: "running" };
   }
+  // Not running is the normal resting state: the daemon starts on its own the
+  // first time a wired script or `resolve` needs a secret, and after a reboot
+  // it simply has not been needed yet. Telling the user to start it by hand
+  // made an idle daemon look like a fault.
   return {
     group: "machine",
-    status: "warn",
+    status: "info",
     label: "Daemon",
-    detail: "not running",
-    fix: `${facts.cli} daemon start`,
+    detail: "idle — starts on its own the first time a script needs a secret",
   };
 }
 

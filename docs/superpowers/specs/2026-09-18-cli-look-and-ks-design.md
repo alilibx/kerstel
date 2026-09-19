@@ -193,7 +193,7 @@ When a project's files already hold references and this machine lacks some value
 - **Exit code:** 1 when any check is `✗`, otherwise 0. Warnings exit 0. Today `doctor` always exits 0.
 - `release.yml`'s Keychain smoke step greps for `Keychain:.*macos`. It changes to the new wording (`macOS Keychain`).
 
-**What counts as a problem (`✗`):** the vault can't be opened, the key doesn't match, a reference can't be resolved, or a required file has the wrong permissions. **Warnings (`!`):** the daemon isn't running, the hook isn't installed, scripts aren't wired, the shortcut is missing, or the file backend is in use.
+**What counts as a problem (`✗`):** the vault can't be opened, the key doesn't match, a reference can't be resolved, or a required file has the wrong permissions. **Warnings (`!`):** the hook isn't installed, scripts aren't wired, the shortcut is missing, or the file backend is in use. **Information (`·`):** the daemon is idle. It starts on its own the first time a script needs a secret, so an idle daemon needs no fix and is not a warning. Outside a project, or in one with no wired scripts and no resolving references, `doctor` ends with a short "How it works" note.
 
 ## 7. `uninstall` and bare `ks`
 

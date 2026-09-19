@@ -33,6 +33,17 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it verifies the tag, cr
 
 `bun scripts/release-verify.ts <tag>` runs the same pre-flight check locally.
 
+### Release videos
+
+Every minor and major release (`0.2.0`, `1.0.0`) gets a short release video at the top of the changelog page. Patch releases (`0.1.1`) do not.
+
+1. Make it with `/brag` in the release PR (the one that dates the changelog section). Polished tone, landscape, 15-25 seconds, in the site's own look: the version tag, what shipped in that release, the install line, and the mark. Use the release's changelog lines as the copy.
+2. Bake the poster as frame 0, then copy the web encode and poster to `apps/website/src/static/release-X.Y.Z.mp4` and `release-X.Y.Z.jpg`. Keep the MP4 to a few MB.
+3. Register it in `RELEASE_MEDIA` in `apps/website/src/changelog.ts`. The newest released version with an entry is the one shown above the timeline, so the previous video stays reachable only through git. A test fails if a registered file is missing.
+4. Rebuild `docs/` and commit the result, as for any website change.
+
+The `brag-output/` directory is gitignored, so the composition source is not kept. Keep the plan in the PR description if the video will need re-rendering.
+
 ## Website
 
 - `docs/` is generated output. Edit `apps/website/src/`, the root `CHANGELOG.md`, or `ROADMAP.md`, then run `bun run --cwd apps/website build` and commit the result. CI fails if `docs/` is stale.

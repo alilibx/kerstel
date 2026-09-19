@@ -9,7 +9,7 @@ import { fail } from "../output";
 import { hookDir, kerstelHome, socketPath, tokenPath, vaultPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import { printBanner } from "../ui/banner";
-import { step } from "../ui/steps";
+import { note, step } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
 import { VERSION } from "../version";
@@ -53,6 +53,7 @@ function homeForDisplay(): string {
 function symbolFor(status: Check["status"]): string {
   if (status === "pass") return theme.green(SYMBOLS.pass);
   if (status === "warn") return theme.yellow(SYMBOLS.warn);
+  if (status === "info") return theme.dim(SYMBOLS.info);
   return theme.red(SYMBOLS.problem);
 }
 
@@ -91,6 +92,30 @@ function verboseLines(facts: DoctorFacts): string[] {
     `Socket:    ${socketPath()}${modeSuffix(socket)}`,
     `Hook:      ${hookDir()}${facts.hook.installed ? "" : theme.yellow("  (not installed)")}`,
   ];
+}
+
+/**
+ * A short explanation for a machine with nothing wired yet: outside a project,
+ * or in one `init` has not set up. Someone who has already wired a project has
+ * seen all of this, so they get the checks and nothing more.
+ */
+export function howItWorksNote(facts: Pick<DoctorFacts, "project" | "cli">): string | null {
+  // "Set up" means init has been through here: scripts wired, or references
+  // already resolving in a project that had no scripts to wire.
+  const setUp =
+    facts.project !== null && (facts.project.scripts.wired > 0 || facts.project.references.total > 0);
+  if (setUp) return null;
+  const lines = [
+    "Your secrets live in an encrypted vault on this machine, unlocked",
+    "through your OS credential store.",
+    "A small daemon reads it for your scripts and starts on its own when",
+    "needed, so there is nothing to keep running.",
+    `\`${facts.cli} init\` moves a project's .env values into the vault and wires its`,
+    "scripts through `kerstel exec`, so `npm run dev` keeps working and the",
+    ".env file holds only kerstel:// references.",
+  ];
+  if (facts.project === null) lines.push("", `Run \`${facts.cli} init\` inside a project to get started.`);
+  return lines.join("\n");
 }
 
 function summaryLine(checks: Check[]): string {
@@ -157,6 +182,12 @@ export async function doctorCommand(args: string[] = [], cwd: string = process.c
 
     console.log("");
     console.log(summaryLine(checks));
+
+    const howItWorks = howItWorksNote(facts);
+    if (howItWorks) {
+      console.log("");
+      note(howItWorks, "How it works");
+    }
 
     return exitCode(checks);
   } finally {
