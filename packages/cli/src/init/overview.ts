@@ -21,16 +21,34 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** The widest a shown value may be, in terminal columns, "…" included. */
 const MAX_VALUE_COLUMNS = 40;
 
-/** C0 and C1 control characters, ESC and DEL included. */
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+/**
+ * Characters a shown value must not carry into the terminal:
+ *   - C0 and C1 control characters, ESC and DEL included, which can start an
+ *     escape sequence;
+ *   - the Unicode bidi embeddings, overrides, and isolates (U+202A–U+202E,
+ *     U+2066–U+2069) and the marks U+200E, U+200F, and U+061C, which reorder
+ *     the text around them, so `abc<RLO>def` renders as `abcfed` and can swap
+ *     the columns after it;
+ *   - the invisible formatters: the zero-width characters U+200B–U+200D, the
+ *     word joiner and invisible operators U+2060–U+2064, the soft hyphen
+ *     U+00AD, the Mongolian vowel separator U+180E, and the byte-order mark
+ *     U+FEFF, so a value cannot look shorter than its printed length;
+ *   - the line and paragraph separators U+2028 and U+2029, which some
+ *     terminals honour as a line break and would split the table row.
+ * The masked column (`•••• N chars`) never renders the value, so it needs none
+ * of this.
+ */
+const UNSAFE_CHARACTERS =
+  /[\u0000-\u001f\u007f-\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 /**
- * A shown value made safe for the terminal: control characters removed, so a
- * value cannot smuggle an escape sequence into the overview, and anything
- * wider than `MAX_VALUE_COLUMNS` cut short with a trailing "…".
+ * A shown value made safe for the terminal: unsafe characters removed, so a
+ * value cannot smuggle an escape sequence or a reordering mark into the
+ * overview, and anything wider than `MAX_VALUE_COLUMNS` cut short with a
+ * trailing "…".
  */
 function displayable(value: string): string {
-  const clean = value.replace(CONTROL_CHARACTERS, "");
+  const clean = value.replace(UNSAFE_CHARACTERS, "");
   if (Bun.stringWidth(clean) <= MAX_VALUE_COLUMNS) return clean;
   let out = "";
   for (const char of clean) {

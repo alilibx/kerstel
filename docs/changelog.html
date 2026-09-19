@@ -59,7 +59,9 @@
 <li>The installer shows a progress bar while downloading, names your platform, ticks off each step, and ends with a short note on what Kerstel does and the three commands to run next. Piped output stays plain, and <code>NO_COLOR</code> is respected.</li>
 <li><code>kerstel doctor</code> no longer tells you to start the daemon by hand. An idle daemon is normal, since it starts on its own the first time a script needs a secret, so <code>doctor</code> now reports it as information rather than a warning. Outside a project, or in one that isn&#39;t set up yet, <code>doctor</code> ends with a short &quot;How it works&quot; note.</li>
 </ul></section>
+<section class="change-group change-fixed"><h3 class="change-type">Fixed</h3></section>
 <section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
+<li>The <code>kerstel init</code> overview strips Unicode bidi and zero-width characters from the config values it shows, so a value can no longer reorder or hide the text around it in the terminal. Secret values were never shown.</li>
 <li><code>kerstel uninstall</code> removes every <code>kerstel</code> and <code>ks</code> link that points at the binary, wherever they are on <code>PATH</code> or in the folder it was run from. Before, when <code>kerstel</code> on your <code>PATH</code> was itself a link to the binary, both it and the <code>ks</code> shortcut beside it were left dangling.</li>
 </ul></section>
 </div>
