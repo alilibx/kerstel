@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { cliName } from "../../ui/cli-name";
 
 export interface ExecResult {
   code: number;
@@ -24,20 +24,29 @@ export function trustedPath(): string {
       return `${root}\\System32\\WindowsPowerShell\\v1.0;${root}\\System32`;
     }
     default:
-      // /usr/local/bin for a distro-less install from source; NixOS links its
-      // system profile under /run/current-system. All root-owned.
-      return "/usr/bin:/bin:/usr/local/bin:/run/current-system/sw/bin";
+      // /usr/local/bin for a distro-less install from source; NixOS and Guix
+      // link their system profiles under /run/current-system. All root-owned.
+      return "/usr/bin:/bin:/usr/local/bin:/run/current-system/sw/bin:/run/current-system/profile/bin";
   }
 }
 
 /**
  * The absolute path of a helper by bare name, searched only in
- * `trustedPath()`, or null when no trusted directory has it. An absolute or
- * relative path is refused: callers name tools, they never point at files.
+ * `trustedPath()`, or null when no trusted directory has it. Anything with a
+ * path separator is refused: callers name tools, they never point at files.
  */
 export function resolveHelper(name: string): string | null {
-  if (name.length === 0 || isAbsolute(name) || name.includes("/") || name.includes("\\")) return null;
+  if (name.length === 0 || name.includes("/") || name.includes("\\")) return null;
   return Bun.which(name, { PATH: trustedPath() }) ?? null;
+}
+
+/** The error for a helper that no trusted directory holds, with the way out. */
+export function helperNotFoundError(name: string): Error {
+  return new Error(
+    `${name} was not found in ${trustedPath()}. Kerstel looks for it only there, never on PATH. ` +
+      `Install it under one of those directories, or set KERSTEL_KEYCHAIN_BACKEND=file to keep the ` +
+      `vault key in a 0600 file instead; \`${cliName()} doctor\` shows which store this vault uses.`,
+  );
 }
 
 /**
@@ -48,10 +57,9 @@ export function resolveHelper(name: string): string | null {
  */
 export async function run(cmd: string[], stdin?: string): Promise<ExecResult> {
   const [name, ...args] = cmd;
-  const bin = name === undefined ? null : resolveHelper(name);
-  if (bin === null) {
-    throw new Error(`${name ?? "(empty command)"} was not found in ${trustedPath()}.`);
-  }
+  if (name === undefined) throw new Error("run() needs a helper name.");
+  const bin = resolveHelper(name);
+  if (bin === null) throw helperNotFoundError(name);
   const proc = Bun.spawn([bin, ...args], {
     stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
     stdout: "pipe",

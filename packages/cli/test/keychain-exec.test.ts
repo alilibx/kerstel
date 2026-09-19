@@ -45,6 +45,23 @@ test.if(process.platform !== "win32")("the trusted search path holds only system
   }
 });
 
+test.if(process.platform !== "win32")("a system binary resolves to its trusted directory even when a shadow comes first on PATH", async () => {
+  const dir = shadowDir("sh");
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+
+  const resolved = resolveHelper("sh") ?? "(null)";
+  expect(["/bin/sh", "/usr/bin/sh"]).toContain(resolved);
+
+  const res = await run(["sh", "-c", "echo REAL"]);
+  expect(res.code).toBe(0);
+  expect(res.stdout).toContain("REAL");
+  expect(res.stdout + res.stderr).not.toContain("SHADOWED");
+});
+
+test("the missing-helper error says how to recover", async () => {
+  await expect(run(["kerstel-fake-helper"])).rejects.toThrow(/KERSTEL_KEYCHAIN_BACKEND=file/);
+});
+
 test.if(process.platform === "darwin")("security resolves to /usr/bin even when a shadow comes first on PATH", async () => {
   const dir = shadowDir("security");
   process.env.PATH = `${dir}:${process.env.PATH}`;
