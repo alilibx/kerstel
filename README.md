@@ -135,7 +135,7 @@ Secrets are never accepted as command-line arguments — anything on argv is in 
 
 - No plaintext secret ever sits in a project file. Reading, committing, or grepping `.env` yields only references.
 - Secrets are encrypted at rest with AES-256-GCM, one random nonce per value. The data key lives only in your OS credential store, never on disk in the clear.
-- No secret or vault data is ever sent anywhere. The only network traffic is the update check and download against GitHub Releases, made by `ks update`, `ks --version` on a terminal, and `ks doctor`; it carries nothing about you or your vault. Kerstel has no account, collects no telemetry, and listens on no network port.
+- No secret or vault data is ever sent anywhere. The only network traffic is the update check and download against GitHub Releases (or a mirror set with `KERSTEL_RELEASES_URL`), made by `ks update`, `ks --version` on a terminal, and `ks doctor`; it carries nothing about your vault, and nothing about you beyond what any web request carries. Nothing else in Kerstel touches the network. Kerstel has no account, collects no telemetry, and listens on no network port. The [security model page](https://kerstel.dev/security) has the details.
 - A process that runs code in the project can still read resolved values from `process.env` — that's the boundary Kerstel draws today. See the [design spec](docs/superpowers/specs/2026-09-17-kerstel-secrets-manager-design.md) for the full threat model and the access-level protection planned on top of it.
 
 ## Build from source
