@@ -51,10 +51,26 @@ test("buildExecEnv wires the hook without resolving anything", () => {
   expect(env.KERSTEL_TOKEN_FILE).toBe("/home/dev/.kerstel/session.token");
   // The token VALUE never enters an environment, under any name.
   expect(env).not.toHaveProperty("KERSTEL_TOKEN");
+  expect(JSON.stringify(env)).not.toContain("session-token-value");
   expect(env.KERSTEL_HOOK_DIR).toBe("/home/dev/.kerstel/hook");
   // A reference stays a reference: resolving is `run`'s job, never `exec`'s.
   expect(env.OPENAI_API_KEY).toBe("kerstel://global/OPENAI_API_KEY");
   expect(env.NODE_OPTIONS).toBe(`--require ${JSON.stringify(preloadPathFor("/home/dev/.kerstel/hook"))}`);
+});
+
+test("buildExecEnv drops a KERSTEL_TOKEN inherited from an older Kerstel", () => {
+  // The upgrade window: this process was hooked by a previous version, so its
+  // environment still carries a live bearer token. It must not reach the child.
+  const env = buildExecEnv({
+    base: { PATH: "/usr/bin", KERSTEL_TOKEN: "session-token-value" },
+    socketPath: "/tmp/k.sock",
+    tokenFile: "/home/dev/.kerstel/session.token",
+    hookDir: "/home/dev/.kerstel/hook",
+  });
+
+  expect(env).not.toHaveProperty("KERSTEL_TOKEN");
+  expect(JSON.stringify(env)).not.toContain("session-token-value");
+  expect(env.KERSTEL_TOKEN_FILE).toBe("/home/dev/.kerstel/session.token");
 });
 
 test("buildExecEnv appends to an existing NODE_OPTIONS and never duplicates", () => {

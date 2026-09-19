@@ -109,6 +109,23 @@ function connect() {
   return self;
 }
 
+/**
+ * Drops the cached connection so the next `connect()` dials the socket path
+ * afresh, picking up whichever daemon is bound to it now.
+ *
+ * Clears the module-level handle BEFORE destroying, so the `close` this
+ * triggers finds `socket !== self` in `failAll` and leaves the replacement
+ * alone. The caller's own pending entry is already gone by this point (the
+ * data handler deletes an id before calling its waiter), and the bridge keeps
+ * exactly one request in flight, so nothing is left waiting on the old socket.
+ */
+function resetConnection() {
+  const stale = socket;
+  socket = null;
+  buffer = "";
+  if (stale) stale.destroy();
+}
+
 /** Posts the reply to the bridge and wakes the blocked main thread. */
 function reply(seq, ok, payload) {
   // The payload travels by postMessage because it can exceed any fixed buffer,
@@ -169,10 +186,16 @@ port.on("message", (request) => {
     pending.set(id, (message) => {
       if (message.ok) return settle(true, { value: message.value });
       const error = message.error || { code: "internal", message: "Unknown daemon error" };
-      // The token file was read moments ago, but the daemon may have restarted
-      // in between with a fresh token. One re-read and one more try; a second
-      // refusal is a real refusal.
-      if (error.code === "unauthorized" && attempt === 0) return send(1);
+      // The token file was read moments ago, but the daemon may have been
+      // replaced in between with one that published a fresh token. Drop the
+      // cached connection before retrying: it still reaches the daemon that
+      // just refused us, so re-sending the new token over it would only be
+      // refused again. One reconnect and one more try; a second refusal is a
+      // real refusal.
+      if (error.code === "unauthorized" && attempt === 0) {
+        resetConnection();
+        return send(1);
+      }
       settle(false, error);
     });
 

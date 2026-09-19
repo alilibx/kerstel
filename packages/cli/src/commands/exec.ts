@@ -41,6 +41,11 @@ export function buildExecEnv(options: {
   // the vault, and the daemon can rotate the token whenever it starts.
   env.KERSTEL_TOKEN_FILE = options.tokenFile;
   env.KERSTEL_HOOK_DIR = options.hookDir;
+  // The environment was copied verbatim above, so a KERSTEL_TOKEN inherited
+  // from a process hooked by an older Kerstel would ride on into this child
+  // and all of its own children -- still valid, for as long as the daemon that
+  // issued it keeps running. Nothing reads it any more; drop it.
+  delete env.KERSTEL_TOKEN;
 
   const preload = preloadPathFor(options.hookDir);
   const existing = env.NODE_OPTIONS ?? "";

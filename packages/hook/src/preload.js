@@ -109,6 +109,9 @@ function install() {
   raw.KERSTEL_SOCKET = socketPath;
   raw.KERSTEL_TOKEN_FILE = tokenFile;
   raw.KERSTEL_HOOK_DIR = hookDir;
+  // Same reason as `kerstel exec`: a token left in this process's environment
+  // by an older Kerstel is still live, and every child would inherit it.
+  delete raw.KERSTEL_TOKEN;
 
   const preloadPath = path.join(hookDir, "preload.cjs");
   const requireFlag = `--require ${JSON.stringify(preloadPath)}`;
