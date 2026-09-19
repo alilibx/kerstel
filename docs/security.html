@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Security model · Kerstel</title>
-<meta name="description" content="What Kerstel protects, how values are encrypted, where the key lives, and the boundary it draws today.">
+<meta name="description" content="What Kerstel protects, what it does not, how values are encrypted, and where plaintext can appear.">
 <link rel="canonical" href="https://kerstel.dev/security">
 <meta property="og:title" content="Security model · Kerstel">
-<meta property="og:description" content="What Kerstel protects, how values are encrypted, where the key lives, and the boundary it draws today.">
+<meta property="og:description" content="What Kerstel protects, what it does not, how values are encrypted, and where plaintext can appear.">
 <meta property="og:url" content="https://kerstel.dev/security">
 <meta property="og:image" content="https://kerstel.dev/og.jpg">
 <meta property="og:image:width" content="1200">
@@ -33,49 +33,68 @@
 
 <main class="wrap">
 <h1>Security model</h1>
-<p class="lede">Kerstel protects secrets at the file level today and is built to add access-level protection next. This page says exactly what that means.</p><h2>What is protected</h2>
-<p>No plaintext secret ever sits in a project file. Your <code>.env</code>, <code>.env.local</code>, and their variants hold references of the form <code>kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.</p>
-<p>The values live in a single vault on your machine at <code>~/.kerstel/vault.db</code>. No secret or vault data is ever sent anywhere. The only network traffic Kerstel makes is the update check and download against GitHub Releases (or the mirror named by <code>KERSTEL_RELEASES_URL</code>), and that request carries nothing about your vault or your secrets, and nothing about you beyond what any web request carries: your IP address and, for the download, the platform named in the binary&#39;s filename. Only <code>kerstel update</code>, <code>kerstel --version</code> (or <code>kerstel version</code>) on a terminal, and <code>kerstel doctor</code> make it; every other command, the runtime hook, and the resolver daemon never touch the network. Kerstel has no account, collects no telemetry, and listens on no network port: the daemon answers over a Unix socket inside the Kerstel home directory (<code>~/.kerstel</code> unless <code>KERSTEL_HOME</code> moves it). The daemon is started with a minimal environment of its own rather than the caller&#39;s, so a <code>BUN_OPTIONS</code> or <code>NODE_OPTIONS</code> set in your shell, and any plaintext an outer script had already resolved, never reach the process that holds the vault key. <code>kerstel doctor</code> warns when <code>BUN_OPTIONS</code> is set, because the one-shot commands do still honour it. Kerstel&#39;s own settings are never taken from the project it is protecting. The binary is a Bun runtime, so it loads the working directory&#39;s <code>.env</code>, and that file is committed by design — a cloned repository could otherwise point your vault at a directory inside itself, force the weaker key-file store, or stop the daemon relocking. Any <code>KERSTEL_*</code> that an env file there names is dropped before a command reads it and named on stderr, whatever its value: the check deliberately does not try to reproduce what Bun&#39;s loader would have put in the environment, since <code>$VAR</code> expansion and escape decoding would each be a way past it. The cost is that a setting you made yourself is ignored too when a project&#39;s env file names it, and Kerstel falls back to its default. The daemon is started in <code>~/.kerstel</code>, so no project or home env file reaches it at all. The daemon&#39;s session token is minted fresh each time it starts and deleted when it stops, and it lives only in a <code>0600</code> file: a wired script&#39;s environment carries the file&#39;s path, never the token, so nothing a child process inherits, prints, or leaves in a crash report unlocks the vault.</p>
-<h2>Encryption at rest</h2>
-<p>Every value is encrypted with AES-256-GCM using a fresh random 96-bit nonce. The authentication tag is verified on every read, so a tampered ciphertext fails loudly instead of decrypting to garbage.</p>
-<p>The 256-bit data key is generated on first run and stored only in your operating system&#39;s credential store:</p>
+<p class="lede">Kerstel moves your secrets out of the files on your disk. It does not stop a program you run from asking for them. This page says exactly where that line falls.</p><h2>The boundary, first</h2>
+<p><strong>Any program running as your user account can read every secret in your vault.</strong> That is the honest statement of today&#39;s boundary, and it is worth reading before anything else on this page.</p>
+<p>Nothing here needs a hooked process or a wired project. A program running as you can:</p>
+<ul>
+<li>run <code>kerstel get &lt;scope&gt;/&lt;KEY&gt; --reveal</code>, which prints the value and needs no prompt;</li>
+<li>read <code>~/.kerstel/session.token</code> and ask the resolver daemon for any key over its socket;</li>
+<li>on macOS, ask the Keychain for the vault&#39;s data key through the same <code>security</code> tool Kerstel uses, and get it without a prompt, because the item&#39;s access list trusts that tool.</li>
+</ul>
+<p>The <code>0700</code> home directory, the <code>0600</code> socket and token file, and the OS credential store all keep <em>other users on the machine</em> out. None of them keeps <em>you</em> out, and a malicious <code>postinstall</code> script, a compromised editor extension, or a coding agent you gave shell access runs as you.</p>
+<p>So Kerstel is worth having for a specific, common class of leak, and not for others:</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
-<th>Platform</th>
-<th>Store</th>
+<th>It closes</th>
+<th>It does not close</th>
 </tr>
 </thead>
 <tbody><tr>
-<td>macOS</td>
-<td>Keychain</td>
+<td>A secret sitting in plaintext in <code>.env</code> on disk</td>
+<td>A program running as you asking for the secret</td>
 </tr>
 <tr>
-<td>Linux</td>
-<td>Secret Service (libsecret)</td>
+<td>That file reaching git history, a backup, or a sync folder</td>
+<td>Malware that already runs code on your machine</td>
+</tr>
+<tr>
+<td>A tool or agent that <strong>reads files</strong> finding credentials</td>
+<td>A tool or agent you let <strong>execute</strong></td>
 </tr>
 </tbody></table>
-</div><p>The key is never written to the vault file, never logged, and never printed. It is also never replaced by accident: a new key is minted only on a machine with no vault sealed with one, and a credential store that fails to answer is treated as holding a key, so the outcome is an error naming the store rather than a fresh key over the real one. Windows is not supported yet. On a Linux machine without a Secret Service provider, Kerstel falls back to a key file with <code>0600</code> permissions and warns you every time it does.</p>
-<p>Kerstel reaches the credential store through the operating system&#39;s own tool: <code>security</code> on macOS, <code>secret-tool</code> on Linux. It runs that tool only from a fixed list of system directories (<code>/usr/bin</code> and <code>/bin</code>, plus <code>/usr/local/bin</code> and the NixOS and Guix system profiles on Linux), and only when the directory and the file are owned by root and writable by nobody else. It never looks on <code>PATH</code>: <code>npm run</code> and <code>bun run</code> put <code>node_modules/.bin</code> first on <code>PATH</code>, so a dependency could otherwise ship a fake <code>security</code> and receive the data key the next time a wired script opened the vault. If the tool is not in one of those directories, Kerstel says so, and how to install it there or switch to the key file instead.</p>
+</div><p>That is the level Kerstel ships today. The <a href="/roadmap">roadmap</a> calls the next one access gating: the daemon already sees which process asks for which key, and the plan is an approval prompt for one it does not recognise.</p>
+<h2>What is protected</h2>
+<p>No plaintext secret sits in a project file. Your <code>.env</code>, <code>.env.local</code>, and their variants hold references of the form <code>kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.</p>
+<p>The values live in one vault on your machine, at <code>~/.kerstel/vault.db</code>. Kerstel has no account, collects no telemetry, and listens on no network port.</p>
+<p>The only network traffic is the update check and download against GitHub Releases, or the mirror named by <code>KERSTEL_RELEASES_URL</code>. That request carries nothing about your vault or your secrets, and nothing about you beyond what any web request carries: your IP address, and for the download the platform in the binary&#39;s filename. Only <code>kerstel update</code>, <code>kerstel --version</code> (or <code>kerstel version</code>) on a terminal, and <code>kerstel doctor</code> make it. Every other command, the runtime hook, and the resolver daemon never touch the network.</p>
+<h2>Encryption at rest</h2>
+<p>Every value is encrypted with AES-256-GCM under a fresh random 96-bit nonce. The authentication tag is verified on every read, so a tampered ciphertext fails loudly instead of decrypting to garbage.</p>
+<p>The 256-bit data key is generated on first run and stored in your operating system&#39;s credential store: the Keychain on macOS, Secret Service on Linux. Windows is not supported yet.</p>
+<p>The key is never written to the vault file, never logged, and never printed. It is never replaced by accident either: a new key is minted only on a machine with no vault sealed with one, and a credential store that fails to answer counts as holding a key, so you get an error naming the store rather than a fresh key written over the real one.</p>
+<p><strong>The exception to &quot;in your credential store&quot; is the key file.</strong> On a machine with no Secret Service provider, or with <code>KERSTEL_KEYCHAIN_BACKEND=file</code>, the key is a base64 file at <code>~/.kerstel/vault.key</code> with <code>0600</code> permissions. Base64 is not encryption: anything that can read that file has your vault. <code>kerstel doctor</code> reports which store is in use and warns while it is the file.</p>
+<p>Kerstel reaches the credential store through the operating system&#39;s own tool, <code>security</code> or <code>secret-tool</code>. It runs that tool only from a fixed list of system directories, and only when the directory and the file are owned by root and writable by nobody else. It never looks on <code>PATH</code>: package managers put <code>node_modules/.bin</code> first there, so a dependency could otherwise ship a fake <code>security</code> and receive the data key.</p>
+<h2>The daemon, the token, and the hook</h2>
+<p>The resolver daemon unlocks the vault once and answers over a Unix socket inside the Kerstel home. Every request carries a session token, which the daemon mints fresh each time it starts and deletes when it stops. The token lives only in a <code>0600</code> file: a wired script&#39;s environment carries that file&#39;s <em>path</em>, never the token, so nothing a child process inherits, prints in a <code>console.log(process.env)</code>, or leaves in a crash report unlocks the vault.</p>
+<p>The daemon is started with a small allowlisted environment of its own and from <code>~/.kerstel</code> rather than your project, so neither a <code>BUN_OPTIONS</code> set in your shell nor any env file can run code in, or reconfigure, the process holding the vault key. <code>kerstel doctor</code> warns when <code>BUN_OPTIONS</code> is set, because the one-shot commands still honour it.</p>
+<p>Kerstel&#39;s own <code>KERSTEL_*</code> settings are never taken from the project it is protecting. The binary is a Bun runtime, so it loads the working directory&#39;s <code>.env</code>, and that file is committed by design; a cloned repository could otherwise point your vault at a directory inside itself or force the weaker key file. Any <code>KERSTEL_*</code> an env file there names is dropped before a command reads it, and named on stderr.</p>
+<h2>Supply chain</h2>
+<p>From their default source, GitHub Releases, the installer and <code>kerstel update</code> download over TLS and verify the release checksum before writing anything, and the update is staged beside the target and renamed into place. Point either at a mirror with <code>KERSTEL_RELEASES_URL</code> or <code>KERSTEL_DOWNLOAD_BASE</code> and that first guarantee is yours to keep: a <code>http://</code> mirror is accepted today, and it serves both the binary and the checksum, so anyone on the path can replace the pair and the verification still passes. Use <code>https://</code>. Requiring it is <a href="https://github.com/alilibx/kerstel/issues/50">issue #50</a>. The checksums are published alongside the binaries, which proves the download arrived intact but not who built it: whoever can alter a release can forge both. Signing them is <a href="https://github.com/alilibx/kerstel/issues/49">issue #49</a>.</p>
+<p>Package managers put <code>node_modules/.bin</code> ahead of <code>PATH</code> when they run a script, and <code>kerstel exec</code> is what <code>init</code> writes into your scripts. A dependency declaring a <code>bin</code> named <code>kerstel</code> would therefore run in place of Kerstel, without a <code>postinstall</code> and without ever being imported. <code>kerstel init</code> and <code>kerstel exec</code> refuse when such a file exists in the project or a parent directory, and <code>kerstel doctor</code> reports it as a problem. <code>init</code> and <code>doctor</code> run from your shell, where that directory is not on <code>PATH</code>, so they are the authoritative checks; the one inside <code>exec</code> catches a bin that stays in place, not a shim that deletes itself before delegating.</p>
 <h2>Where plaintext appears</h2>
-<p>Plaintext leaves the vault in exactly four places:</p>
+<p>Plaintext leaves the vault in five places:</p>
 <ol>
-<li>Inside your app&#39;s process, when code reads <code>process.env.SOME_KEY</code> and the runtime hook resolves the reference.</li>
-<li>In the environment of a child process started by <code>kerstel run -- &lt;command&gt;</code>, or spawned by a process already running under the hook.</li>
-<li>On your terminal, only when you ask with <code>kerstel get &lt;scope&gt;/&lt;KEY&gt; --reveal</code>.</li>
-<li>On your terminal, when you run <code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code>, which prints the resolved value to stdout.</li>
+<li><strong>Inside your app&#39;s process</strong>, when code reads <code>process.env.SOME_KEY</code> and the hook resolves the reference.</li>
+<li><strong>In the environment of a child process</strong>, either one started by <code>kerstel run -- &lt;command&gt;</code>, or one spawned by a process already running under the hook. Building a child&#39;s environment resolves <em>every</em> reference in it, not only the ones the app read, so a <code>git</code> call from a file watcher hands that child the whole set. Same-user programs can read it from <code>ps -E</code> or <code>/proc</code>.</li>
+<li><strong>On your terminal</strong>, when you ask with <code>kerstel get &lt;scope&gt;/&lt;KEY&gt; --reveal</code>.</li>
+<li><strong>On your terminal</strong>, when <code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code> prints a value to stdout.</li>
+<li><strong>Back in your <code>.env</code> files</strong>, when <code>kerstel uninstall</code> restores them. That is the point of the command; it warns afterwards, and names any restored file git already tracks.</li>
 </ol>
-<p>Plaintext never appears in log output, error messages, or audit rows.</p>
-<h2>The boundary today</h2>
-<p>A process that runs code inside your project can read resolved values from <code>process.env</code>. That includes your app, its dependencies, and anything you launch through your package scripts. Kerstel does not try to stop code you chose to run from reading a secret you chose to give it.</p>
-<p>This is file-level protection. It closes the most common leaks: agents and tools that read files, and secrets that end up in git history.</p>
-<p>One dependency trick is closed explicitly. Package managers put <code>node_modules/.bin</code> first on <code>PATH</code> when they run a script, so a dependency declaring a <code>bin</code> named <code>kerstel</code> would run in place of Kerstel for every wired script, without a <code>postinstall</code> and without ever being imported. <code>kerstel init</code> and <code>kerstel exec</code> refuse when such a file exists in the project or a parent directory, and <code>kerstel doctor</code> reports it as a problem. <code>init</code> and <code>doctor</code> run from your shell and are authoritative; the check in <code>exec</code> runs after the package manager has already chosen a <code>kerstel</code>, so it catches a bin that stays in place, not a shim that deletes itself before delegating. That shim is a dependency you installed running code as you, which is the boundary below.</p>
-<h2>What comes next</h2>
-<p>The resolver daemon already sees which process asks for which key. The next protection level uses that: an unrecognized process asking for a key triggers an approval prompt, the way macOS asks before an app reads a Keychain item. Allowlists and Touch ID or polkit for sensitive operations follow. The current design keeps resolution lazy and daemon-mediated so this layer can be added without changing how you wire a project.</p>
+<p>Plaintext never appears in log output, error messages, or audit rows. One exception exists in <code>kerstel init</code>: its overview prints values it classifies as configuration, such as <code>PORT=3000</code>. Today that classification is by name, so a value under a <code>PUBLIC_</code>, <code>VITE_</code> or <code>NEXT_PUBLIC_</code> prefix is printed in full even when it looks like a credential, which reaches terminal scrollback and CI logs. Everything else is shown only as its length.</p>
 <h2>Out of scope</h2>
-<p>Kerstel does not defend against an attacker with root, a compromised OS credential store, or malicious code running after it has been granted a secret.</p>
+<p>Kerstel does not defend against an attacker with root, a compromised OS credential store, code running as your user account, or malicious code running after it has been granted a secret.</p>
 <h2>Read more</h2>
-<p>The full threat model, architecture, and roadmap are in the <a href="https://github.com/alilibx/kerstel/blob/main/docs/superpowers/specs/2026-09-17-kerstel-secrets-manager-design.md">design spec on GitHub</a>.</p>
+<p>The full threat model and architecture are in the <a href="https://github.com/alilibx/kerstel/blob/main/docs/superpowers/specs/2026-09-17-kerstel-secrets-manager-design.md">design spec on GitHub</a>. Security issues are best reported through <a href="https://github.com/alilibx/kerstel/issues">GitHub</a>.</p>
 
 </main>
 <footer class="site-footer">
