@@ -9,7 +9,7 @@ import { updateCommand, versionCommand } from "./commands/update";
 import { bold, fail } from "./output";
 import { printBanner } from "./ui/banner";
 import { cliName } from "./ui/cli-name";
-import { theme } from "./ui/theme";
+import { detectTheme, makeTheme, theme } from "./ui/theme";
 import { githubReleases } from "./update/release-source";
 import { VERSION } from "./version";
 
@@ -58,7 +58,9 @@ export async function runCli(argv: string[]): Promise<number> {
       source: githubReleases(),
       currentVersion: VERSION,
       cli: cliName(),
-      stderr: (text) => process.stderr.write(text),
+      // Styled for stderr's own terminal, and not console.error, which Bun
+      // paints red on a TTY.
+      stderr: (line) => process.stderr.write(`${makeTheme(detectTheme(process.stderr)).dim(line)}\n`),
     });
   }
 

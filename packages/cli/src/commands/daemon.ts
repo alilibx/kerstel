@@ -1,5 +1,5 @@
 import { openContext } from "../context";
-import { connectDaemon, isDaemonRunning } from "../daemon/client";
+import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/client";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
 import { fail, info, ok } from "../output";
@@ -112,13 +112,10 @@ async function startCommand(): Promise<number> {
 }
 
 async function stopCommand(): Promise<number> {
-  if (!(await isDaemonRunning())) {
+  if (!(await stopDaemonIfRunning())) {
     info("Kerstel daemon is not running.");
     return 0;
   }
-  const client = await connectDaemon();
-  await client.shutdown();
-  client.close();
   ok("Kerstel daemon stopped.");
   return 0;
 }

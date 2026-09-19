@@ -15,6 +15,8 @@ export interface UpdateOptions {
   checkOnly?: boolean;
   /** Called as each stage begins, for a spinner or a log line. */
   onStage?: (stage: "download" | "verify" | "install") => void;
+  /** How long a download may take to answer with headers. The body has no limit: a slow link is not an error. */
+  headerTimeoutMs?: number;
 }
 
 export type UpdateOutcome =
@@ -41,21 +43,39 @@ export async function performUpdate(options: UpdateOptions): Promise<UpdateOutco
   const from = options.currentVersion;
   if (options.checkOnly) return { kind: "available", from, to: latest };
 
-  options.onStage?.("download");
-  const bytes = await download(options.source.assetUrl(latest, options.asset));
-  const checksums = await download(options.source.checksumsUrl(latest));
+  const headerTimeoutMs = options.headerTimeoutMs ?? 30_000;
 
-  options.onStage?.("verify");
+  // The checksum file first: it is tiny, and a release that cannot verify
+  // this asset should fail before the asset's tens of megabytes are pulled.
+  options.onStage?.("download");
+  const checksums = await download(options.source.checksumsUrl(latest), headerTimeoutMs);
   const expected = checksumFor(new TextDecoder().decode(checksums), options.asset);
   if (!expected) throw new Error(`SHA256SUMS has no entry for ${options.asset}; nothing was installed`);
+  const bytes = await download(options.source.assetUrl(latest, options.asset), headerTimeoutMs);
+
+  options.onStage?.("verify");
   const actual = createHash("sha256").update(bytes).digest("hex");
   if (actual !== expected) throw new Error(`checksum mismatch for ${options.asset}; nothing was installed`);
 
   options.onStage?.("install");
-  const staged = join(dirname(options.targetPath), `.kerstel-update.${process.pid}`);
+  const dir = dirname(options.targetPath);
+  const staged = join(dir, `.kerstel-update.${process.pid}`);
+  // Ctrl-C between the write and the rename would otherwise leave a stray
+  // binary-sized file next to kerstel forever; install.sh traps EXIT for the
+  // same reason.
+  const onSignal = () => {
+    rmSync(staged, { force: true });
+    process.exit(130);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   try {
-    writeFileSync(staged, bytes);
-    chmodSync(staged, 0o755);
+    try {
+      writeFileSync(staged, bytes);
+      chmodSync(staged, 0o755);
+    } catch (error) {
+      throw new Error(`could not write to ${dir}; nothing was installed (${(error as Error).message})`);
+    }
     const reported = reportedVersion(staged);
     if (reported !== latest) {
       throw new Error(
@@ -66,16 +86,28 @@ export async function performUpdate(options: UpdateOptions): Promise<UpdateOutco
   } catch (error) {
     rmSync(staged, { force: true });
     throw error;
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
   }
   return { kind: "updated", from, to: latest };
 }
 
-async function download(url: string): Promise<Uint8Array> {
+/**
+ * The timeout covers the wait for headers only. Once the body is flowing it
+ * may take as long as the link needs: a 60 MB binary over a slow connection
+ * is a working update, not a hung one.
+ */
+async function download(url: string, headerTimeoutMs: number): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), headerTimeoutMs);
   let response: Response;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+    response = await fetch(url, { signal: controller.signal });
   } catch (error) {
     throw new Error(`could not download ${url}: ${(error as Error).message}`);
+  } finally {
+    clearTimeout(timer);
   }
   if (!response.ok) throw new Error(`could not download ${url} (HTTP ${response.status})`);
   return new Uint8Array(await response.arrayBuffer());

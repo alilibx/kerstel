@@ -54,7 +54,14 @@ function release(latest: string | null): ReleaseSource {
 }
 
 function deps(latest: string | null, target: string, compiled = true) {
-  return { source: release(latest), targetPath: target, asset: "kerstel-test", compiled, currentVersion: "0.1.0" };
+  return {
+    source: release(latest),
+    targetPath: target,
+    asset: "kerstel-test",
+    compiled,
+    currentVersion: "0.1.0",
+    stopDaemon: async () => false,
+  };
 }
 
 test("update says so when already on the latest release", async () => {
@@ -73,6 +80,42 @@ test("update installs the newer release and names both versions", async () => {
   expect(code).toBe(0);
   expect(captured.join("\n")).toContain("Updated kerstel from 0.1.0 to 0.1.1");
   expect(readFileSync(target, "utf8")).toContain("echo 0.1.1");
+});
+
+test("update still exits 0 when the old daemon cannot be stopped after the swap", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  const target = fakeBinary("0.1.0");
+  capture();
+  const code = await updateCommand([], {
+    ...deps("0.1.1", target),
+    stopDaemon: async () => {
+      throw new Error("token mismatch");
+    },
+  });
+  expect(code).toBe(0);
+  expect(captured.join("\n")).toContain("Updated kerstel from 0.1.0 to 0.1.1");
+  expect(captured.join("\n")).toMatch(/daemon.*token mismatch/);
+  expect(captured.join("\n")).toContain("daemon stop");
+  expect(readFileSync(target, "utf8")).toContain("echo 0.1.1");
+});
+
+test("update says when it stopped the old daemon", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  capture();
+  const code = await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), stopDaemon: async () => true });
+  expect(code).toBe(0);
+  expect(captured.join("\n")).toMatch(/Stopped the resolver daemon/);
+});
+
+test("a failed update surfaces as an error naming that nothing was installed", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  const target = fakeBinary("0.1.0");
+  const source = release("0.1.1");
+  const badSource: ReleaseSource = { ...source, checksumsUrl: (v) => source.assetUrl(v, "not-a-checksum-file") };
+  await expect(updateCommand([], { ...deps("0.1.1", target), source: badSource })).rejects.toThrow(
+    /nothing was installed/,
+  );
+  expect(readFileSync(target, "utf8")).toContain("echo 0.1.0");
 });
 
 test("update --check reports the newer release without installing it", async () => {
@@ -150,5 +193,7 @@ test("version on a terminal adds the update status on stderr, keeping stdout bar
   const stderr = (text: string) => errors.push(text);
   expect(await versionCommand({ isTTY: true, source, currentVersion: "0.1.0", cli: "ks", stderr })).toBe(0);
   expect(captured).toEqual(["0.1.0"]);
-  expect(errors.join("")).toBe("0.1.1 is available. Run ks update.\n");
+  // Plain text: the caller styles it for its own stream, so stdout's colour
+  // detection never leaks escape codes into a redirected stderr.
+  expect(errors).toEqual(["0.1.1 is available. Run ks update."]);
 });

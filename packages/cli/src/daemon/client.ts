@@ -200,6 +200,25 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
   };
 }
 
+/**
+ * Stops the daemon on the default socket, if one answers, and returns whether
+ * it did. `shutdown()` returns once the request is sent, not once the daemon
+ * has let go of the vault and socket, so this waits (up to 5s) for the socket
+ * to stop answering: `uninstall` deletes the home right after, and `update`
+ * wants the next resolution to start the new binary, not race the old one.
+ * Shared by `daemon stop`, `uninstall`, and `update`.
+ */
+export async function stopDaemonIfRunning(): Promise<boolean> {
+  if (!(await isDaemonRunning())) return false;
+  const client = await connectDaemon();
+  await client.shutdown();
+  client.close();
+  for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
+    await Bun.sleep(100);
+  }
+  return true;
+}
+
 export async function isDaemonRunning(sock: string = defaultSocketPath()): Promise<boolean> {
   // The overwhelmingly common case is "no daemon running at all" -- a socket
   // file that was never created. Short-circuit on that without touching

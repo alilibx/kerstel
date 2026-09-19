@@ -1,7 +1,8 @@
 import { realpathSync } from "node:fs";
-import { connectDaemon, isDaemonRunning } from "../daemon/client";
+import { stopDaemonIfRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
-import { dim, fail, info, ok } from "../output";
+import { fail, info, ok, yellow } from "../output";
+import { SYMBOLS } from "../ui/theme";
 import { cliName } from "../ui/cli-name";
 import { performUpdate } from "../update/install";
 import { githubReleases, type ReleaseSource } from "../update/release-source";
@@ -17,6 +18,8 @@ export interface UpdateDeps {
   asset: string | null;
   compiled: boolean;
   currentVersion: string;
+  /** Stops a running daemon; resolves to whether one was running. */
+  stopDaemon: () => Promise<boolean>;
 }
 
 function realDeps(): UpdateDeps {
@@ -26,6 +29,7 @@ function realDeps(): UpdateDeps {
     asset: assetName(process.platform, process.arch),
     compiled: isCompiledBinary(),
     currentVersion: VERSION,
+    stopDaemon: stopDaemonIfRunning,
   };
 }
 
@@ -41,36 +45,40 @@ export interface VersionDeps {
   source: ReleaseSource;
   currentVersion: string;
   cli: string;
-  /** Where the status line goes. Defaults to stderr. */
-  stderr: (text: string) => void;
+  /** Receives the plain status line; the caller styles it for its own stream and adds the newline. */
+  stderr: (line: string) => void;
 }
 
 /**
  * `kerstel --version`. Stdout carries the bare version and nothing else, so
  * `install.sh`, the release smoke tests, and anyone's script keep working.
- * On a terminal the status goes to stderr as a second, dim line; piped, the
+ * On a terminal the status goes to stderr as a second line; piped, the
  * command never touches the network at all.
  */
 export async function versionCommand(deps: VersionDeps): Promise<number> {
   console.log(deps.currentVersion);
   if (!deps.isTTY) return 0;
   const latest = await deps.source.latestVersion();
-  // Not console.error: on a terminal Bun paints that red.
-  deps.stderr(`${dim(versionStatusLine(deps.currentVersion, latest, deps.cli))}\n`);
+  deps.stderr(versionStatusLine(deps.currentVersion, latest, deps.cli));
   return 0;
 }
 
 /**
  * The old daemon is the old binary, still serving until it goes idle. Stop
  * it so the next resolution starts the new one; nothing else has to change,
- * since it starts on its own when a script needs a secret.
+ * since it starts on its own when a script needs a secret. The update is
+ * already installed by now, so a daemon that will not stop is a warning
+ * with the command to retry, never a failed update.
  */
-async function stopOldDaemon(): Promise<void> {
-  if (!(await isDaemonRunning())) return;
-  const client = await connectDaemon();
-  await client.shutdown();
-  client.close();
-  info("Stopped the resolver daemon; the new version starts on its own when needed.");
+async function stopOldDaemon(stopDaemon: () => Promise<boolean>, cli: string): Promise<void> {
+  try {
+    if (await stopDaemon()) info("Stopped the resolver daemon; the new version starts on its own when needed.");
+  } catch (error) {
+    console.log(
+      `${yellow(SYMBOLS.warn)}  Could not stop the old resolver daemon (${(error as Error).message}). ` +
+        `Run ${cli} daemon stop so the new version takes over.`,
+    );
+  }
 }
 
 export async function updateCommand(args: string[], deps: UpdateDeps = realDeps()): Promise<number> {
@@ -116,7 +124,7 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
       return 0;
     case "updated":
       ok(`Updated kerstel from ${outcome.from} to ${outcome.to}.`);
-      await stopOldDaemon();
+      await stopOldDaemon(deps.stopDaemon, cli);
       return 0;
   }
 }

@@ -2,7 +2,7 @@ import { accessSync, constants, lstatSync, readlinkSync, realpathSync, rmSync, w
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { openExistingVault } from "../context";
-import { connectDaemon, isDaemonRunning } from "../daemon/client";
+import { stopDaemonIfRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
 import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
@@ -127,20 +127,6 @@ function printPlan(plan: UninstallPlan): void {
     plan.unreadableBackups.map((b) => `${b.project}: ${b.backupDir} (${b.reason})`),
   );
   if (lost.length > 0) step("Would be lost", lost.map(yellow));
-}
-
-async function stopDaemonIfRunning(): Promise<void> {
-  if (!(await isDaemonRunning())) return;
-  const client = await connectDaemon();
-  await client.shutdown();
-  client.close();
-  // shutdown() returns once the request is sent, not once the daemon has let
-  // go of the vault and socket. Deleting the home under a daemon still
-  // writing to it could leave a stray socket or vault file behind.
-  for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
-    await Bun.sleep(100);
-  }
-  ok("Stopped the Kerstel daemon.");
 }
 
 /**
@@ -283,7 +269,7 @@ export async function uninstallCommand(
   // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
   // a leftover key with no vault is harmless, but a keyless vault would block
   // every re-run if the key delete happened first and this one failed after.
-  await stopDaemonIfRunning();
+  if (await stopDaemonIfRunning()) ok("Stopped the Kerstel daemon.");
   const home = kerstelHome();
   rmSync(home, { recursive: true, force: true });
   ok(`Deleted ${home}.`);

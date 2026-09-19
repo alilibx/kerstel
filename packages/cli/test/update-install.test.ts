@@ -11,6 +11,7 @@ const dirs: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
 
 afterEach(() => {
+  assetRequests.length = 0;
   while (servers.length) servers.pop()!.stop(true);
   while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
@@ -36,7 +37,11 @@ interface FakeRelease {
   /** Checksum line served. Defaults to the real checksum of assetBody. */
   checksums?: string;
   missingAsset?: boolean;
+  /** Stream the asset body in chunks this far apart, to imitate a slow link. */
+  chunkDelayMs?: number;
 }
+
+const assetRequests: string[] = [];
 
 function fakeRelease(release: FakeRelease): ReleaseSource {
   const body = release.assetBody ?? script(release.latest ?? "0.0.0");
@@ -48,7 +53,21 @@ function fakeRelease(release: FakeRelease): ReleaseSource {
     fetch(req) {
       const path = new URL(req.url).pathname;
       if (path.endsWith("/SHA256SUMS")) return new Response(checksums);
-      if (path.endsWith(`/${ASSET}`) && !release.missingAsset) return new Response(body);
+      if (path.endsWith(`/${ASSET}`)) assetRequests.push(path);
+      if (path.endsWith(`/${ASSET}`) && !release.missingAsset) {
+        if (!release.chunkDelayMs) return new Response(body);
+        const delay = release.chunkDelayMs;
+        const stream = new ReadableStream({
+          async start(controller) {
+            for (const char of body) {
+              await Bun.sleep(delay);
+              controller.enqueue(new TextEncoder().encode(char));
+            }
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "content-length": String(body.length) } });
+      }
       return new Response("not found", { status: 404 });
     },
   });
@@ -137,6 +156,42 @@ test("a checksum file without this asset installs nothing", async () => {
     }),
   ).rejects.toThrow(/no entry for kerstel-test-x64/);
   expect(readFileSync(target, "utf8")).toBe(script("0.1.0"));
+  // The checksum file is read first, so a release that cannot verify this
+  // asset never costs the asset download.
+  expect(assetRequests).toEqual([]);
+});
+
+test("an unwritable install directory is named, and nothing is installed", async () => {
+  if (process.getuid?.() === 0) return; // root writes anywhere
+  const target = installedBinary("0.1.0");
+  const dir = join(target, "..");
+  chmodSync(dir, 0o500);
+  try {
+    await expect(
+      performUpdate({
+        source: fakeRelease({ latest: "0.1.1" }),
+        currentVersion: "0.1.0",
+        targetPath: target,
+        asset: ASSET,
+      }),
+    ).rejects.toThrow(new RegExp(`could not write to ${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}; nothing was installed`));
+  } finally {
+    chmodSync(dir, 0o700);
+  }
+  expect(readFileSync(target, "utf8")).toBe(script("0.1.0"));
+  expect(readdirSync(dir)).toEqual(["kerstel"]);
+});
+
+test("a slow download still completes: the timeout covers the headers, not the body", async () => {
+  const target = installedBinary("0.1.0");
+  const outcome = await performUpdate({
+    source: fakeRelease({ latest: "0.1.1", chunkDelayMs: 20 }),
+    currentVersion: "0.1.0",
+    targetPath: target,
+    asset: ASSET,
+    headerTimeoutMs: 150,
+  });
+  expect(outcome).toEqual({ kind: "updated", from: "0.1.0", to: "0.1.1" });
 });
 
 test("a missing asset installs nothing", async () => {
