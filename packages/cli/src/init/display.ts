@@ -73,8 +73,10 @@ export function maskForDisplay(source: string): string {
 
     // `unsupported` is 1-based, and naming the key matches the warning the
     // wizard already printed for this line.
+    // A `line N` label is not a key, so it is not rendered as one.
     const key = unsupportedKeys.get(i + 1);
-    out += (key === undefined ? UNPARSED_MASK : `${key}=${UNPARSED_MASK}`) + line.eol;
+    const named = key !== undefined && !key.startsWith("line ");
+    out += (named ? `${key}=${UNPARSED_MASK}` : UNPARSED_MASK) + line.eol;
   }
 
   return out;

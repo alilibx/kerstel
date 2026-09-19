@@ -6,7 +6,7 @@ import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
 import { detectProject, type DetectedProject } from "../init/detect";
-import { entries, parseDotenv, serializeDotenv, setValue } from "../init/dotenv-file";
+import { entries, parseDotenv, serializeDotenv, setValue, type UnsupportedValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import { maskForDisplay } from "../init/display";
 import { renderChangeSummary, renderOverview, valueColumn } from "../init/overview";
@@ -365,20 +365,30 @@ function planEnvRewrites(loaded: LoadedEnvFile[], references: Map<string, string
  * leave a real value behind, and the question this answers -- "is it safe to
  * commit these files?" -- may only be answered by what the files will say.
  */
-function plaintextKeysRemaining(contents: string[]): string[] {
+function plaintextKeysRemaining(files: { name: string; contents: string }[]): string[] {
   const remaining: string[] = [];
-  for (const source of contents) {
-    const file = parseDotenv(source);
+  for (const { name, contents } of files) {
+    const file = parseDotenv(contents);
     for (const pair of entries(file)) {
       if (parseReference(pair.value) !== null) continue;
       if (!remaining.includes(pair.key)) remaining.push(pair.key);
     }
     // A line the parser could not read is a line that was never rewritten.
     for (const unsupported of file.unsupported) {
-      if (!remaining.includes(unsupported.key)) remaining.push(unsupported.key);
+      const label = untouchedLabel(name, unsupported);
+      if (!remaining.includes(label)) remaining.push(label);
     }
   }
   return remaining;
+}
+
+/**
+ * How an unsupported line is named in a list: by its key when the parser found
+ * one, otherwise by file and line (`.env line 4`), so two files' fourth lines
+ * do not collapse into one entry and the user knows which file to open.
+ */
+function untouchedLabel(fileName: string, unsupported: UnsupportedValue): string {
+  return unsupported.key.startsWith("line ") ? `${fileName} ${unsupported.key}` : unsupported.key;
 }
 
 interface GitignoreChange {
@@ -728,7 +738,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       // they came here to check. Keys are NAMED; values still never are.
       const kept = decisions.filter((d) => d.target === "plaintext").map((d) => d.key.key);
       const untouched = [
-        ...new Set(loaded.flatMap((entry) => entry.file.unsupported.map((u) => u.key))),
+        ...new Set(loaded.flatMap((entry) => entry.file.unsupported.map((u) => untouchedLabel(entry.info.name, u)))),
       ];
 
       if (kept.length + untouched.length > 0) {
@@ -753,10 +763,11 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       return 0;
     }
 
-    const plannedContents = loaded.map(
-      (entry) => envChanges.find((change) => change.path === entry.info.path)?.after ?? entry.original,
-    );
-    const plaintext = plaintextKeysRemaining(plannedContents);
+    const plannedFiles = loaded.map((entry) => ({
+      name: entry.info.name,
+      contents: envChanges.find((change) => change.path === entry.info.path)?.after ?? entry.original,
+    }));
+    const plaintext = plaintextKeysRemaining(plannedFiles);
 
     // --- .gitignore: asked now, written during apply --------------------------
     const gitignore = options.dryRun ? null : await planGitignore(detected.root, plaintext, prompter);
