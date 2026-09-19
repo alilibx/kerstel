@@ -11,6 +11,7 @@ import {
   type Response,
   type StatusOk,
 } from "./protocol";
+import { daemonEnv } from "./env";
 import { daemonServeCommand } from "./spawn";
 import { readToken } from "./token";
 
@@ -280,7 +281,10 @@ export async function ensureDaemon(options: EnsureOptions = {}): Promise<DaemonC
   }
 
   const command = options.spawnCommand ?? daemonServeCommand();
-  Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+  // Never this process's environment: see daemonEnv for what an inherited
+  // BUN_OPTIONS or a nested exec's resolved plaintext would do to the process
+  // that holds the vault key.
+  Bun.spawn(command, { env: daemonEnv(), stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
 
   const deadline = Date.now() + (options.timeoutMs ?? 10_000);
   let lastError: unknown;

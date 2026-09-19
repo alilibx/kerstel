@@ -1,5 +1,6 @@
 import { openContext } from "../context";
 import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/client";
+import { daemonEnv } from "../daemon/env";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
 import { fail, info, ok } from "../output";
@@ -90,7 +91,10 @@ async function startCommand(): Promise<number> {
     return 0;
   }
 
+  // Never this process's environment: see daemonEnv for what an inherited
+  // BUN_OPTIONS would do to the process that holds the vault key.
   Bun.spawn(daemonServeCommand(), {
+    env: daemonEnv(),
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

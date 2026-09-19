@@ -179,6 +179,7 @@ export async function doctorCommand(
       home: homeForDisplay(),
       version: VERSION,
       latestVersion: await latestVersion,
+      bunOptions: process.env.BUN_OPTIONS ?? null,
     };
 
     const checks = gatherChecks(facts);

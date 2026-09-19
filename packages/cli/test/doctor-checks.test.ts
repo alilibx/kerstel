@@ -36,9 +36,20 @@ function allPassFacts(overrides: Partial<DoctorFacts> = {}): DoctorFacts {
     home: "~/.kerstel",
     version: "0.1.0",
     latestVersion: "0.1.0",
+    bunOptions: null,
     ...overrides,
   };
 }
+
+test("Environment: warns when BUN_OPTIONS is set, and is absent otherwise", () => {
+  expect(checkFor(gatherChecks(allPassFacts()), "Environment")).toBeUndefined();
+  const check = checkFor(gatherChecks(allPassFacts({ bunOptions: "--preload /tmp/x.js" })), "Environment");
+  expect(check?.status).toBe("warn");
+  expect(check?.detail).toContain("BUN_OPTIONS");
+  expect(check?.fix).toContain("unset BUN_OPTIONS");
+  // The value itself is never echoed: a preload path can be a long, private one.
+  expect(check?.detail).not.toContain("/tmp/x.js");
+});
 
 function checkFor(checks: ReturnType<typeof gatherChecks>, label: string) {
   return checks.find((check) => check.label === label);
