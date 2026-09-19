@@ -4,6 +4,7 @@ import { collectKeys, type LoadedEnvFile } from "./collect";
 import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } from "./detect";
 import { parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
+import { findShadowedBinaries } from "./shadow";
 import { wirePackageJson } from "./wiring";
 
 export interface ProjectStatus {
@@ -18,6 +19,8 @@ export interface ProjectStatus {
   references: { total: number; resolvable: number; unresolved: string[] };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
+  /** `node_modules/.bin/kerstel` and friends in this project or an ancestor, absolute. See shadow.ts. */
+  shadowed: string[];
 }
 
 /**
@@ -92,5 +95,6 @@ export function projectStatus(
     scripts: { wrappable: wired + wiring.rewrites.length, wired },
     references: { total, resolvable, unresolved },
     unreadable,
+    shadowed: findShadowedBinaries(detected.root),
   };
 }

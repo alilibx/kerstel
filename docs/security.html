@@ -69,6 +69,7 @@
 <h2>The boundary today</h2>
 <p>A process that runs code inside your project can read resolved values from <code>process.env</code>. That includes your app, its dependencies, and anything you launch through your package scripts. Kerstel does not try to stop code you chose to run from reading a secret you chose to give it.</p>
 <p>This is file-level protection. It closes the most common leaks: agents and tools that read files, and secrets that end up in git history.</p>
+<p>One dependency trick is closed explicitly. Package managers put <code>node_modules/.bin</code> first on <code>PATH</code> when they run a script, so a dependency declaring a <code>bin</code> named <code>kerstel</code> would run in place of Kerstel for every wired script, without a <code>postinstall</code> and without ever being imported. <code>kerstel init</code> and <code>kerstel exec</code> refuse when such a file exists in the project or a parent directory, and <code>kerstel doctor</code> reports it as a problem.</p>
 <h2>What comes next</h2>
 <p>The resolver daemon already sees which process asks for which key. The next protection level uses that: an unrecognized process asking for a key triggers an approval prompt, the way macOS asks before an app reads a Keychain item. Allowlists and Touch ID or polkit for sensitive operations follow. The current design keeps resolution lazy and daemon-mediated so this layer can be added without changing how you wire a project.</p>
 <h2>Out of scope</h2>

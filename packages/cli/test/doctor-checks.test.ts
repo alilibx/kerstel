@@ -16,7 +16,18 @@ const passingProject: ProjectStatus = {
   scripts: { wrappable: 3, wired: 3 },
   references: { total: 9, resolvable: 9, unresolved: [] },
   unreadable: [],
+  shadowed: [],
 };
+
+test("Wrapper: a kerstel in node_modules/.bin is a problem, and absent otherwise", () => {
+  expect(checkFor(gatherChecks(allPassFacts()), "Wrapper")).toBeUndefined();
+  const shadowed = ["/project/node_modules/.bin/kerstel"];
+  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, shadowed } }));
+  const check = checkFor(checks, "Wrapper");
+  expect(check?.status).toBe("problem");
+  expect(check?.detail).toContain("/project/node_modules/.bin/kerstel");
+  expect(exitCode(checks)).toBe(1);
+});
 
 function allPassFacts(overrides: Partial<DoctorFacts> = {}): DoctorFacts {
   return {

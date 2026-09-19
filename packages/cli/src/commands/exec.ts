@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { openContext } from "../context";
 import { ensureDaemon } from "../daemon/client";
+import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { fail } from "../output";
 import { socketPath } from "../paths";
 import { cliName } from "../ui/cli-name";
@@ -94,6 +95,17 @@ export async function execCommand(args: string[]): Promise<number> {
   if (command.length === 0) {
     fail(`Usage: ${cliName()} exec -- <command> [args...]`);
     return 2;
+  }
+
+  // If a dependency has planted a `kerstel` in node_modules/.bin, npm ran that
+  // instead of this binary and this process is either its delegate or a run
+  // from outside npm. Either way the project's wiring is compromised, and the
+  // loud, immediate failure of every wired script is the point. Checked before
+  // the vault is opened or the daemon started, so nothing is unlocked for it.
+  const shadowed = findShadowedBinaries(process.cwd());
+  if (shadowed.length > 0) {
+    fail(shadowedBinaryMessage(shadowed));
+    return 1;
   }
 
   // Opening the context is what installs/refreshes ~/.kerstel/hook/ and mints

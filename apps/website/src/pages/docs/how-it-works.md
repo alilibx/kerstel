@@ -50,6 +50,8 @@ The hook is a small, dependency-free preload that runs before your app code. It 
 
 `kerstel exec -- <command>` is the whole wrapper, and it resolves nothing itself. It sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN` and `KERSTEL_HOOK_DIR` for the child, appends `--require <the hook>` to `NODE_OPTIONS`, and starts the command. When the command it is about to run is `bun` or `bunx`, it also inserts `--preload=<the hook>` directly after the executable, because Bun does not honour `NODE_OPTIONS=--require`. Then the hook takes over and resolves each reference lazily, on the read.
 
+One check comes first. npm, pnpm, yarn, and bun put `node_modules/.bin` in front of `PATH` when they run a script, so a dependency that declared a `bin` named `kerstel` would be what `npm run dev` executes, with the full command line and access to the vault. Kerstel is not an npm package, so nothing legitimate installs one. `kerstel exec` and `kerstel init` refuse when such a file exists in the project or any parent directory, before the vault is opened, and name it; `kerstel doctor` reports it as a problem.
+
 ### Wiring it by hand
 
 A project with no `package.json` scripts to wrap runs its command through the wrapper directly:

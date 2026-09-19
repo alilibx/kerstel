@@ -18,6 +18,7 @@ import {
   type Choice,
   type Prompter,
 } from "../init/prompts";
+import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { GITIGNORE_NOTE, renderDiff, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
@@ -577,6 +578,15 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
             "(Kerstel wires package scripts, so it needs one).",
     );
     return 2;
+  }
+
+  // Before anything is derived, shown, or written: the wiring this wizard is
+  // about to propose hands every script to whatever `kerstel` npm finds first,
+  // and npm looks in node_modules/.bin before PATH. See init/shadow.ts.
+  const shadowed = findShadowedBinaries(detected.root);
+  if (shadowed.length > 0) {
+    fail(shadowedBinaryMessage(shadowed));
+    return 1;
   }
 
   const scope = options.scope ?? deriveScope({
