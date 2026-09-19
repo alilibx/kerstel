@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctorCommand } from "../src/commands/doctor";
@@ -30,6 +30,17 @@ const emptyVault = { getSecret: () => null };
 test("projectStatus returns null outside a project", () => {
   const root = makeProject({ ".env": "A=1\n" });
   expect(projectStatus(root, emptyVault)).toBeNull();
+});
+
+test("projectStatus reports a kerstel planted in node_modules/.bin", () => {
+  const root = makeProject({ "package.json": '{ "name": "shadowed" }', ".env": "A=1\n" });
+  mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(root, "node_modules", ".bin", "kerstel"), "#!/bin/sh\n");
+  const status = projectStatus(root, emptyVault);
+  expect(status?.shadowed).toEqual([join(root, "node_modules", ".bin", "kerstel")]);
+
+  const clean = makeProject({ "package.json": '{ "name": "clean" }', ".env": "A=1\n" });
+  expect(projectStatus(clean, emptyVault)?.shadowed).toEqual([]);
 });
 
 test("projectStatus returns null against a malformed package.json", () => {
