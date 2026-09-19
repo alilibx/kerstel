@@ -11,6 +11,8 @@ export interface Page {
   url: string;
   meta: FrontMatter;
   body: string;
+  /** Renders the body to HTML. Pages without one are rendered as plain Markdown. */
+  renderBody?: (markdown: string) => string;
 }
 
 export function toOutPath(source: string): string {
@@ -48,12 +50,19 @@ export function collectPages(pagesDir: string): Page[] {
  * /<slug>. These files live outside the pages directory so GitHub renders them
  * too, which is why they carry no front matter and get their meta here.
  */
-export function rootPage(file: string, slug: string, meta: FrontMatter): Page {
-  return {
+export function rootPage(
+  file: string,
+  slug: string,
+  meta: FrontMatter,
+  renderBody?: (markdown: string) => string,
+): Page {
+  const page: Page = {
     source: `${slug}.md`,
     outPath: `${slug}.html`,
     url: `/${slug}`,
     meta,
     body: readFileSync(file, "utf8"),
   };
+  if (renderBody) page.renderBody = renderBody;
+  return page;
 }

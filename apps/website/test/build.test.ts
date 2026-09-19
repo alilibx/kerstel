@@ -96,15 +96,31 @@ describe("build output", () => {
     expect(html).not.toContain("api.github.com");
   });
 
-  test("changelog page renders the repo-root CHANGELOG.md and is linked from every page", () => {
+  test("changelog page renders the repo-root CHANGELOG.md as a timeline and is linked from every page", () => {
     const changelog = readFileSync(resolve(REPO_ROOT, "CHANGELOG.md"), "utf8");
-    const version = changelog.match(/^## (\d+\.\d+\.\d+)/m)?.[1];
-    expect(version).toBeDefined();
+    const top = changelog.match(/^## (\d+\.\d+\.\d+\S*) \((unreleased|\d{4}-\d{2}-\d{2})\)$/m);
+    expect(top).not.toBeNull();
+    const [, version, when] = top!;
     const html = readFileSync(join(out, "changelog.html"), "utf8");
-    expect(html).toContain(`<h2>${version}`);
+    expect(html).toContain(`<li class="release${when === "unreleased" ? " is-unreleased" : ""}" id="${version}">`);
+    expect(html).toContain(`<a href="#${version}">${version}</a>`);
+    expect(html).toContain(`<ol class="timeline">`);
     for (const file of htmlFiles) {
       expect(readFileSync(join(out, file), "utf8"), file).toContain('href="/changelog"');
     }
+  });
+
+  test("changelog page shows the newest release video above the timeline, with a poster that ships", () => {
+    const html = readFileSync(join(out, "changelog.html"), "utf8");
+    const figure = html.indexOf('<figure class="release-video">');
+    expect(figure).toBeGreaterThan(-1);
+    expect(figure).toBeLessThan(html.indexOf('<ol class="timeline">'));
+    const poster = html.match(/poster="(\/[^"]+)"/)?.[1];
+    const video = html.match(/<source src="(\/[^"]+)" type="video\/mp4">/)?.[1];
+    expect(poster).toBeDefined();
+    expect(video).toBeDefined();
+    expect(existsSync(join(out, poster!.slice(1)))).toBe(true);
+    expect(existsSync(join(out, video!.slice(1)))).toBe(true);
   });
 
   test("roadmap page renders ROADMAP.md checklists and is linked from every page", () => {

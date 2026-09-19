@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.1 (unreleased)
 
+### Changed
+
+- The [changelog](https://kerstel.dev/changelog) on kerstel.dev is a timeline, one entry per release, with the 0.1.0 release video at the top.
+
 ## 0.1.0 (2026-09-19)
 
 The first release: a local-first secrets manager for Node and Bun projects.

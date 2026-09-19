@@ -41,7 +41,7 @@ export function docsNav(pages: Page[], current: Page): string {
 }
 
 export function renderPage({ page, pages, layout, siteUrl }: RenderInput): string {
-  const content = marked.parse(page.body, { async: false, gfm: true });
+  const content = page.renderBody ? page.renderBody(page.body) : marked.parse(page.body, { async: false, gfm: true });
   const isHome = page.url === "/";
   const slots: Record<string, string> = {
     title: escapeHtml(isHome ? page.meta.title : `${page.meta.title} · Kerstel`),

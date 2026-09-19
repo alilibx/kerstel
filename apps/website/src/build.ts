@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { renderChangelog } from "./changelog";
 import { collectPages, rootPage, type Page } from "./pages";
 import { renderPage } from "./render";
 
@@ -64,10 +65,12 @@ export function cleanOutput(outDir: string): void {
 /** Repo-root Markdown files published as site pages. */
 function rootPages(): Page[] {
   return [
-    rootPage(join(REPO_ROOT, "CHANGELOG.md"), "changelog", {
-      title: "Changelog",
-      description: "Every Kerstel release and what changed in it.",
-    }),
+    rootPage(
+      join(REPO_ROOT, "CHANGELOG.md"),
+      "changelog",
+      { title: "Changelog", description: "Every Kerstel release and what changed in it." },
+      renderChangelog,
+    ),
     rootPage(join(REPO_ROOT, "ROADMAP.md"), "roadmap", {
       title: "Roadmap",
       description: "What Kerstel ships next, release by release.",
