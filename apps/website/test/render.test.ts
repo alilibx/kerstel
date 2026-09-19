@@ -97,6 +97,17 @@ describe("renderPage", () => {
     expect(html).toContain("<th>A</th>");
   });
 
+  test("uses the page's own body renderer when it has one", () => {
+    const html = renderPage({
+      page: { ...security, body: "# ignored", renderBody: (md) => `<div class="custom">${md.length}</div>` },
+      pages: all,
+      layout,
+      siteUrl: "https://kerstel.dev",
+    });
+    expect(html).toContain('<main><div class="custom">9</div></main>');
+    expect(html).not.toContain("<h1>");
+  });
+
   test("throws on an unknown slot", () => {
     expect(() => renderPage({ page: home, pages: all, layout: "{{bogus}}", siteUrl: "https://kerstel.dev" })).toThrow(
       "layout uses unknown slot {{bogus}}",
