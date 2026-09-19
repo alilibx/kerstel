@@ -1,6 +1,6 @@
 import { accessSync, constants, lstatSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
@@ -66,10 +66,18 @@ export interface LinkSearch {
 /** The names install.sh creates: the binary or a link to it, and the shortcut. */
 const LINK_NAMES = ["kerstel", "ks"] as const;
 
+export interface LinkSweep {
+  /** `binaryPath` with every symlink resolved: the file to delete once the links are gone. */
+  target: string;
+  removed: string[];
+  /** Links that resolve to the binary but could not be deleted, with the OS's reason. */
+  failed: { path: string; reason: string }[];
+}
+
 /**
  * Removes every `kerstel` and `ks` symlink that resolves to `binaryPath`, in
  * the binary's own folder, the folder it was invoked from, and every folder
- * on PATH. Returns the paths it removed.
+ * on PATH.
  *
  * Only symlinks that resolve to THIS binary go. A `ks` that is a real file,
  * or a link to something else, or a dangling link, belongs to someone else
@@ -82,22 +90,29 @@ const LINK_NAMES = ["kerstel", "ks"] as const;
  * relative to a `kerstel` that may itself be a link; delete that link first
  * and `ks` dangles, resolves to nothing, and would be kept as "not ours".
  *
- * Callers must invoke this BEFORE deleting `binaryPath` -- `realpathSync` on
+ * A link that cannot be deleted (a folder on PATH that root owns, say) is
+ * reported rather than thrown: by the time this runs the vault is gone, and
+ * an exception here would leave the binary in place with nothing to open.
+ *
+ * Callers must invoke this BEFORE deleting the binary -- `realpathSync` on
  * an already-deleted binary throws, which would turn every real link into a
- * false "not ours".
+ * false "not ours". Returns null when `binaryPath` does not resolve.
  */
-export function removeLinks(binaryPath: string, search: LinkSearch): string[] {
+export function removeLinks(binaryPath: string, search: LinkSearch): LinkSweep | null {
   let target: string;
   try {
     target = realpathSync(binaryPath);
   } catch {
-    return [];
+    return null;
   }
 
   const pathDirs = search.pathDirs ?? (process.env.PATH ?? "").split(delimiter).filter((d) => d.length > 0);
-  const folders = new Set<string>([dirname(binaryPath)]);
-  if (search.invokedAs && isAbsolute(search.invokedAs)) folders.add(dirname(search.invokedAs));
-  for (const dir of pathDirs) folders.add(dir);
+  const folders = new Set<string>([dirname(resolve(binaryPath))]);
+  // A bare `ks` (found through PATH) says nothing about its folder, but
+  // `./bin/ks` or `/opt/kerstel/ks` does, relative to the cwd or not.
+  const invoked = search.invokedAs;
+  if (invoked && (invoked.includes("/") || invoked.includes(sep))) folders.add(dirname(resolve(invoked)));
+  for (const dir of pathDirs) folders.add(resolve(dir));
 
   const ours: string[] = [];
   for (const folder of folders) {
@@ -118,8 +133,18 @@ export function removeLinks(binaryPath: string, search: LinkSearch): string[] {
     }
   }
 
-  for (const link of ours) rmSync(link);
-  return ours;
+  const removed: string[] = [];
+  const failed: LinkSweep["failed"] = [];
+  for (const link of ours) {
+    try {
+      rmSync(link);
+      removed.push(link);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      failed.push({ path: link, reason: code ?? (error instanceof Error ? error.message : String(error)) });
+    }
+  }
+  return { target, removed, failed };
 }
 
 function printPlan(plan: UninstallPlan): void {
@@ -353,10 +378,16 @@ export async function uninstallCommand(
   if (binary.compiled) {
     // The link sweep has to run before the binary is gone: it realpath()s
     // binary.path, which throws once nothing is there to resolve.
-    const links = removeLinks(binary.path, binary);
-    rmSync(binary.path, { force: true });
-    ok(`Removed ${binary.path}.`);
-    for (const link of links) ok(`Removed ${link}.`);
+    const sweep = removeLinks(binary.path, binary);
+    // The resolved target, not binary.path: were binary.path itself a link,
+    // the sweep would have taken it and the real binary would survive.
+    const file = sweep?.target ?? binary.path;
+    rmSync(file, { force: true });
+    ok(`Removed ${file}.`);
+    for (const link of sweep?.removed ?? []) ok(`Removed ${link}.`);
+    for (const { path, reason } of sweep?.failed ?? []) {
+      console.log(yellow(`!  Could not remove ${path} (${reason}). It now points at nothing; delete it by hand.`));
+    }
   } else {
     info(`Running from source, so ${binary.path} was left in place.`);
   }

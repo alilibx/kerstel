@@ -2,10 +2,12 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -123,25 +125,28 @@ test("removeLinks deletes a ks link next to the binary and nothing else", () => 
   const binary = join(dir, "kerstel");
   writeFileSync(binary, "bin");
   symlinkSync("kerstel", join(dir, "ks"));
-  expect(removeLinks(binary, {})).toEqual([join(dir, "ks")]);
+  expect(removeLinks(binary, {})?.removed).toEqual([join(dir, "ks")]);
   expect(existsSync(join(dir, "ks"))).toBe(false);
   // The binary itself is the caller's to delete, after the links are gone.
   expect(existsSync(binary)).toBe(true);
 
-  expect(removeLinks(binary, {})).toEqual([]);
+  expect(removeLinks(binary, {})?.removed).toEqual([]);
 
   writeFileSync(join(dir, "ks"), "someone else's tool");
-  expect(removeLinks(binary, {})).toEqual([]);
+  expect(removeLinks(binary, {})?.removed).toEqual([]);
   expect(readFileSync(join(dir, "ks"), "utf8")).toBe("someone else's tool");
 
   rmSync(join(dir, "ks"));
   writeFileSync(join(dir, "other"), "x");
   symlinkSync("other", join(dir, "ks"));
-  expect(removeLinks(binary, {})).toEqual([]);
+  expect(removeLinks(binary, {})?.removed).toEqual([]);
 
   rmSync(join(dir, "ks"));
   symlinkSync("gone", join(dir, "ks"));
-  expect(removeLinks(binary, {})).toEqual([]);
+  expect(removeLinks(binary, {})?.removed).toEqual([]);
+
+  // A binary that is not there has no links worth resolving.
+  expect(removeLinks(join(dir, "missing"), {})).toBeNull();
 });
 
 test("removeLinks follows a kerstel symlink on PATH to the ks beside it", () => {
@@ -162,8 +167,10 @@ test("removeLinks follows a kerstel symlink on PATH to the ks beside it", () => 
   writeFileSync(join(other, "ks"), "someone else's tool");
   writeFileSync(join(other, "kerstel"), "someone else's kerstel");
 
-  const removed = removeLinks(binary, { pathDirs: [links, other, join(dir, "missing")] });
-  expect(removed.sort()).toEqual([join(links, "kerstel"), join(links, "ks")].sort());
+  const sweep = removeLinks(binary, { pathDirs: [links, other, join(dir, "missing")] });
+  expect(sweep?.removed.sort()).toEqual([join(links, "kerstel"), join(links, "ks")].sort());
+  expect(sweep?.failed).toEqual([]);
+  expect(sweep?.target).toBe(realpathSync(binary));
   expect(existsSync(join(links, "ks"))).toBe(false);
   expect(existsSync(join(links, "kerstel"))).toBe(false);
   expect(existsSync(binary)).toBe(true);
@@ -182,8 +189,59 @@ test("removeLinks searches the folder the binary was invoked from, even off PATH
   symlinkSync(binary, join(links, "kerstel"));
   symlinkSync("kerstel", join(links, "ks"));
 
-  const removed = removeLinks(binary, { invokedAs: join(links, "ks"), pathDirs: [] });
-  expect(removed.sort()).toEqual([join(links, "kerstel"), join(links, "ks")].sort());
+  const removed = removeLinks(binary, { invokedAs: join(links, "ks"), pathDirs: [] })?.removed;
+  expect(removed?.sort()).toEqual([join(links, "kerstel"), join(links, "ks")].sort());
+
+  // Invoked by a RELATIVE path (`./links/ks`): resolved against the cwd. A
+  // bare `ks`, found through PATH, names no folder and is ignored.
+  symlinkSync(binary, join(links, "kerstel"));
+  symlinkSync("kerstel", join(links, "ks"));
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    expect(removeLinks(binary, { invokedAs: "ks", pathDirs: [] })?.removed).toEqual([]);
+    expect(removeLinks(binary, { invokedAs: join("links", "ks"), pathDirs: [] })?.removed.length).toBe(2);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("a link that cannot be deleted is reported, and uninstall still finishes", async () => {
+  const { home } = await setup();
+  const fake = join(home, "..", `kerstel-fake-bin-${Date.now()}`);
+  writeFileSync(fake, "binary");
+  dirs.push(fake);
+  const locked = mkdtempSync(join(tmpdir(), "kerstel-locked-links-"));
+  dirs.push(locked);
+  symlinkSync(fake, join(locked, "kerstel"));
+  symlinkSync("kerstel", join(locked, "ks"));
+  chmodSync(locked, 0o555);
+  try {
+    capture();
+    expect(await uninstallCommand(["--yes"], undefined, { path: fake, compiled: true, pathDirs: [locked] })).toBe(0);
+    expect(existsSync(fake)).toBe(false);
+    // existsSync follows the link, which now dangles; lstat sees the link itself.
+    expect(lstatSync(join(locked, "ks")).isSymbolicLink()).toBe(true);
+    const text = output.join("\n");
+    expect(text).toContain(`Could not remove ${join(locked, "ks")}`);
+    expect(text).toContain("delete it by hand");
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+});
+
+test("a binary path that is itself a link removes the real binary too", async () => {
+  const { home } = await setup();
+  const real = join(home, "..", `kerstel-real-bin-${Date.now()}`);
+  writeFileSync(real, "binary");
+  dirs.push(real);
+  const links = mkdtempSync(join(tmpdir(), "kerstel-linked-bin-"));
+  dirs.push(links);
+  symlinkSync(real, join(links, "kerstel"));
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, { path: join(links, "kerstel"), compiled: true, pathDirs: [] })).toBe(0);
+  expect(existsSync(join(links, "kerstel"))).toBe(false);
+  expect(existsSync(real)).toBe(false);
 });
 
 test("--dry-run creates nothing when no vault exists yet", async () => {
