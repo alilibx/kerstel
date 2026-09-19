@@ -53,11 +53,26 @@ const PASS_THROUGH = [
 /** Kerstel's own settings the daemon reads. Not `KERSTEL_TOKEN` or `KERSTEL_SOCKET`: it mints and binds those itself. */
 const KERSTEL_SETTINGS = ["KERSTEL_HOME", "KERSTEL_KEYCHAIN_BACKEND", "KERSTEL_KEYCHAIN_SERVICE", "KERSTEL_IDLE_MS"];
 
+/**
+ * Set in every environment this module builds, and nowhere else. `daemon
+ * serve` run by hand in a shell checks for it and, when absent, re-executes
+ * itself through `daemonEnv` so a foreground daemon is as clean as a spawned
+ * one. A marker rather than a key-set comparison, so the check cannot loop if
+ * the platform adds a variable of its own to a child.
+ */
+export const SCRUBBED_MARKER = "KERSTEL_DAEMON_SCRUBBED";
+
 export function daemonEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of [...PASS_THROUGH, ...KERSTEL_SETTINGS]) {
     const value = base[name];
     if (typeof value === "string") env[name] = value;
   }
+  env[SCRUBBED_MARKER] = "1";
   return env;
+}
+
+/** Whether `base` is one `daemonEnv` built, so the process holding it may open the vault. */
+export function isScrubbedEnvironment(base: NodeJS.ProcessEnv = process.env): boolean {
+  return base[SCRUBBED_MARKER] === "1";
 }

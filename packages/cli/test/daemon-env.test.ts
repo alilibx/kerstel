@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { daemonEnv } from "../src/daemon/env";
+import { daemonEnv, isScrubbedEnvironment, SCRUBBED_MARKER } from "../src/daemon/env";
 
 const caller: NodeJS.ProcessEnv = {
   PATH: "/usr/bin:/bin",
@@ -52,5 +52,12 @@ test("the caller's own variables, tokens, and plaintext never reach the daemon",
 
 test("unset variables are left out rather than passed as empty strings", () => {
   const env = daemonEnv({ PATH: "/bin" });
-  expect(Object.keys(env)).toEqual(["PATH"]);
+  expect(Object.keys(env).sort()).toEqual([SCRUBBED_MARKER, "PATH"].sort());
+});
+
+test("the marker tells a foreground serve whether it was started through the allowlist", () => {
+  expect(isScrubbedEnvironment(caller)).toBe(false);
+  expect(isScrubbedEnvironment(daemonEnv(caller))).toBe(true);
+  // The marker is set by daemonEnv itself, not copied from the caller.
+  expect(isScrubbedEnvironment({ ...caller, [SCRUBBED_MARKER]: "yes" })).toBe(false);
 });
