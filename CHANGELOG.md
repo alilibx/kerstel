@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.2 (unreleased)
 
+### Security
+
+- The OS credential-store helpers (`security` on macOS, `secret-tool` on Linux) are now run only from a fixed list of system directories, and only when the directory and the file are owned by root and writable by nobody else, never from the caller's `PATH`. `npm run` and `bun run` put `node_modules/.bin` first on `PATH`, so before this a dependency could ship a fake `security` and read the vault's data key the next time a wired script opened the vault. If the tool is missing from those directories, the error says how to install it there or switch to the key file.
+
 ## 0.1.1 (2026-09-19)
 
 ### Added
