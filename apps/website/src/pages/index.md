@@ -40,7 +40,7 @@ description: Your .env files hold only references. The real values live in an en
 <h2>Store once. Reference everywhere.</h2>
 <p class="lede">Run <code>ks set global/OPENAI_API_KEY</code> once (<code>ks</code> is short for <code>kerstel</code>). From then on your project file holds <code class="ref">kerstel://global/OPENAI_API_KEY</code> and your code still reads the real value from <code>process.env</code>. <code>ks init</code> does the whole project at once, and wires your scripts for you.</p>
 <div class="steps">
-<div class="step"><h3>Vault</h3><p>Values are encrypted at rest with AES-256-GCM. The data key lives in your OS credential store, never in a file.</p></div>
+<div class="step"><h3>Vault</h3><p>Values are encrypted at rest with AES-256-GCM. The data key lives in your OS credential store.</p></div>
 <div class="step"><h3>Daemon</h3><p>A per-user resolver unlocks the vault once and answers lookups over a local socket. Nothing leaves your machine.</p></div>
 <div class="step"><h3>Hook</h3><p>A small preload intercepts reads of <code>process.env</code> and swaps each reference for its value. The file on disk never changes.</p></div>
 </div>
