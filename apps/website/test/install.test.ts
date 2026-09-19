@@ -233,11 +233,15 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
       FAKE_TRANSLATED: "0",
       TERM: "xterm-256color",
     };
-    const wrapped =
-      process.platform === "darwin"
-        ? ["script", "-q", "/dev/null", "bash", SCRIPT]
-        : ["script", "-qec", `bash '${SCRIPT}'`, "/dev/null"];
-    const proc = Bun.spawn(wrapped, { env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    // Same shape as packages/cli/test/e2e-tty.test.ts: `script` reads terminal
+    // modes off its own stdin, and Bun's piped stdin is a socket it refuses, so
+    // the pipe goes through `cat` first. The installer never reads stdin, so it
+    // is closed straight away; `cat` then exits once `script` does.
+    const inner = `bash '${SCRIPT}'`;
+    const scripted =
+      process.platform === "darwin" ? `script -q /dev/null ${inner}` : `script -qec '${inner}' /dev/null`;
+    const proc = Bun.spawn(["sh", "-c", `cat | ${scripted}`], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    proc.stdin.end();
     const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     expect(code).toBe(0);
     expect(stdout).toContain("\x1b[");
