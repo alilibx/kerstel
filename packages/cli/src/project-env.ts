@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { discoverEnvFiles } from "./init/detect";
-import { entries, parseDotenv } from "./init/dotenv-file";
+import { entries, parseDotenv, type DotenvPair } from "./init/dotenv-file";
 
 /**
  * Kerstel's own settings must never come from the project it is protecting.
@@ -30,6 +30,33 @@ export interface IgnoredSetting {
   file: string;
 }
 
+/**
+ * Every string Bun could have put in `process.env` for this assignment.
+ *
+ * `parseDotenv` decodes only `\n`, because it has to round-trip a file it
+ * rewrites (see its own notes on which escapes each runtime decodes). Bun
+ * decodes more than that, so comparing against the parser's value alone would
+ * let `KERSTEL_HOME="/tmp/evil\r"` through: Bun stores a carriage return, the
+ * parser reports a literal backslash-r, the two differ, and the injected
+ * setting survives. Offering Bun's decoding as an alternative closes that,
+ * without widening the match for anything that has no escapes.
+ */
+function candidateValues(pair: DotenvPair): string[] {
+  const values = [pair.value];
+  if (pair.quote === '"') {
+    const body = pair.text.slice(pair.valueStart + 1, pair.valueEnd - 1);
+    values.push(
+      body.replace(/\\(.)/g, (match, char: string) => {
+        if (char === "n") return "\n";
+        if (char === "r") return "\r";
+        if (char === "$") return "$";
+        return match;
+      }),
+    );
+  }
+  return values;
+}
+
 /** Every `KERSTEL_*` in `env` that an env file under `cwd` defines to the same value. */
 export function projectSettings(cwd: string, env: NodeJS.ProcessEnv = process.env): IgnoredSetting[] {
   const found: IgnoredSetting[] = [];
@@ -44,10 +71,16 @@ export function projectSettings(cwd: string, env: NodeJS.ProcessEnv = process.en
       // `doctor` both name such a file. Nothing was injected from it either.
       continue;
     }
+    // EVERY occurrence, not the first. A loader takes the last assignment of a
+    // repeated key, so a file that opens with a harmless `KERSTEL_HOME=/tmp/ok`
+    // and repeats it further down would otherwise have only the decoy compared
+    // and the real one skipped.
     for (const pair of entries(parsed)) {
       if (!pair.key.startsWith("KERSTEL_")) continue;
+      const value = env[pair.key];
+      if (value === undefined) continue;
+      if (!candidateValues(pair).includes(value)) continue;
       if (seen.has(pair.key)) continue;
-      if (env[pair.key] !== pair.value) continue;
       seen.add(pair.key);
       found.push({ name: pair.key, file: info.name });
     }

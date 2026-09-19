@@ -72,6 +72,28 @@ test("a template or a backup copy is not a source", () => {
   expect(projectSettings(root, { KERSTEL_HOME: "./from-backup" })).toEqual([]);
 });
 
+test("a repeated key is caught by its last assignment, not a harmless decoy", () => {
+  // A loader takes the last one, so comparing only the first would let the
+  // real injection through.
+  const root = project({ ".env": "KERSTEL_HOME=/harmless\nKERSTEL_HOME=/tmp/attacker\n" });
+  expect(projectSettings(root, { KERSTEL_HOME: "/tmp/attacker" })).toEqual([
+    { name: "KERSTEL_HOME", file: ".env" },
+  ]);
+});
+
+test("an escape Bun decodes and the parser does not is still caught", () => {
+  // Bun turns \\r into a carriage return; the parser keeps it literal. The
+  // attacker still gets a directory they control, so the match has to see it.
+  const root = project({ ".env": String.raw`KERSTEL_HOME="/tmp/evil\r"` + "\n" });
+  expect(projectSettings(root, { KERSTEL_HOME: "/tmp/evil\r" })).toEqual([
+    { name: "KERSTEL_HOME", file: ".env" },
+  ]);
+  // And the undecoded spelling, for a loader that leaves it alone.
+  expect(projectSettings(root, { KERSTEL_HOME: String.raw`/tmp/evil\r` })).toEqual([
+    { name: "KERSTEL_HOME", file: ".env" },
+  ]);
+});
+
 test("a project with no env files reports nothing", () => {
   expect(projectSettings(project({ "package.json": "{}" }), { KERSTEL_HOME: "/x" })).toEqual([]);
 });
