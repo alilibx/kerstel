@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { cliName } from "../ui/cli-name";
 import { decrypt, encrypt } from "./crypto";
+import { keyFilePath } from "./keychain/file";
 
 /** Which credential store minted the data key this vault is encrypted with. */
 export const META_KEYCHAIN_BACKEND = "keychain_backend";
@@ -103,23 +105,81 @@ export function verifyKeyCheck(stored: string, dataKey: Buffer): boolean {
 
 /**
  * The error raised when the session's credential store is not the one holding
- * the vault's key. Carries no key material, only backend names.
+ * the vault's key. Carries no key material, only backend names and the key
+ * file's path.
+ *
+ * The advice depends on which store holds the key, because the two directions
+ * need opposite fixes. A key in a native store that this session cannot reach
+ * (a locked login Keychain over SSH, no D-Bus session bus) is found again by
+ * unlocking that store or running from a GUI session. A key in a FILE is right
+ * here on disk; what happened is that this session CAN reach the native store,
+ * so selection preferred it. Telling that user to "unlock the Keychain" sends
+ * them to a store that has never held their key. The truthful fix is to pin
+ * the backend to the file, the same advice `kerstel doctor` gives.
+ *
+ * A third case sits across both: `KERSTEL_KEYCHAIN_BACKEND` forced the
+ * selection, so the native store may be perfectly reachable. Then the store is
+ * not "unreachable" and the fix is the variable, which `selectBackend` reads
+ * and this error reads again so it can name it.
  */
 export function backendMismatchError(recorded: string, selected: string): Error {
-  const where =
-    recorded === "macos"
-      ? "the macOS Keychain, which is not reachable in this session (locked keychain / no GUI)"
-      : recorded === "windows"
-        ? "the Windows Credential Manager, which is not reachable in this session"
-        : recorded === "linux"
-          ? "the Secret Service, which is not reachable in this session (no D-Bus session bus)"
-          : `the "${recorded}" credential store, which is not reachable in this session`;
+  const consequence =
+    `This session would otherwise use the "${selected}" backend instead, which holds a ` +
+    "different key: every secret already in the vault would fail to decrypt, and anything " +
+    "stored now would be unreadable from your normal session.";
+  const refusal = "Kerstel will not create a second key.";
+  const forced = process.env.KERSTEL_KEYCHAIN_BACKEND === selected;
 
+  if (recorded === "file") {
+    return new Error(
+      `Kerstel's vault key lives in the file ${keyFilePath()}, because that is where it was created. ` +
+        `${consequence} Run this command with KERSTEL_KEYCHAIN_BACKEND=file, and keep that set ` +
+        `in your shell profile so every session opens the vault with the same key. ${refusal}`,
+    );
+  }
+
+  const native =
+    recorded === "macos"
+      ? {
+          store: "the macOS Keychain",
+          unreachable: "locked keychain / no GUI",
+          fix: "Unlock your login keychain, or run from a GUI session.",
+        }
+      : recorded === "linux"
+        ? {
+            store: "the Secret Service",
+            unreachable: "no D-Bus session bus",
+            fix: "Run from a desktop session, or one with a D-Bus session bus and a Secret Service provider.",
+          }
+        : recorded === "windows"
+          ? {
+              store: "the Windows Credential Manager",
+              unreachable: null,
+              fix: "Run from the Windows session of the user who set Kerstel up.",
+            }
+          : null;
+
+  if (native && forced) {
+    return new Error(
+      `Kerstel's vault key was created in ${native.store}, but KERSTEL_KEYCHAIN_BACKEND=${selected} ` +
+        `is set in this session. ${consequence} Unset KERSTEL_KEYCHAIN_BACKEND, or set it to ` +
+        `"${recorded}". ${refusal}`,
+    );
+  }
+
+  if (native) {
+    const where = native.unreachable
+      ? `${native.store}, which is not reachable in this session (${native.unreachable})`
+      : `${native.store}, which is not reachable in this session`;
+    return new Error(`Kerstel's vault key was created in ${where}. ${consequence} ${native.fix} ${refusal}`);
+  }
+
+  // A vault from before vault_meta, whose secrets a brand-new key cannot
+  // decrypt: nothing recorded which store minted the key, so no store can be
+  // named. `doctor` reports what it can see.
   return new Error(
-    `Kerstel's vault key was created in ${where}. This session would otherwise use ` +
-      `the "${selected}" backend instead, which holds a different key: every secret ` +
-      "already in the vault would fail to decrypt, and anything stored now would be " +
-      "unreadable from your normal session. Unlock it or run from a GUI session. " +
-      "Kerstel will not create a second key.",
+    `Kerstel's vault key was created in a credential store this session did not select. ${consequence} ` +
+      `Run \`${cliName()} doctor\` to see which store this session reaches, and open the vault from the ` +
+      `session that set Kerstel up. ${refusal}`,
   );
 }

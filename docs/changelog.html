@@ -61,6 +61,7 @@
 </ul></section>
 <section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
 <li>The <code>kerstel init</code> overview strips Unicode bidi and zero-width characters from the config values it shows, so a value can no longer reorder or hide the text around it in the terminal. Secret values were never shown.</li>
+<li>When a session&#39;s credential store is not the one holding the vault key, the error now gives advice for the store that actually holds it. A vault keyed in a file names the key file and says to run with <code>KERSTEL_KEYCHAIN_BACKEND=file</code>, instead of telling you to unlock the Keychain.</li>
 <li><code>kerstel uninstall</code> removes every <code>kerstel</code> and <code>ks</code> link that points at the binary, wherever they are on <code>PATH</code> or in the folder it was run from. Before, when <code>kerstel</code> on your <code>PATH</code> was itself a link to the binary, both it and the <code>ks</code> shortcut beside it were left dangling.</li>
 </ul></section>
 </div>

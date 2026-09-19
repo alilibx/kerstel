@@ -99,9 +99,6 @@ test("cancelling the final question exits 130 and changes nothing", async () => 
   const { home, root } = await setup();
   const before = readdirSync(home).sort();
   const cancelling: Prompter = {
-    confirm: () => {
-      throw new CancelledError();
-    },
     select: () => {
       throw new CancelledError();
     },

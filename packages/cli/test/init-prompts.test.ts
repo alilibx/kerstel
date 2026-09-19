@@ -8,28 +8,29 @@ const DESTINATIONS = [
 ] as const;
 
 test("ScriptedPrompter answers in order and records the questions", async () => {
-  const prompter = new ScriptedPrompter([true, "global", "sk-typed-value", false]);
-  expect(await prompter.confirm("Continue?", false)).toBe(true);
+  const prompter = new ScriptedPrompter(["global", "sk-typed-value", ["A"]]);
   expect(await prompter.select("Where?", [...DESTINATIONS], "project")).toBe("global");
   expect(await prompter.text("Value for OPENAI_API_KEY?", { secret: true })).toBe("sk-typed-value");
-  expect(await prompter.confirm("Update .gitignore?", false)).toBe(false);
-  expect(prompter.asked).toEqual([
-    "Continue?",
-    "Where?",
-    "Value for OPENAI_API_KEY?",
-    "Update .gitignore?",
-  ]);
+  expect(await prompter.multiselect("Which?", [{ value: "A", label: "A" }], [])).toEqual(["A"]);
+  expect(prompter.asked).toEqual(["Where?", "Value for OPENAI_API_KEY?", "Which?"]);
 });
 
 test("ScriptedPrompter throws when its answers run out", async () => {
-  const prompter = new ScriptedPrompter([true]);
-  await prompter.confirm("First?", false);
-  await expect(prompter.confirm("Second?", false)).rejects.toThrow(/ran out of scripted answers/i);
+  const prompter = new ScriptedPrompter(["global"]);
+  await prompter.select("First?", [...DESTINATIONS], "project");
+  await expect(prompter.select("Second?", [...DESTINATIONS], "project")).rejects.toThrow(
+    /ran out of scripted answers/i,
+  );
 });
 
 test("ScriptedPrompter rejects an answer of the wrong shape", async () => {
-  await expect(new ScriptedPrompter(["yes"]).confirm("Sure?", false)).rejects.toThrow(/boolean/i);
-  await expect(new ScriptedPrompter([true]).text("Value?")).rejects.toThrow(/string/i);
+  await expect(new ScriptedPrompter([["A"]]).text("Value?")).rejects.toThrow(/string/i);
+  await expect(new ScriptedPrompter([["A"]]).select("Where?", [...DESTINATIONS], "project")).rejects.toThrow(
+    /string/i,
+  );
+  await expect(new ScriptedPrompter(["A"]).multiselect("Which?", [{ value: "A", label: "A" }], [])).rejects.toThrow(
+    /not one of/,
+  );
 });
 
 test("ScriptedPrompter answers select and multiselect from its queue", async () => {
@@ -55,12 +56,6 @@ test("ScriptedPrompter rejects an answer that is not one of the choices", async 
   await expect(
     new ScriptedPrompter([["A", "Z"]]).multiselect("Which?", [{ value: "A", label: "A" }], []),
   ).rejects.toThrow(/not one of/);
-});
-
-test("DefaultsPrompter returns every default without asking", async () => {
-  const prompter = new DefaultsPrompter();
-  expect(await prompter.confirm("Continue?", true)).toBe(true);
-  expect(await prompter.confirm("Update .gitignore?", false)).toBe(false);
 });
 
 test("DefaultsPrompter returns the default choice and the initial selection", async () => {

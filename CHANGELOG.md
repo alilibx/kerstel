@@ -13,6 +13,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 ### Fixed
 
 - The `kerstel init` overview strips Unicode bidi and zero-width characters from the config values it shows, so a value can no longer reorder or hide the text around it in the terminal. Secret values were never shown.
+- When a session's credential store is not the one holding the vault key, the error now gives advice for the store that actually holds it. A vault keyed in a file names the key file and says to run with `KERSTEL_KEYCHAIN_BACKEND=file`, instead of telling you to unlock the Keychain.
 - `kerstel uninstall` removes every `kerstel` and `ks` link that points at the binary, wherever they are on `PATH` or in the folder it was run from. Before, when `kerstel` on your `PATH` was itself a link to the binary, both it and the `ks` shortcut beside it were left dangling.
 
 ## 0.1.0 (2026-09-19)
