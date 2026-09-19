@@ -77,7 +77,9 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
     lines.push(`${title} (${members.length})`, ...table.slice(next, next + members.length));
     next += members.length;
   }
-  for (const row of rows.filter((r) => r.conflicts.length > 0)) {
+  // A key that stays plain text is never rewritten, so each file keeps its own
+  // value and nothing "wins": only vault-bound keys get the note.
+  for (const row of rows.filter((r) => r.conflicts.length > 0 && r.target !== "plaintext")) {
     lines.push("");
     lines.push(
       yellow(`! ${row.key} has different values in ${[row.source, ...row.conflicts].join(" and ")};`),

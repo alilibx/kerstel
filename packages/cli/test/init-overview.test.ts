@@ -40,6 +40,13 @@ test("names a conflicting key's files and which one wins, without values", () =>
   expect(text).toContain("the .env.local one wins");
 });
 
+test("a conflicting key kept as plain text gets no \"wins\" note", () => {
+  const plain: OverviewRow[] = [
+    { key: "LOG_FORMAT", value: "json", source: ".env.local", conflicts: [".env"], target: "plaintext", showValue: true },
+  ];
+  expect(renderOverview(plain, "whasal", [".env", ".env.local"]).join("\n")).not.toContain("wins");
+});
+
 test("an empty group is left out", () => {
   const text = renderOverview(rows.filter((r) => r.target !== "global"), "whasal", [".env"]).join("\n");
   expect(text).not.toContain("shared by all your projects");

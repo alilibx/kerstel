@@ -1,5 +1,10 @@
 import type { ProjectStatus } from "../init/status";
 
+/** A path as the shell needs it pasted: unchanged when safe, single-quoted otherwise. */
+function shellQuote(path: string): string {
+  return /^[A-Za-z0-9_\/.~:@%+=,-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+}
+
 /** Spec §6: three states, rendered as ✓ / ! / ✗. */
 export type CheckStatus = "pass" | "warn" | "problem";
 
@@ -144,7 +149,7 @@ function permissionsCheck(facts: DoctorFacts): Check {
     status: "problem",
     label: "Permissions",
     detail: `${offending.path} is ${actualOctal}, should be ${expectedOctal}`,
-    fix: `chmod ${expectedOctal} ${offending.path}`,
+    fix: `chmod ${expectedOctal} ${shellQuote(offending.path)}`,
   };
 }
 

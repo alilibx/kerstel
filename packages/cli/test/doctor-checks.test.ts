@@ -344,3 +344,17 @@ test("every warning and problem carries a Fix line", () => {
     }
   }
 });
+
+test("Permissions fix quotes a path the shell would split", () => {
+  const spaced = "/Users/me/My Secrets/.kerstel";
+  const checks = gatherChecks(
+    allPassFacts({
+      modes: [
+        { path: spaced, actual: 0o755, expected: 0o700 },
+        { path: TOKEN, actual: 0o600, expected: 0o600 },
+        { path: SOCKET, actual: 0o600, expected: 0o600 },
+      ],
+    }),
+  );
+  expect(checkFor(checks, "Permissions")?.fix).toBe(`chmod 0700 '${spaced}'`);
+});
