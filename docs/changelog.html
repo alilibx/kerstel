@@ -54,7 +54,9 @@
 <span class="release-date release-unreleased">Unreleased</span>
 </div>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-security"><h3 class="change-type">Security</h3><ul>
+<li>The OS credential-store helpers (<code>security</code> on macOS, <code>secret-tool</code> on Linux) are now found only in system directories, never on the caller&#39;s <code>PATH</code>. <code>npm run</code> and <code>bun run</code> put <code>node_modules/.bin</code> first on <code>PATH</code>, so before this a dependency could ship a fake <code>security</code> and read the vault&#39;s data key the next time a wired script opened the vault.</li>
+</ul></section>
 </div>
 </li>
 <li class="release" id="0.1.1">
