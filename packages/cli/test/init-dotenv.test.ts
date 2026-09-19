@@ -214,6 +214,16 @@ test("a base64 line outside a PEM block is reported by line number, not read as 
   expect(JSON.stringify(file.unsupported)).not.toContain("eyJhbG");
 });
 
+test("a one-line value that merely starts with a PEM header is an ordinary pair", () => {
+  const file = parseDotenv("TOKEN=-----BEGIN CUSTOM TOKEN-----abc123\nAFTER=2\nQUOTED=\"-----BEGIN X-----\"\n");
+  expect(entries(file).map((e) => [e.key, e.value])).toEqual([
+    ["TOKEN", "-----BEGIN CUSTOM TOKEN-----abc123"],
+    ["AFTER", "2"],
+    ["QUOTED", "-----BEGIN X-----"],
+  ]);
+  expect(file.unsupported).toEqual([]);
+});
+
 test("a PEM block with no footer is named as such, and nothing after it is mined", () => {
   const source = "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgPEMBODY\nkL0tuEJ6abcdEFGH1234567890abcdefghij==\nSTRIPE_SECRET=sk_live_after\n";
   const file = parseDotenv(source);

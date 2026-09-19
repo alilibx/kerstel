@@ -97,7 +97,7 @@ To see all of that without writing anything, add `--dry-run`: it prints every di
 ks init --dry-run
 ```
 
-`init` is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed.
+`init` is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed. A line with no readable key is named by file and line instead, never by its text. That includes a private key pasted unquoted across several lines (`-----BEGIN … -----END`), which `init` leaves as it is: store it with `ks set` and reference it, or put it on one line in double quotes with `\n`.
 
 If the same key appears in more than one file with different values, the highest-precedence file wins: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.
 

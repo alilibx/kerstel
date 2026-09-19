@@ -162,7 +162,10 @@ function looksLikeBase64Line(key: string, rest: string): boolean {
  * it has a secret in the file, so the whole block is treated as ONE unsupported
  * value: named by its key, never rewritten, never mined for key names.
  */
-const PEM_BEGIN = /^-----BEGIN [A-Z0-9 ]+-----/;
+// The WHOLE value must be the header: a token that merely starts with one
+// (`-----BEGIN X-----abc123`) is a one-line value, and treating it as a block
+// opener would swallow every assignment after it.
+const PEM_BEGIN = /^-----BEGIN [A-Z0-9 ]+-----$/;
 const PEM_END = /-----END [A-Z0-9 ]+-----\s*$/;
 
 interface ParsedLine {
