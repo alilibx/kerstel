@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -46,6 +46,16 @@ async function kerstel(args: string[], extra: Record<string, string> = {}) {
 afterEach(async () => {
   await kerstel(["daemon", "stop"]);
 });
+
+/** Polls until `condition` holds, up to `timeoutMs`. Returns whether it did. */
+async function eventually(condition: () => boolean, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (condition()) return true;
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(25);
+  }
+}
 
 test("the compiled binary stores and lists a secret", async () => {
   home = mkdtempSync(join(tmpdir(), "kerstel-e2e-"));
@@ -229,7 +239,11 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   expect(first.length).toBeGreaterThan(20);
 
   expect((await kerstel(["daemon", "stop"])).code).toBe(0);
-  expect(existsSync(tokenFile)).toBe(false);
+  // `daemon stop` waits for the socket to stop answering, which is deliberately
+  // not the same as the daemon process having finished exiting; the token is
+  // removed on the way out, just after. Wait for the exit rather than assuming
+  // a speed: a busy CI runner loses that race where a laptop wins it.
+  expect(await eventually(() => !existsSync(tokenFile))).toBe(true);
 
   expect((await kerstel(["daemon", "start"])).code).toBe(0);
   const second = (await Bun.file(tokenFile).text()).trim();
@@ -262,6 +276,59 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   expect(await new Response(after.stdout).text()).toBe("OK");
   // The child's own environment carried a path, never a token.
   expect(env({ KERSTEL_TOKEN_FILE: tokenFile })).not.toHaveProperty("KERSTEL_TOKEN");
+});
+
+test("a project's committed .env cannot configure Kerstel itself", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-projenv-"));
+  expect((await kerstel(["set", "global/P", "--value", "in-the-real-home"])).code).toBe(0);
+
+  // A cloned repository, whose .env Kerstel's own model says to commit. The
+  // compiled binary is a Bun runtime and loads this file on startup.
+  const project = mkdtempSync(join(tmpdir(), "kerstel-hostile-project-"));
+  writeFileSync(
+    join(project, ".env"),
+    [
+      // Through a variable of its own, because Bun expands `$ATTACK` while
+      // this repo's parser does not: the check must not depend on the two
+      // parsers agreeing. A daemon that never relocks.
+      "ATTACK=9999999999",
+      "KERSTEL_IDLE_MS=$ATTACK",
+      "P=kerstel://global/P",
+      "",
+    ].join("\n"),
+  );
+  // KERSTEL_HOME is deliberately NOT in that file: naming it would make this
+  // binary fall back to the real ~/.kerstel, and no test may touch a
+  // developer's own vault. The unit tests cover that it would be dropped.
+
+  // Run from inside the project, so the binary loads its .env on startup.
+  const proc = Bun.spawn([BINARY, "ls"], {
+    cwd: project,
+    env: {
+      ...(process.env as Record<string, string>),
+      KERSTEL_HOME: home,
+      KERSTEL_KEYCHAIN_BACKEND: "file",
+      KERSTEL_RELEASES_URL: "http://127.0.0.1:9",
+      NODE_OPTIONS: "",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(code).toBe(0);
+  // The real home answered.
+  expect(stdout).toContain("kerstel://global/P");
+  // The injected setting was dropped, and the file named.
+  expect(stderr).toContain("KERSTEL_IDLE_MS");
+  expect(stderr).toContain(".env");
+  // Only what the file names: the caller's other settings are untouched.
+  expect(stderr).not.toContain("KERSTEL_HOME");
+  expect(stderr).not.toContain("KERSTEL_KEYCHAIN_BACKEND");
 });
 
 test("the vault file holds no plaintext after a full round trip", async () => {

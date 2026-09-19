@@ -70,6 +70,10 @@ When the same key appears in several files, the highest-precedence one is stored
 | `KERSTEL_KEYCHAIN_BACKEND` | Force a credential store backend. Set to `file` for a `0600` key file instead of the OS store. Kerstel warns whenever this fallback is in use. |
 | `KERSTEL_RELEASES_URL` | Where `update`, `doctor`, and `--version` look for releases, instead of `https://github.com/alilibx/kerstel`. For mirrors and tests; it must serve the same `/releases/latest` redirect and `/releases/download/v<version>/` files as GitHub. |
 
+Set these in your shell or your shell profile, never in a project's env file. Kerstel is a Bun binary, so it loads the `.env` of the directory you run it in — and in Kerstel's model that file is committed, which would let a repository you cloned choose your vault's location or your credential store. So if an env file here **names** a `KERSTEL_*` variable, Kerstel ignores that variable and says so on stderr.
+
+The test is the name, not the value, and that matters in one case: a variable you set yourself is ignored too when the project's env file happens to name it, and Kerstel falls back to its default. Take the line out of that file, or run from elsewhere. Matching on the value instead would look kinder but cannot be done safely — it would mean reproducing exactly what Bun's loader puts in the environment, including `$VAR` expansion and escape decoding, and every difference between the two would be a way to slip a setting past the check. The resolver daemon is started in `~/.kerstel` rather than your project or your home directory, so no env file reaches it at all.
+
 ## Exit codes
 
 Commands exit `0` on success and non-zero on any failure. Errors go to stderr and name the fix, usually `kerstel doctor`. Plaintext values never appear in error output.

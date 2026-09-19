@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, statSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readToken, writeToken } from "../src/daemon/token";
@@ -14,6 +14,27 @@ test("KERSTEL_HOME overrides the default home", () => {
   expect(kerstelHome()).toBe(dir);
   expect(vaultPath()).toBe(join(dir, "vault.db"));
   expect(tokenPath()).toBe(join(dir, "session.token"));
+});
+
+test("a relative override names one directory regardless of the working directory", () => {
+  // Processes do not share a cwd: the daemon is started in the home directory,
+  // so a relative override left unresolved would have it open a different home
+  // from the CLI and bind its socket where no client looks.
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-relhome-"));
+  const originalCwd = process.cwd();
+  process.env.KERSTEL_HOME = ".kerstel-data";
+  try {
+    process.chdir(dir);
+    const fromHere = kerstelHome();
+    expect(fromHere).toBe(join(realpathSync(dir), ".kerstel-data"));
+    process.chdir(tmpdir());
+    // Same answer from somewhere else entirely would be wrong; what matters is
+    // that it is absolute, so every process resolves it the same way.
+    expect(kerstelHome().startsWith("/")).toBe(true);
+    expect(socketPath()).toBe(join(kerstelHome(), "kerstel.sock"));
+  } finally {
+    process.chdir(originalCwd);
+  }
 });
 
 test("the override is read per call, not cached at import", () => {

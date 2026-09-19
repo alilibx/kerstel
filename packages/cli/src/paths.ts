@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-/** Root of all Kerstel state. Read fresh on every call so tests can rebind it. */
+/**
+ * Root of all Kerstel state. Read fresh on every call so tests can rebind it.
+ *
+ * The override is RESOLVED, so a relative `KERSTEL_HOME=.kerstel-data` names
+ * one directory for everyone. Processes do not share a working directory: the
+ * daemon is started in the home directory (see daemon/env.ts), so leaving the
+ * override relative would have the CLI open `<project>/.kerstel-data` while
+ * the daemon opened `<home>/.kerstel-data` and bound its socket where no
+ * client would look for it.
+ */
 export function kerstelHome(): string {
   const override = process.env.KERSTEL_HOME;
-  if (override && override.length > 0) return override;
+  if (override && override.length > 0) return resolve(override);
   return join(homedir(), ".kerstel");
 }
 
