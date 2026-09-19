@@ -117,13 +117,16 @@ export class ScriptedPrompter implements Prompter {
           `Asked so far: ${this.asked.join(" | ")}`,
       );
     }
-    return this.answers[this.index++] as string | string[];
+    return this.answers[this.index++]!;
   }
 
   async select<T extends string>(question: string, choices: Choice<T>[], _defaultValue: T): Promise<T> {
     const answer = this.next(question);
+    if (typeof answer !== "string") {
+      throw new Error(`ScriptedPrompter expected a string for "${question}", got ${JSON.stringify(answer)}`);
+    }
     const values = choices.map((choice) => choice.value as string);
-    if (typeof answer !== "string" || !values.includes(answer)) {
+    if (!values.includes(answer)) {
       throw new Error(
         `ScriptedPrompter answer ${JSON.stringify(answer)} for "${question}" is not one of ${values.join(", ")}`,
       );
