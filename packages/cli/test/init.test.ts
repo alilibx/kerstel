@@ -789,7 +789,7 @@ test("--keep naming a key that is already a reference is reported", async () => 
 class CancellingPrompter extends ScriptedPrompter {
   private remaining: number;
 
-  constructor(answers: (string | boolean | string[])[]) {
+  constructor(answers: (string | string[])[]) {
     super(answers);
     this.remaining = answers.length;
   }

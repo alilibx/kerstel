@@ -24,8 +24,11 @@ test("ScriptedPrompter throws when its answers run out", async () => {
 });
 
 test("ScriptedPrompter rejects an answer of the wrong shape", async () => {
-  await expect(new ScriptedPrompter([true]).text("Value?")).rejects.toThrow(/string/i);
-  await expect(new ScriptedPrompter([true]).select("Where?", [...DESTINATIONS], "project")).rejects.toThrow(
+  await expect(new ScriptedPrompter([["A"]]).text("Value?")).rejects.toThrow(/string/i);
+  await expect(new ScriptedPrompter([["A"]]).select("Where?", [...DESTINATIONS], "project")).rejects.toThrow(
+    /not one of/,
+  );
+  await expect(new ScriptedPrompter(["A"]).multiselect("Which?", [{ value: "A", label: "A" }], [])).rejects.toThrow(
     /not one of/,
   );
 });
