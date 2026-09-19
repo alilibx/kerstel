@@ -144,3 +144,13 @@ test("a malformed package.json is told apart from a missing one", () => {
   expect(detectProject(project({})).packageJsonError).toBe("missing");
   expect(detectProject(project({ "package.json": "{}" })).packageJsonError).toBeNull();
 });
+
+test.each([
+  [{ dependencies: { next: "15" } }, "Next.js"],
+  [{ devDependencies: { vite: "5", "@sveltejs/kit": "2" } }, "SvelteKit"],
+  [{ dependencies: { "@remix-run/node": "2" } }, "Remix"],
+  [{ dependencies: { express: "4" } }, null],
+])("detects the framework from package.json %#", (deps, framework) => {
+  const root = project({ "package.json": JSON.stringify({ name: "x", ...deps }) });
+  expect(detectProject(root).framework).toBe(framework);
+});

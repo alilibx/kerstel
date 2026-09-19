@@ -1,3 +1,5 @@
+import type { Choice } from "./prompts";
+
 /**
  * What the wizard SUGGESTS for a key. Never what it decides: `init` prints the
  * suggestion, the user changes it per key, and only `--yes` accepts the whole
@@ -14,6 +16,11 @@ export type Suggestion = "project" | "global" | "plaintext";
 
 /** The three choices, in the order the wizard offers them. */
 export const SUGGESTIONS: readonly Suggestion[] = ["project", "global", "plaintext"];
+
+export interface Explanation {
+  suggestion: Suggestion;
+  reason: string;
+}
 
 /**
  * Credentials for services a developer holds ONE account with, across every
@@ -52,7 +59,7 @@ const PLAINTEXT_KEYS =
  * A whole segment, not a substring: AUTHOR_NAME is not an AUTH key.
  */
 const SECRET_KEYS =
-  /(^|[^A-Za-z0-9])(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|SECRET_?KEY|AUTH|CREDENTIALS?|DSN)($|[^A-Za-z0-9])/i;
+  /(^|[^A-Za-z0-9])(PASSWORD|PASSWD|PASSPHRASE|PASSCODE|PASS|PWD|PIN|SECRET|TOKEN|KEY|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|SECRET_?KEY|AUTH|CREDENTIALS?|DSN)($|[^A-Za-z0-9])/i;
 
 /**
  * A query parameter that hands the credential over in the URL itself --
@@ -80,16 +87,19 @@ function urlAuthority(value: string): string | null {
   return match[2] ?? "";
 }
 
-/** Where a key that is definitely a secret belongs. Never "plaintext". */
-function store(key: string): Suggestion {
-  return GLOBAL_KEYS.includes(key) ? "global" : "project";
+const SHARED = "You probably use this account in every project";
+
+function stored(key: string, reason: string): Explanation {
+  return GLOBAL_KEYS.includes(key) ? { suggestion: "global", reason: SHARED } : { suggestion: "project", reason };
 }
 
 /**
  * The order below is the whole design, so it is worth stating:
  *
- *   1. A value with no content to protect (empty, a boolean, a number) is
- *      plaintext whatever the key is called.
+ *   1. A value with no content to protect (empty, or a boolean) is
+ *      plaintext whatever the key is called. A number is plaintext too,
+ *      unless the key names a credential: `PIN=4821` and
+ *      `DB_PASSWORD=12345678` are secrets that happen to be digits.
  *   2. A URL is judged on its own contents first: userinfo or a credential in
  *      the query beats every key-name convention.
  *   3. `PUBLIC_*` and friends beat the credential words, because a developer
@@ -97,27 +107,71 @@ function store(key: string): Suggestion {
  *   4. A key that names a credential beats the value-SHAPE plaintext rules,
  *      which cannot tell `PASSWORD=secret` from `NODE_ENV=production`.
  */
-export function suggest(key: string, value: string): Suggestion {
+export function explain(key: string, value: string): Explanation {
   const trimmed = value.trim();
 
-  if (trimmed === "") return "plaintext";
-  if (BOOLEANS.has(trimmed.toLowerCase())) return "plaintext";
-  if (NUMBER.test(trimmed)) return "plaintext";
+  if (trimmed === "") return { suggestion: "plaintext", reason: "It's empty, so there's nothing to protect" };
+  if (BOOLEANS.has(trimmed.toLowerCase())) {
+    return { suggestion: "plaintext", reason: "An on/off switch or a number, not a credential" };
+  }
+  if (NUMBER.test(trimmed)) {
+    if (SECRET_KEYS.test(key) && !PLAINTEXT_KEYS.test(key)) return stored(key, "The name says it's a secret");
+    return { suggestion: "plaintext", reason: "An on/off switch or a number, not a credential" };
+  }
 
   const authority = urlAuthority(trimmed);
   if (authority !== null) {
-    // `postgres://user:pass@host/db` carries a credential regardless of what
-    // the key is called; `https://api.example.com/v1` carries none.
-    if (authority.includes("@")) return "project";
-    if (SECRET_QUERY.test(trimmed)) return "project";
-    if (PLAINTEXT_KEYS.test(key)) return "plaintext";
-    return SECRET_KEYS.test(key) ? store(key) : "plaintext";
+    if (authority.includes("@")) return { suggestion: "project", reason: "The URL has a username and password in it" };
+    if (SECRET_QUERY.test(trimmed)) return { suggestion: "project", reason: "The URL carries a key or token" };
+    if (PLAINTEXT_KEYS.test(key)) return { suggestion: "plaintext", reason: "A setting, not a credential" };
+    return SECRET_KEYS.test(key)
+      ? stored(key, "The name says it's a secret")
+      : { suggestion: "plaintext", reason: "A plain URL with no credentials in it" };
   }
 
-  if (PLAINTEXT_KEYS.test(key)) return "plaintext";
-  if (SECRET_KEYS.test(key)) return store(key);
+  if (PLAINTEXT_KEYS.test(key)) return { suggestion: "plaintext", reason: "A setting, not a credential" };
+  if (SECRET_KEYS.test(key)) return stored(key, "The name says it's a secret");
+  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) {
+    return { suggestion: "plaintext", reason: "A short word, like a mode or a name" };
+  }
+  return stored(key, "Might be a secret, so it's safer in the vault");
+}
 
-  if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) return "plaintext";
+/**
+ * May the overview print this value in full? Spec §5.1 step 2. Narrower than
+ * `explain`, on purpose: `explain` decides what stays in the FILE, and a
+ * number or a plain URL there is harmless, but printing `DB_PASSWORD=12345678`
+ * or a webhook URL with its token in the path puts it on screen and, under
+ * `--yes`, into CI logs.
+ *
+ * True only for a key that is configuration by convention (`PORT`,
+ * `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth hiding -- empty,
+ * a boolean, a number, a short lowercase word -- under a key that does not
+ * name a credential. A URL is shown only under a configuration key. The caller
+ * still combines this with where the value is going and with `--keep`.
+ */
+export function isSafeToDisplay(key: string, value: string): boolean {
+  if (PLAINTEXT_KEYS.test(key)) return true;
+  if (SECRET_KEYS.test(key)) return false;
+  const trimmed = value.trim();
+  return (
+    trimmed === "" ||
+    BOOLEANS.has(trimmed.toLowerCase()) ||
+    NUMBER.test(trimmed) ||
+    (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed))
+  );
+}
 
-  return store(key);
+/** What the wizard SUGGESTS. See `explain` for why; the two cannot disagree. */
+export function suggest(key: string, value: string): Suggestion {
+  return explain(key, value).suggestion;
+}
+
+/** The three destinations, in the words every menu uses. Spec §5.2. */
+export function DESTINATION_CHOICES(scope: string): Choice<Suggestion>[] {
+  return [
+    { value: "project", label: "Vault, for this project only", hint: `Only ${scope} can read it` },
+    { value: "global", label: "Vault, shared by all your projects", hint: "For accounts you use everywhere, like an OpenAI key" },
+    { value: "plaintext", label: "Keep as plain text", hint: "Stays in the file. For settings, not secrets" },
+  ];
 }

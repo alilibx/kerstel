@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { ensureToken } from "./daemon/token";
 import { installHookAssets, type HookInstallResult } from "./hook-assets";
 import { ensureHome, vaultPath } from "./paths";
+import { cliName } from "./ui/cli-name";
 import { loadOrCreateDataKey, selectBackend, type KeychainBackend } from "./vault/keychain";
 import {
   META_KEYCHAIN_BACKEND,
@@ -67,7 +68,7 @@ export async function openContext(): Promise<CliContext> {
           "Kerstel's vault key does not match the vault: the stored check value " +
             "could not be decrypted. The key in " +
             `the "${backend.name}" credential store is not the one this vault was ` +
-            "encrypted with. Refusing to continue -- run `kerstel doctor`.",
+            `encrypted with. Refusing to continue -- run \`${cliName()} doctor\`.`,
         );
       }
     } else if (created && vault.listSecrets().length > 0) {
@@ -138,7 +139,7 @@ export async function openExistingVault(): Promise<ExistingVault> {
   if (!key) {
     throw new Error(
       `Kerstel could not read its vault key from the ${backend.name} credential store. ` +
-        "Nothing was changed. Run `kerstel doctor`.",
+        `Nothing was changed. Run \`${cliName()} doctor\`.`,
     );
   }
 
@@ -150,7 +151,7 @@ export async function openExistingVault(): Promise<ExistingVault> {
         "Kerstel's vault key does not match the vault: the stored check value " +
           "could not be decrypted. The key in " +
           `the "${backend.name}" credential store is not the one this vault was ` +
-          "encrypted with. Refusing to continue -- run `kerstel doctor`.",
+          `encrypted with. Refusing to continue -- run \`${cliName()} doctor\`.`,
       );
     }
     return { vault, backend, key };

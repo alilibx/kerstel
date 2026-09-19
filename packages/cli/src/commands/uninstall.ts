@@ -1,14 +1,19 @@
-import { accessSync, constants, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { openExistingVault } from "../context";
 import { connectDaemon, isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
-import { TtyPrompter, type Prompter } from "../init/prompts";
+import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
-import { bold, fail, info, ok, yellow } from "../output";
+import { fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
 import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type UninstallPlan } from "../uninstall/plan";
+import { printBanner } from "../ui/banner";
+import { cliName } from "../ui/cli-name";
+import { step } from "../ui/steps";
+import { theme } from "../ui/theme";
+import { VERSION } from "../version";
 
 /**
  * Plan-5 spec §6. Three phases: plan (read only), show and gate, then apply:
@@ -42,47 +47,86 @@ export function parseUninstallArgs(args: string[]): UninstallOptions | { error: 
     if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--yes") options.yes = true;
     else if (arg === "--force") options.force = true;
-    else return { error: `Unknown option "${arg}". kerstel uninstall accepts: --dry-run, --yes, --force.` };
+    else return { error: `Unknown option "${arg}". ${cliName()} uninstall accepts: --dry-run, --yes, --force.` };
   }
   return options;
 }
 
+/**
+ * Removes `<dirname(binaryPath)>/ks` when, and only when, it is a symlink
+ * that resolves to the binary being removed. Both sides go through
+ * `realpathSync` before comparing: on macOS `/tmp` (and the test runner's own
+ * tmpdir) is a symlink into `/private/tmp`, so a bare string comparison of
+ * the raw resolved target against `binaryPath` would false-negative even for
+ * a link this installer created.
+ *
+ * Callers must invoke this BEFORE deleting `binaryPath` -- `realpathSync` on
+ * an already-deleted binary throws, which would turn a real link into a
+ * false "not-ours".
+ */
+export function removeShortcut(binaryPath: string): "removed" | "absent" | "not-ours" {
+  const link = join(dirname(binaryPath), "ks");
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(link);
+  } catch {
+    return "absent";
+  }
+  if (!stat.isSymbolicLink()) return "not-ours";
+
+  try {
+    const target = realpathSync(resolve(dirname(link), readlinkSync(link)));
+    if (target !== realpathSync(binaryPath)) return "not-ours";
+  } catch {
+    // A dangling link (or an unreadable binary) is never ours to remove.
+    return "not-ours";
+  }
+
+  rmSync(link);
+  return "removed";
+}
+
 function printPlan(plan: UninstallPlan): void {
-  console.log(bold("kerstel uninstall"));
+  printBanner(theme, VERSION);
   if (plan.files.length === 0) info("No project files need restoring.");
-  for (const file of plan.files) {
-    console.log("");
-    console.log(renderDiff(file.label, file.diffBefore, file.diffAfter));
+
+  for (const project of plan.restored) {
+    const prefix = `${project.name}: `;
+    const diffs = plan.files.filter((file) => file.label.startsWith(prefix));
+    if (diffs.length === 0) continue;
+    const lines: string[] = [];
+    for (const file of diffs) {
+      if (lines.length > 0) lines.push("");
+      lines.push(...renderDiff(file.label.slice(prefix.length), file.diffBefore, file.diffAfter).split("\n"));
+    }
+    step(project.name, lines);
   }
 
   // Names and references only. Values never reach the terminal.
-  if (plan.unreachable.length > 0) {
-    console.log("");
-    console.log(yellow("!  Projects Kerstel cannot reach, whose references stay as they are:"));
-    for (const p of plan.unreachable) info(`${p.name} at ${p.rootPath}: ${p.reason}`);
-  }
-  if (plan.unresolvable.length > 0) {
-    console.log("");
-    console.log(yellow("!  References the vault cannot resolve, which stay as they are:"));
-    for (const r of plan.unresolvable) info(`${r.reference} in ${r.file}`);
-  }
-  if (plan.unused.length > 0) {
-    console.log("");
-    console.log(yellow("!  Secrets no reachable project uses, which would be deleted with the vault:"));
-    for (const reference of plan.unused) info(reference);
-  }
-  if (plan.backupOnly.length > 0) {
-    console.log("");
-    console.log(yellow("!  Values init kept only in its encrypted backup, which would be deleted with it:"));
-    for (const b of plan.backupOnly) {
-      info(`${b.project}: ${b.key} in ${b.files.join(", ")} (backup ${b.backupDir})`);
-    }
-  }
-  if (plan.unreadableBackups.length > 0) {
-    console.log("");
-    console.log(yellow("!  Backups Kerstel cannot read, which may hold values kept nowhere else:"));
-    for (const b of plan.unreadableBackups) info(`${b.project}: ${b.backupDir} (${b.reason})`);
-  }
+  const lost: string[] = [];
+  const section = (header: string, items: string[]): void => {
+    if (items.length === 0) return;
+    if (lost.length > 0) lost.push("");
+    lost.push(header, ...items);
+  };
+  section(
+    "Projects Kerstel cannot reach, whose references stay as they are:",
+    plan.unreachable.map((p) => `${p.name} at ${p.rootPath}: ${p.reason}`),
+  );
+  section(
+    "References the vault cannot resolve, which stay as they are:",
+    plan.unresolvable.map((r) => `${r.reference} in ${r.file}`),
+  );
+  section("Secrets no reachable project uses, which would be deleted with the vault:", plan.unused);
+  section(
+    "Values init kept only in its encrypted backup, which would be deleted with it:",
+    plan.backupOnly.map((b) => `${b.project}: ${b.key} in ${b.files.join(", ")} (backup ${b.backupDir})`),
+  );
+  section(
+    "Backups Kerstel cannot read, which may hold values kept nowhere else:",
+    plan.unreadableBackups.map((b) => `${b.project}: ${b.backupDir} (${b.reason})`),
+  );
+  if (lost.length > 0) step("Would be lost", lost.map(yellow));
 }
 
 async function stopDaemonIfRunning(): Promise<void> {
@@ -166,26 +210,38 @@ export async function uninstallCommand(
   if (hasLoss(plan) && !options.force) {
     fail(
       "Uninstalling now would lose the secrets and values listed above. Save each secret first with " +
-        "`kerstel get <scope>/<KEY> --reveal`. A value kept only in the backup cannot be read back " +
+        `\`${cliName()} get <scope>/<KEY> --reveal\`. A value kept only in the backup cannot be read back ` +
         "through the CLI: if you still need it, recover it from where it came from. Then re-run with --force.",
     );
     return 1;
   }
 
   if (!options.yes) {
-    const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new TtyPrompter() : null);
+    const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new ClackPrompter() : null);
     if (!prompter) {
-      fail("kerstel uninstall asks for confirmation, and this is not a terminal. Re-run with --yes.");
+      fail(`${cliName()} uninstall asks for confirmation, and this is not a terminal. Re-run with --yes.`);
       return 2;
     }
+    let answer: "yes" | "no";
     try {
-      const go = await prompter.confirm("Restore these files and delete Kerstel from this machine?", false);
-      if (!go) {
-        info("Nothing was changed.");
-        return 0;
+      answer = await prompter.select(
+        "Restore these files and delete Kerstel from this machine?",
+        [
+          { value: "no", label: "No, keep Kerstel" },
+          { value: "yes", label: "Yes, restore and delete" },
+        ],
+        "no",
+      );
+    } catch (error) {
+      if (error instanceof CancelledError) {
+        fail(error.message);
+        return 130;
       }
-    } finally {
-      if (prompter !== prompterOverride && prompter instanceof TtyPrompter) prompter.close();
+      throw error;
+    }
+    if (answer !== "yes") {
+      info("Nothing was changed.");
+      return 0;
     }
   }
 
@@ -243,7 +299,7 @@ export async function uninstallCommand(
     if (await existing.backend.exists()) {
       fail(
         `Could not delete the vault key from the ${existing.backend.name} credential store. ` +
-          "Everything else is gone; run `kerstel uninstall` again to retry, or delete the key by hand.",
+          `Everything else is gone; run \`${cliName()} uninstall\` again to retry, or delete the key by hand.`,
       );
       return 1;
     }
@@ -255,8 +311,13 @@ export async function uninstallCommand(
   }
 
   if (binary.compiled) {
+    // The shortcut check has to run before the binary is gone: it
+    // realpath()s binary.path, which throws once nothing is there to
+    // resolve.
+    const shortcut = removeShortcut(binary.path);
     rmSync(binary.path, { force: true });
     ok(`Removed ${binary.path}.`);
+    if (shortcut === "removed") ok(`Removed ${join(dirname(binary.path), "ks")}.`);
   } else {
     info(`Running from source, so ${binary.path} was left in place.`);
   }

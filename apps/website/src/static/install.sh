@@ -100,6 +100,36 @@ path_hint() {
   say "Then open a new terminal."
 }
 
+link_shortcut() {
+  local dir="$1" found
+  if [ -L "${dir}/ks" ]; then
+    case "$(readlink "${dir}/ks")" in
+      kerstel | "${dir}/kerstel")
+        if ln -sf kerstel "${dir}/ks" 2>/dev/null; then
+          say "Linked ks -> kerstel"
+        else
+          say "could not create ${dir}/ks, so use kerstel"
+        fi
+        return
+        ;;
+    esac
+  fi
+  if [ -e "${dir}/ks" ] || [ -L "${dir}/ks" ]; then
+    say "ks is already taken by ${dir}/ks, so use kerstel"
+    return
+  fi
+  found="$(command -v ks 2>/dev/null || true)"
+  if [ -n "$found" ]; then
+    say "ks is already taken by ${found}, so use kerstel"
+    return
+  fi
+  if ln -s kerstel "${dir}/ks" 2>/dev/null; then
+    say "Linked ks -> kerstel"
+  else
+    say "could not create ${dir}/ks, so use kerstel"
+  fi
+}
+
 main() {
   command -v curl >/dev/null 2>&1 || die "needs curl"
 
@@ -131,9 +161,14 @@ main() {
 
   version="$("${dir}/kerstel" --version)" || die "installed ${dir}/kerstel, but it did not run"
   say "Installed kerstel ${version} to ${dir}/kerstel"
+  link_shortcut "$dir"
   path_hint "$dir"
   say ""
-  say "Next: run 'kerstel doctor', then 'kerstel init' inside a project."
+  local cmd="kerstel"
+  if [ -L "${dir}/ks" ] && [ "$(readlink "${dir}/ks")" = "kerstel" ]; then
+    cmd="ks"
+  fi
+  say "Next: run '${cmd} doctor', then '${cmd} init' inside a project."
 }
 
 main "$@"

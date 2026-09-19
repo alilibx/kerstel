@@ -108,7 +108,7 @@ jobs:
 
           printf 'keychain-value' > value.txt
           perl -e 'alarm 30; exec @ARGV' script -q /dev/null sh -c './kerstel set global/KC_KEY < value.txt' < /dev/null
-          ./kerstel doctor | grep -q 'Keychain:.*macos'
+          ./kerstel doctor | grep -q 'macOS Keychain'
           test "$(./kerstel get global/KC_KEY --reveal)" = "keychain-value"
 
   publish:
@@ -155,3 +155,4 @@ jobs:
           export KERSTEL_VERSION="${GITHUB_REF_NAME#v}" KERSTEL_INSTALL_DIR="$RUNNER_TEMP/bin"
           curl -fsSL https://kerstel.dev/install.sh | bash
           test "$("$KERSTEL_INSTALL_DIR/kerstel" --version)" = "$EXPECTED_VERSION"
+          test "$("$KERSTEL_INSTALL_DIR/ks" --version)" = "$EXPECTED_VERSION"

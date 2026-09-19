@@ -130,7 +130,7 @@ test("the binary installs the runtime hook into KERSTEL_HOME on first use", asyn
     expect((await Bun.file(installed).text()).length).toBeGreaterThan(0);
   }
 
-  const doctor = await kerstel(["doctor"]);
+  const doctor = await kerstel(["doctor", "--verbose"]);
   expect(doctor.stdout).toContain(join(home, "hook"));
   expect(doctor.stdout).not.toContain("not installed");
 });

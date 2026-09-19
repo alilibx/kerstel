@@ -1,23 +1,21 @@
-const useColor = process.stdout.isTTY === true && !process.env.NO_COLOR;
+import { SYMBOLS, theme } from "./ui/theme";
 
-const wrap = (code: string, text: string): string => (useColor ? `[${code}m${text}[0m` : text);
-
-export const dim = (text: string): string => wrap("2", text);
-export const bold = (text: string): string => wrap("1", text);
-export const green = (text: string): string => wrap("32", text);
-export const red = (text: string): string => wrap("31", text);
-export const yellow = (text: string): string => wrap("33", text);
+export const dim = theme.dim;
+export const bold = theme.bold;
+export const green = theme.green;
+export const red = theme.red;
+export const yellow = theme.yellow;
 
 export function ok(message: string): void {
-  console.log(`${green("✔")}  ${message}`);
+  console.log(`${green(SYMBOLS.pass)}  ${message}`);
 }
 
 export function fail(message: string): void {
-  console.log(`${red("✖")}  ${message}`);
+  console.log(`${red(SYMBOLS.problem)}  ${message}`);
 }
 
 export function info(message: string): void {
-  console.log(`${dim("·")}  ${message}`);
+  console.log(`${dim(SYMBOLS.info)}  ${message}`);
 }
 
 /** Masks a secret for display. Never reveals length beyond a fixed width. */

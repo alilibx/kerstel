@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { basename } from "node:path";
 import { socketPath as defaultSocketPath } from "../paths";
+import { cliName } from "../ui/cli-name";
 import {
   LineDecoder,
   PROTOCOL_VERSION,
@@ -43,7 +44,7 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
   const timeoutMs = options.timeoutMs ?? 5_000;
 
   if (!token) {
-    throw new DaemonError("unauthorized", "No session token found. Run `kerstel daemon start`.");
+    throw new DaemonError("unauthorized", `No session token found. Run \`${cliName()} daemon start\`.`);
   }
 
   // Same short-circuit, and for the same reason, as isDaemonRunning() below:
@@ -275,6 +276,6 @@ export async function ensureDaemon(options: EnsureOptions = {}): Promise<DaemonC
 
   throw new DaemonError(
     "unreachable",
-    `Could not start the Kerstel daemon. Try \`kerstel daemon start\` manually. (${String(lastError)})`,
+    `Could not start the Kerstel daemon. Try \`${cliName()} daemon start\` manually. (${String(lastError)})`,
   );
 }

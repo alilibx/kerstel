@@ -13,7 +13,13 @@ import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { collectKeys, loadEnvFiles } from "../src/init/collect";
 import { discoverEnvFiles } from "../src/init/detect";
-import { DefaultsPrompter, ScriptedPrompter } from "../src/init/prompts";
+import {
+  CancelledError,
+  DefaultsPrompter,
+  ScriptedPrompter,
+  type Choice,
+  type TextOptions,
+} from "../src/init/prompts";
 import { backupsDir, socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
@@ -164,9 +170,9 @@ test("init migrates an npm project end to end", async () => {
     ].join("\n"),
   });
 
-  // Three keys -> three `choose` answers, then apply, then .gitignore is not
-  // asked (this project has none).
-  const prompter = new ScriptedPrompter(["plaintext", "project", "global", true]);
+  // One by one: three keys -> three destinations, then accept, then apply.
+  // .gitignore is not asked (this project has none).
+  const prompter = new ScriptedPrompter(["each", "plaintext", "project", "global", "accept", "apply"]);
   expect(await runInit(options(root), prompter)).toBe(0);
 
   const env = readFileSync(join(root, ".env"), "utf8");
@@ -210,7 +216,7 @@ test("init stores the highest-precedence value and points every file at it", asy
     ".env.local": "API_TOKEN=local-value-bbbb\n",
   });
 
-  expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
+  expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://conflicted/API_TOKEN\n");
   expect(readFileSync(join(root, ".env.local"), "utf8")).toBe(
@@ -250,7 +256,7 @@ test("a bun project is wired through package scripts alone", async () => {
     ".env": "SERVICE_TOKEN=bun-secret-value\n",
   });
 
-  expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
+  expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   expect(readFileSync(join(root, "package.json"), "utf8")).toContain(
     '"dev": "kerstel exec -- bun run index.ts"',
@@ -268,7 +274,7 @@ test("a second run reports an already-migrated project and changes nothing", asy
     "package.json": NPM_PACKAGE,
     ".env": "SERVICE_TOKEN=first-run-value\n",
   });
-  expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
+  expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   const envAfterFirst = readFileSync(join(root, ".env"), "utf8");
   const packageAfterFirst = readFileSync(join(root, "package.json"), "utf8");
@@ -290,11 +296,11 @@ test("the teammate flow prompts for references the vault cannot resolve", async 
     ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
   });
 
-  // One `text` for the missing value, then the apply confirm (this fixture's
-  // scripts are not wired yet, so there is still a change to approve).
-  const prompter = new ScriptedPrompter(["teammate-supplied-value", true]);
+  // One `text` for the missing value, then apply (this fixture's scripts are
+  // not wired yet, so there is still a change to approve).
+  const prompter = new ScriptedPrompter(["teammate-supplied-value", "apply"]);
   expect(await runInit(options(root), prompter)).toBe(0);
-  expect(prompter.asked[0]).toContain("kerstel://demo-app/SERVICE_TOKEN");
+  expect(prompter.asked[0]).toBe("SERVICE_TOKEN · 1 of 1");
 
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "demo-app", key: "SERVICE_TOKEN" })).toBe("teammate-supplied-value");
@@ -329,9 +335,10 @@ test("--keep forces plaintext and --global forces the global scope", async () =>
     ".env": "KEEP_ME=keep-this-value\nSHARE_ME=share-this-value\n",
   });
 
-  // Both keys are decided by flags, so the only question is the apply confirm.
+  // Both keys are decided by flags, so "Look right?" has nothing to offer and
+  // the only question is apply.
   expect(
-    await runInit(options(root, ["--keep", "KEEP_ME", "--global", "SHARE_ME"]), new ScriptedPrompter([true])),
+    await runInit(options(root, ["--keep", "KEEP_ME", "--global", "SHARE_ME"]), new ScriptedPrompter(["apply"])),
   ).toBe(0);
 
   const env = readFileSync(join(root, ".env"), "utf8");
@@ -353,8 +360,10 @@ test(".gitignore is left alone by default and cleaned up only on an explicit yes
     ".env": "SERVICE_TOKEN=a-secret-value\n",
     ".gitignore": gitignore,
   });
-  // choose, apply, .gitignore -> no
-  expect(await runInit(options(rootDefault), new ScriptedPrompter(["project", true, false]))).toBe(0);
+  // one by one, accept, .gitignore -> keep, apply
+  expect(
+    await runInit(options(rootDefault), new ScriptedPrompter(["each", "project", "accept", "keep", "apply"])),
+  ).toBe(0);
   expect(readFileSync(join(rootDefault, ".gitignore"), "utf8")).toBe(gitignore);
 
   const rootYes = makeProject({
@@ -362,7 +371,9 @@ test(".gitignore is left alone by default and cleaned up only on an explicit yes
     ".env": "SERVICE_TOKEN=a-secret-value\n",
     ".gitignore": gitignore,
   });
-  expect(await runInit(options(rootYes), new ScriptedPrompter(["project", true, true]))).toBe(0);
+  expect(
+    await runInit(options(rootYes), new ScriptedPrompter(["each", "project", "accept", "remove", "apply"])),
+  ).toBe(0);
   const updated = readFileSync(join(rootYes, ".gitignore"), "utf8");
   expect(updated).toContain("# Kerstel: .env files hold references, safe to commit");
   expect(updated).toContain("node_modules/");
@@ -395,7 +406,7 @@ test("the printed diff masks the plaintext it is about to remove", async () => {
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await runInit(options(root, ["--dry-run"]), new ScriptedPrompter(["project", "global"]))).toBe(0);
+    expect(await runInit(options(root, ["--dry-run"]), new ScriptedPrompter(["each", "project", "global", "accept"]))).toBe(0);
   } finally {
     console.log = realLog;
   }
@@ -438,7 +449,7 @@ test("the diff masks every value it is not migrating, parsed or not", async () =
   try {
     code = await runInit(
       options(root, ["--keep", "KEEP_ME"]),
-      new ScriptedPrompter(["project", "global", true]),
+      new ScriptedPrompter(["each", "project", "global", "accept", "diff", "apply"]),
     );
   } finally {
     console.log = realLog;
@@ -477,7 +488,7 @@ test("init warns about a key it cannot parse and never prints its value", async 
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   let code: number;
   try {
-    code = await runInit(options(root), new ScriptedPrompter(["project", true]));
+    code = await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]));
   } finally {
     console.log = realLog;
   }
@@ -512,7 +523,7 @@ test("the .gitignore offer names the keys that still hold plaintext", async () =
   try {
     code = await runInit(
       options(root, ["--keep", "KEEP_ME"]),
-      new ScriptedPrompter(["project", true, false]),
+      new ScriptedPrompter(["each", "project", "accept", "keep", "apply"]),
     );
   } finally {
     console.log = realLog;
@@ -524,7 +535,7 @@ test("the .gitignore offer names the keys that still hold plaintext", async () =
   expect(output).toContain("committing these files would expose");
   expect(output).not.toContain("kept-plaintext-value");
   // The reassuring sentence is a claim, and here it would be a false one.
-  expect(output).not.toContain("they now hold references, not secrets");
+  expect(output).not.toContain("they'll hold references, not secrets");
 });
 
 test("the .gitignore offer reassures only when every value is a reference", async () => {
@@ -541,13 +552,15 @@ test("the .gitignore offer reassures only when every value is a reference", asyn
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await runInit(options(root), new ScriptedPrompter(["project", true, false]))).toBe(0);
+    expect(
+      await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "keep", "apply"])),
+    ).toBe(0);
   } finally {
     console.log = realLog;
   }
 
   const output = captured.join("\n");
-  expect(output).toContain("They now hold references, not secrets");
+  expect(output).toContain("they'll hold references, not secrets");
   expect(output).not.toContain("still holds a plaintext value");
 });
 
@@ -594,7 +607,7 @@ test("a rerun names the keys still in plaintext instead of claiming migration", 
     ".env": "KEEP_ME=keep-this-value\nMOVE_ME=move-this-value\n",
   });
   const flags = ["--keep", "KEEP_ME"];
-  expect(await runInit(options(root, flags), new ScriptedPrompter(["project", true]))).toBe(0);
+  expect(await runInit(options(root, flags), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   const captured: string[] = [];
   const realLog = console.log;
@@ -624,7 +637,7 @@ test("a rerun of a fully migrated project still reports it as migrated", async (
     "package.json": NPM_PACKAGE,
     ".env": "MOVE_ME=move-this-value\n",
   });
-  expect(await runInit(options(root), new ScriptedPrompter(["project", true]))).toBe(0);
+  expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   const captured: string[] = [];
   const realLog = console.log;
@@ -703,7 +716,7 @@ test("the teammate flow stores nothing when the user declines the plan", async (
     ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
   });
 
-  const prompter = new ScriptedPrompter(["typed-then-declined", false]);
+  const prompter = new ScriptedPrompter(["typed-then-declined", "cancel"]);
   expect(await runInit(options(root), prompter)).toBe(0);
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "demo-app", key: "SERVICE_TOKEN" })).toBeNull();
@@ -770,4 +783,156 @@ test("--keep naming a key that is already a reference is reported", async () => 
   );
   expect(out).toContain("ALREADY");
   expect(out).toContain("already a reference");
+});
+
+/** Answers from its script, then cancels (Ctrl-C) at the next prompt. */
+class CancellingPrompter extends ScriptedPrompter {
+  private remaining: number;
+
+  constructor(answers: (string | boolean | string[])[]) {
+    super(answers);
+    this.remaining = answers.length;
+  }
+
+  private take(): void {
+    if (this.remaining === 0) throw new CancelledError();
+    this.remaining -= 1;
+  }
+
+  override async confirm(question: string, defaultValue: boolean): Promise<boolean> {
+    this.take();
+    return super.confirm(question, defaultValue);
+  }
+
+  override async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
+    this.take();
+    return super.select(question, choices, defaultValue);
+  }
+
+  override async multiselect<T extends string>(question: string, choices: Choice<T>[], initial: T[]): Promise<T[]> {
+    this.take();
+    return super.multiselect(question, choices, initial);
+  }
+
+  override async text(question: string, options?: TextOptions): Promise<string> {
+    this.take();
+    return super.text(question, options);
+  }
+}
+
+test("accepting the suggestions stores exactly what --yes would", async () => {
+  isolateEnv({ prefix: "init-accept" });
+  await bootLocalDaemon();
+  const files = {
+    "package.json": NPM_PACKAGE,
+    ".env": "NODE_ENV=development\nDATABASE_URL=postgres://u:pw@localhost:5432/app\n",
+  };
+  const interactiveRoot = makeProject(files);
+  expect(await runInit(options(interactiveRoot), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  const yesRoot = makeProject(files);
+  expect(await runInit({ ...options(yesRoot), yes: true }, new DefaultsPrompter())).toBe(0);
+  expect(readFileSync(join(interactiveRoot, ".env"), "utf8")).toBe(readFileSync(join(yesRoot, ".env"), "utf8"));
+});
+
+test("changing some asks only about the ticked keys", async () => {
+  isolateEnv({ prefix: "init-change" });
+  await bootLocalDaemon();
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "NODE_ENV=development\nDATABASE_URL=postgres://u:pw@localhost:5432/app\n",
+  });
+  const prompter = new ScriptedPrompter(["change", ["NODE_ENV"], "project", "accept", "apply"]);
+  expect(await runInit(options(root), prompter)).toBe(0);
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NODE_ENV=kerstel://demo-app/NODE_ENV");
+  expect(prompter.asked.filter((q) => q.startsWith("DATABASE_URL"))).toEqual([]);
+});
+
+test("showing the full diff first, then applying", async () => {
+  isolateEnv({ prefix: "init-diff" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "DATABASE_URL=postgres://u:pw@localhost/app\n" });
+  const prompter = new ScriptedPrompter(["accept", "diff", "apply"]);
+  expect(await runInit(options(root), prompter)).toBe(0);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=kerstel://demo-app/DATABASE_URL\n");
+});
+
+test("cancelling at any prompt writes nothing", async () => {
+  isolateEnv({ prefix: "init-cancel" });
+  const original = "DATABASE_URL=postgres://u:pw@localhost/app\n";
+  for (const answers of [[], ["accept"], ["each"]]) {
+    const root = makeProject({ "package.json": NPM_PACKAGE, ".env": original });
+    const prompter = new CancellingPrompter(answers);
+    expect(await runInit(options(root), prompter)).toBe(130);
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe(original);
+    expect(readFileSync(join(root, "package.json"), "utf8")).toBe(NPM_PACKAGE);
+  }
+});
+
+test("the overview never prints a vault-bound value", async () => {
+  isolateEnv({ prefix: "init-no-leak" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "DB_PASSWORD=correct-horse-battery\n" });
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter(["accept", "diff", "apply"]))).toBe(0);
+  } finally {
+    console.log = realLog;
+  }
+  expect(captured.join("\n")).not.toContain("correct-horse-battery");
+});
+
+test("the .gitignore answer is only written once the changes are applied", async () => {
+  isolateEnv({ prefix: "init-gitignore-cancel" });
+  const gitignore = "node_modules/\n.env\n";
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "SERVICE_TOKEN=a-secret-value\n",
+    ".gitignore": gitignore,
+  });
+  const prompter = new ScriptedPrompter(["accept", "remove", "cancel"]);
+  expect(await runInit(options(root), prompter)).toBe(0);
+  expect(prompter.asked.slice(1)).toEqual([
+    "Remove the .env lines from .gitignore so these files can be committed?",
+    "Apply these changes?",
+  ]);
+  expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(gitignore);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("SERVICE_TOKEN=a-secret-value\n");
+});
+
+test("the overview shows a config value in full, but a secret moved to plain text only as its length", async () => {
+  isolateEnv({ prefix: "init-moved-plain" });
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "PORT=3000\nAPI_TOKEN=moved-to-plaintext-secret\n",
+  });
+  const out = await captureLog(() =>
+    runInit(options(root, ["--dry-run"]), new ScriptedPrompter(["change", ["API_TOKEN"], "plaintext", "accept"])),
+  );
+  expect(out).not.toContain("moved-to-plaintext-secret");
+  expect(out).toMatch(/^\s+API_TOKEN\s+•••• 25 chars\s/m);
+  expect(out).toMatch(/^\s+PORT\s+3000\s/m);
+});
+
+test("under --yes the overview shows config values but never a credential-shaped one", async () => {
+  isolateEnv({ prefix: "init-yes-display" });
+  const harmless = "a".repeat(60);
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env":
+      "PORT=3000\nNODE_ENV=development\nDB_PASSWORD=12345678\n" +
+      "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T0/B0/webhookpathsecret\n" +
+      "LOG_LEVEL=\u001b]0;pwned\u0007debug\n" +
+      `PUBLIC_TAGLINE=${harmless}\n`,
+  });
+  const out = await captureLog(() => runInit(options(root, ["--dry-run", "--yes"]), new DefaultsPrompter()));
+  expect(out).not.toContain("12345678");
+  expect(out).not.toContain("webhookpathsecret");
+  expect(out).not.toContain("\u001b]0;");
+  expect(out).toMatch(/^\s+DB_PASSWORD\s+•••• 8 chars\s/m);
+  expect(out).toMatch(/^\s+PORT\s+3000\s/m);
+  expect(out).toMatch(/^\s+NODE_ENV\s+development\s/m);
+  expect(out).not.toContain(harmless);
+  expect(out).toContain(`${"a".repeat(39)}…`);
 });

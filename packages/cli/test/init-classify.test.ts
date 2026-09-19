@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { GLOBAL_KEYS, SUGGESTIONS, type Suggestion, suggest } from "../src/init/classify";
+import type { Choice } from "../src/init/prompts";
+import {
+  DESTINATION_CHOICES,
+  GLOBAL_KEYS,
+  SUGGESTIONS,
+  explain,
+  isSafeToDisplay,
+  suggest,
+  type Suggestion,
+} from "../src/init/classify";
 
 const CASES: [key: string, value: string, expected: Suggestion][] = [
   // Plaintext: nothing worth encrypting.
@@ -69,6 +78,27 @@ const CASES: [key: string, value: string, expected: Suggestion][] = [
   ["AUTHOR_NAME", "ali", "plaintext"],
   // An empty value is still nothing to encrypt.
   ["PASSWORD", "", "plaintext"],
+  // Short credential names, and bare *_KEY names, are credentials too.
+  ["DB_PASS", "hunter", "project"],
+  ["SMTP_PWD", "letmein", "project"],
+  ["DOOR_PASSCODE", "abc", "project"],
+  ["GPG_PASSPHRASE", "correct horse", "project"],
+  ["SIGNING_KEY", "secret", "project"],
+  ["MASTER_KEY", "abc", "project"],
+  // A number under a credential name is a secret that happens to be digits.
+  ["PIN", "4821", "project"],
+  ["SMTP_PASS", "12345678", "project"],
+  ["ENCRYPTION_KEY", "12345678901234567890", "project"],
+  ["DB_PASSWORD", "12345678", "project"],
+  // A number under any other name, or under a declared-public name, is still a setting.
+  ["PORT", "3000", "plaintext"],
+  ["NEXT_PUBLIC_PIN_LENGTH", "4", "plaintext"],
+  // A boolean stays a switch even under a credential word.
+  ["AUTH_ENABLED", "true", "plaintext"],
+  // Whole segments only: SPINNER is not PIN, KEYBOARD is not KEY, PASSENGER is not PASS.
+  ["SPINNER_STYLE", "dots", "plaintext"],
+  ["KEYBOARD_LAYOUT", "us", "plaintext"],
+  ["PASSENGER_COUNT", "4", "plaintext"],
 ];
 
 test("suggest classifies every documented case", () => {
@@ -109,4 +139,50 @@ test("a long opaque value under an unknown key stays with the project", () => {
 
 test("SUGGESTIONS is the three choices in wizard order", () => {
   expect(SUGGESTIONS).toEqual(["project", "global", "plaintext"]);
+});
+
+test.each([
+  ["EMPTY", "", "plaintext" as Suggestion, "It's empty, so there's nothing to protect"],
+  ["DEBUG", "true", "plaintext" as Suggestion, "An on/off switch or a number, not a credential"],
+  ["DATABASE_URL", "postgres://u:pw@db/app", "project" as Suggestion, "The URL has a username and password in it"],
+  ["WEBHOOK", "https://x.test/hook?token=abc", "project" as Suggestion, "The URL carries a key or token"],
+  ["NEXT_PUBLIC_API", "https://api.test", "plaintext" as Suggestion, "A setting, not a credential"],
+  ["OPENAI_API_KEY", "sk-abcdefgh12345678", "global" as Suggestion, "You probably use this account in every project"],
+  ["DB_PASSWORD", "hunter2hunter2", "project" as Suggestion, "The name says it's a secret"],
+  ["API_BASE", "https://api.test/v1", "plaintext" as Suggestion, "A plain URL with no credentials in it"],
+  ["MODE", "dev", "plaintext" as Suggestion, "A short word, like a mode or a name"],
+  ["SESSION_BLOB", "a9f8e7d6c5b4a3f2", "project" as Suggestion, "Might be a secret, so it's safer in the vault"],
+  ["PIN", "4821", "project" as Suggestion, "The name says it's a secret"],
+])("explain(%s) suggests %s with its reason", (key, value, suggestion, reason) => {
+  expect(explain(key, value)).toEqual({ suggestion, reason });
+  expect(suggest(key, value)).toBe(suggestion);
+});
+
+test("the destination choices carry the spec's labels and hints", () => {
+  expect(DESTINATION_CHOICES("whasal")).toEqual([
+    { value: "project", label: "Vault, for this project only", hint: "Only whasal can read it" },
+    { value: "global", label: "Vault, shared by all your projects", hint: "For accounts you use everywhere, like an OpenAI key" },
+    { value: "plaintext", label: "Keep as plain text", hint: "Stays in the file. For settings, not secrets" },
+  ]);
+});
+
+test.each([
+  ["PORT", "3000", true],
+  ["NODE_ENV", "development", true],
+  ["PUBLIC_SITE_URL", "https://example.com", true],
+  ["FEATURE_FLAG", "true", true],
+  ["RETRIES", "3", true],
+  ["MODE", "fast", true],
+  ["EMPTY", "", true],
+  ["DB_PASSWORD", "12345678", false],
+  ["STRIPE_SECRET_KEY", "1234567890", false],
+  ["PIN", "4821", false],
+  ["DB_PASS", "hunter", false],
+  ["SIGNING_KEY", "secret", false],
+  ["API_TOKEN", "true", false],
+  ["SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/abc", false],
+  ["HOMEPAGE", "https://example.com", false],
+  ["SESSION_ID", "a-long-opaque-value", false],
+] as const)("isSafeToDisplay(%p, …) is %p", (key, value, expected) => {
+  expect(isSafeToDisplay(key, value)).toBe(expected);
 });

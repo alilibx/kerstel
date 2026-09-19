@@ -23,7 +23,7 @@ Your `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to r
 Secrets are stored once, encrypted, in a local vault:
 
 ```bash
-kerstel set global/OPENAI_API_KEY --value sk-...
+ks set global/OPENAI_API_KEY --value sk-...
 ```
 
 Your `.env` file then holds a reference instead of the value:
@@ -38,21 +38,21 @@ A reference names exactly one scope — `global`, or a project name — with no 
 ## Usage
 
 ```bash
-kerstel init [--yes] [--dry-run]                 # Migrate this project's .env files
-kerstel set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
-kerstel get <scope>/<KEY> [--reveal]             # Read a secret
-kerstel ls [--scope <scope>]                     # List stored references
-kerstel rm <scope>/<KEY> --yes                   # Remove a secret
-kerstel run -- <command>                         # Run a command with references resolved
-kerstel exec -- <command>                        # Run a command with the hook wired in
-kerstel resolve kerstel://<scope>/<KEY>          # Print one resolved value
-kerstel daemon <serve|start|stop|status>         # Manage the resolver daemon
-kerstel doctor                                   # Diagnose this machine's setup
-kerstel uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
-kerstel --version                                # Print the version
+ks init [--yes] [--dry-run]                 # Migrate this project's .env files
+ks set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
+ks get <scope>/<KEY> [--reveal]             # Read a secret
+ks ls [--scope <scope>]                     # List stored references
+ks rm <scope>/<KEY> --yes                   # Remove a secret
+ks run -- <command>                         # Run a command with references resolved
+ks exec -- <command>                        # Run a command with the hook wired in
+ks resolve kerstel://<scope>/<KEY>          # Print one resolved value
+ks daemon <serve|start|stop|status>         # Manage the resolver daemon
+ks doctor [--verbose]                       # Diagnose this machine's setup
+ks uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
+ks --version                                # Print the version
 ```
 
-`kerstel run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
+`ks run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
 
 ## Install
 
@@ -62,23 +62,25 @@ curl -fsSL https://kerstel.dev/install.sh | bash
 
 macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Re-run it to upgrade, or set `KERSTEL_VERSION=0.1.0` to pin a version.
 
-To remove Kerstel, run `kerstel uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, and the binary, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
+The installer also adds `ks`, a shortcut for `kerstel`. If something else on your `PATH` is already called `ks`, it leaves that alone and tells you to use `kerstel` instead. Everything below works the same either way — `ks` and `kerstel` are the same binary.
+
+To remove Kerstel, run `ks uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, the binary, and the `ks` shortcut, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 
 ```bash
 cd my-app
-kerstel init
+ks init
 ```
 
-The wizard shows you everything it intends to do — the plan, and a full diff of every file — and then asks **once**, before its first write, whether to apply all of it: the backup, the vault entries, the `.env` rewrites and the wiring. Two questions sit outside that one: what to do with each key, asked before the plan is drawn, and whether to touch `.gitignore`, asked afterwards.
+The wizard shows every variable it found, grouped by where it suggests putting it — the vault for this project, the vault shared across all your projects, or left as plain text — and then asks **"Look right?"**: press Enter to accept every suggestion, or choose **Let me change some** to pick individual keys from a checklist, or **Go through them one by one** to answer for each in turn. Once you accept, it asks whether to touch `.gitignore`, if that file hides your env files. Then it shows a one-line summary per file of what will change and asks **"Apply these changes?"** once, before its first write, covering all of it: the backup, the vault entries, the `.env` rewrites, the wiring and any `.gitignore` edit. Press Enter to apply, choose **Show the full diff first** to see every file's masked diff before answering, or **Cancel** to write nothing.
 
 1. **Detect** your runtime and package manager from your lockfile.
-2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found — key names, value sizes and shapes, never the values themselves. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
+2. **Parse** every `.env` / `.env.*` file in the project root (templates like `.env.example` are skipped) and show what it found: key names and sources, with each value shown only as its length. The exception is a configuration value that stays in plain text, like `PORT=3000` or `NODE_ENV=development`, which is shown as it is. For each key you choose: store it in this **project**'s scope, point it at a **global** key shared across all your projects, or leave it as **plaintext** (right for `NODE_ENV`, ports and public URLs).
 3. **Back up** the originals, encrypted with your vault key, to `~/.kerstel/backups/<project>/<timestamp>/`.
 4. **Rewrite** the files, changing only the bytes of the values it stored. Comments, blank lines, key order, quoting style and inline comments all survive byte for byte.
-5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped). You see the diff first. Bun projects are wired the same way — `kerstel exec` passes `--preload` to `bun` itself, because Bun ignores `NODE_OPTIONS`.
-6. **Offer to update `.gitignore`**, as a separate confirmation that defaults to **no**: if it currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the now reference-only files can be committed. It re-reads the rewritten files first: if any key still holds a plaintext value — `--keep`, a **plaintext** answer, or a line it could not parse — it names those keys rather than telling you the files are safe to commit. Decline and it leaves `.gitignore` untouched.
+5. **Wire** the hook: every `package.json` script becomes `kerstel exec -- <your original command>` (npm lifecycle hooks are never wrapped). **Show the full diff first** lets you see it before anything is written. Bun projects are wired the same way — `kerstel exec` passes `--preload` to `bun` itself, because Bun ignores `NODE_OPTIONS`.
+6. **Update `.gitignore`** if you said yes when asked. The question comes before **"Apply these changes?"** and defaults to **no**: if `.gitignore` currently hides your env files, the wizard asks whether it should remove those lines and add a one-line note instead, so the reference-only files can be committed. It checks the files as they will be written first: if any key still holds a plaintext value — `--keep`, a **plaintext** answer, or a line it could not parse — it names those keys rather than telling you the files are safe to commit. Decline and it leaves `.gitignore` untouched.
 7. **Self-check** by running a probe through the wiring and confirming a reference resolves.
 
 Afterwards `npm run dev` is still `npm run dev`.
@@ -95,7 +97,7 @@ Useful flags:
 | `--non-interactive` | Never asks a question. Applies the suggested plan like `--yes`, but fails with exit 2 naming the flag on any question no flag can answer — a missing secret value, for instance. Pair it with `--from-stdin` in scripts. |
 | `--from-stdin` | Reads `{"KEY": "value"}` JSON for keys this machine is missing. |
 
-`kerstel init` is idempotent: run it again after adding a key and it migrates only what is new.
+`ks init` is idempotent: run it again after adding a key and it migrates only what is new.
 
 ### One key, several files
 
@@ -105,7 +107,7 @@ If the same key appears in more than one file with different values, Kerstel sto
 
 ```bash
 git clone git@github.com:acme/my-app.git && cd my-app
-kerstel init
+ks init
 ```
 
 The committed `.env` holds references, so `init` lists the keys your vault does not have yet and prompts for each one with the echo turned off. It stores them when you apply the plan, or straight away if nothing else in the project needs changing. The references double as a living `.env.example`. To supply them from a script instead:

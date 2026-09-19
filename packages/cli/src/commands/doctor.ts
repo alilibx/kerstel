@@ -1,118 +1,164 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { openContext } from "../context";
 import { isDaemonRunning } from "../daemon/client";
+import { isCompiledBinary } from "../daemon/spawn";
 import { projectStatus } from "../init/status";
-import { bold, info, ok, yellow } from "../output";
+import { fail } from "../output";
 import { hookDir, kerstelHome, socketPath, tokenPath, vaultPath } from "../paths";
+import { cliName } from "../ui/cli-name";
+import { printBanner } from "../ui/banner";
+import { step } from "../ui/steps";
+import { renderTable } from "../ui/table";
+import { SYMBOLS, theme } from "../ui/theme";
+import { VERSION } from "../version";
+import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
 
 /**
- * Renders a path's ACTUAL mode next to the one Kerstel intends, flagging
- * anything looser. Reporting the intended mode would be worthless -- the whole
- * question is whether what is on disk still matches it.
- *
- * Windows is exempt: NTFS does not implement POSIX modes, and `doctor` already
- * prints that caveat once rather than flagging every path as wrong.
+ * A path's actual mode next to the one Kerstel intends. `null` means "not
+ * worth reporting" -- missing (nothing to protect yet) or Windows (NTFS has
+ * no POSIX modes, so every path would otherwise show as a false problem).
  */
-function modeReport(path: string, expected: number): string {
-  if (process.platform === "win32" || !existsSync(path)) return "";
-  let actual: number;
+function readMode(path: string): number | null {
+  if (process.platform === "win32" || !existsSync(path)) return null;
   try {
-    actual = statSync(path).mode & 0o777;
+    return statSync(path).mode & 0o777;
   } catch {
-    return "";
+    return null;
   }
-  const shown = actual.toString(8).padStart(4, "0");
-  // Looser means any bit set that the expected mode does not grant -- group or
-  // world access, typically. A stricter mode is the user's business.
-  if ((actual & ~expected) !== 0) {
-    return yellow(`  (mode ${shown}, expected ${expected.toString(8).padStart(4, "0")})`);
+}
+
+/**
+ * Spec: `ks` is on PATH and resolves to this same binary. Only meaningful for
+ * a compiled binary -- running from source has no shortcut to check.
+ */
+function computeShortcut(): DoctorFacts["shortcut"] {
+  if (!isCompiledBinary()) return "not-applicable";
+  const found = Bun.which("ks");
+  if (!found) return "missing";
+  try {
+    return realpathSync(found) === realpathSync(process.execPath) ? "linked" : "other";
+  } catch {
+    return "other";
+  }
+}
+
+/** `~/.kerstel` when KERSTEL_HOME is the default, else the real path. */
+function homeForDisplay(): string {
+  const home = kerstelHome();
+  return resolve(home) === resolve(join(homedir(), ".kerstel")) ? "~/.kerstel" : home;
+}
+
+function symbolFor(status: Check["status"]): string {
+  if (status === "pass") return theme.green(SYMBOLS.pass);
+  if (status === "warn") return theme.yellow(SYMBOLS.warn);
+  return theme.red(SYMBOLS.problem);
+}
+
+/**
+ * `<symbol> <label>  <detail>`, and a dim `Fix: <fix>` row under any warning
+ * or problem -- aligned with `renderTable` so the whole group reads as one
+ * block regardless of label length.
+ */
+function renderChecks(checks: Check[]): string[] {
+  const rows: string[][] = [];
+  for (const check of checks) {
+    rows.push([`${symbolFor(check.status)}  ${check.label}`, check.detail]);
+    if (check.fix && check.status !== "pass") {
+      rows.push(["", theme.dim(`Fix: ${check.fix}`)]);
+    }
+  }
+  return renderTable(rows, { gap: 2 });
+}
+
+function modeSuffix(mode: { actual: number | null; expected: number } | undefined): string {
+  if (!mode || mode.actual === null) return "";
+  const shown = mode.actual.toString(8).padStart(4, "0");
+  if ((mode.actual & ~mode.expected) !== 0) {
+    return theme.yellow(`  (mode ${shown}, expected ${mode.expected.toString(8).padStart(4, "0")})`);
   }
   return `  (mode ${shown})`;
 }
 
-export async function doctorCommand(cwd: string = process.cwd()): Promise<number> {
-  const ctx = await openContext();
+/** The paths and permission modes `doctor` printed unconditionally before this task. Spec §6: `--verbose` only, now that the checks above cover the same ground in plain language. */
+function verboseLines(facts: DoctorFacts): string[] {
+  const [home, token, socket] = facts.modes;
+  return [
+    `Home:      ${kerstelHome()}${modeSuffix(home)}`,
+    `Vault:     ${vaultPath()}`,
+    `Token:     ${tokenPath()}${modeSuffix(token)}`,
+    `Socket:    ${socketPath()}${modeSuffix(socket)}`,
+    `Hook:      ${hookDir()}${facts.hook.installed ? "" : theme.yellow("  (not installed)")}`,
+  ];
+}
+
+function summaryLine(checks: Check[]): string {
+  const problems = checks.filter((check) => check.status === "problem").length;
+  const warnings = checks.filter((check) => check.status === "warn").length;
+  if (problems === 0 && warnings === 0) return "All good.";
+  return (
+    `${problems} problem${problems === 1 ? "" : "s"}, ${warnings} warning${warnings === 1 ? "" : "s"}. ` +
+    "Everything else looks good."
+  );
+}
+
+export async function doctorCommand(args: string[] = [], cwd: string = process.cwd()): Promise<number> {
+  let verbose = false;
+  for (const arg of args) {
+    if (arg === "--verbose") verbose = true;
+    else {
+      fail(`Unknown option "${arg}". ${cliName()} doctor accepts: --verbose.`);
+      return 2;
+    }
+  }
+
+  let ctx: Awaited<ReturnType<typeof openContext>>;
   try {
-    console.log(bold("Kerstel doctor"));
-    info(`Home:      ${kerstelHome()}${modeReport(kerstelHome(), 0o700)}`);
-    info(`Vault:     ${vaultPath()} (${ctx.vault.listSecrets().length} secrets)`);
-    info(`Token:     ${tokenPath()}${modeReport(tokenPath(), 0o600)}`);
-    info(`Keychain:  ${ctx.backend}`);
-    info(`Socket:    ${socketPath()}${modeReport(socketPath(), 0o600)}`);
-    // openContext() just tried to install these and recorded the outcome on the
-    // context, so "not installed" here means the write failed (a read-only
-    // home, a permissions problem). Read that result rather than re-reading
-    // and re-comparing all four files off disk to learn what we were already
-    // told. A reachable branch, not dead code: installHookAssets() records the
-    // failure and lets the command run instead of throwing out of openContext().
-    info(`Hook:      ${hookDir()}${ctx.hookInstall.installed ? "" : yellow("  (not installed)")}`);
-    if (ctx.hookInstall.error) {
-      console.log(
-        yellow(
-          `!  Could not install the runtime hook: ${ctx.hookInstall.error}\n` +
-            "   Everything else still works; `kerstel run -- <command>` resolves " +
-            "references without the hook.",
-        ),
-      );
-    }
+    ctx = await openContext();
+  } catch (error) {
+    // Nothing else here can be trusted -- the vault itself would not open, so
+    // there is no secret count, no backend, no project to report on.
+    fail(`Vault: ${(error as Error).message}`);
+    return 1;
+  }
 
-    if (ctx.backend === "file") {
-      console.log(
-        yellow(
-          "!  The data key is in a 0600 file, not an OS credential store. " +
-            "Install `secret-tool` (Linux) for stronger protection.",
-        ),
-      );
-    }
-
-    if (process.platform === "win32") {
-      console.log(
-        yellow(
-          "!  On Windows the 0700/0600 permission bits Kerstel sets are inert: NTFS does " +
-            "not implement POSIX modes. Your home directory is protected by the user " +
-            "profile's inherited ACL, and the named pipe carries libuv's default security " +
-            "descriptor.",
-        ),
-      );
-    }
-
-    // Spec §6.3: wiring problems are diagnosed here, in the project, because
-    // that is where they are: a machine can be perfectly set up and a project
-    // still unwired.
+  try {
     const project = projectStatus(cwd, ctx.vault);
+    const facts: DoctorFacts = {
+      backend: ctx.backend,
+      secretCount: ctx.vault.listSecrets().length,
+      daemonRunning: await isDaemonRunning(),
+      hook: { installed: ctx.hookInstall.installed, error: ctx.hookInstall.error },
+      modes: [
+        { path: kerstelHome(), expected: 0o700, actual: readMode(kerstelHome()) },
+        { path: tokenPath(), expected: 0o600, actual: readMode(tokenPath()) },
+        { path: socketPath(), expected: 0o600, actual: readMode(socketPath()) },
+      ],
+      shortcut: computeShortcut(),
+      project,
+      cli: cliName(),
+      platform: process.platform,
+      home: homeForDisplay(),
+    };
+
+    const checks = gatherChecks(facts);
+
+    printBanner(theme, VERSION);
+
+    const machineLines = renderChecks(checks.filter((check) => check.group === "machine"));
+    if (verbose) machineLines.push("", ...verboseLines(facts));
+    step("This machine", machineLines);
+
     if (project) {
-      console.log("");
-      console.log(bold("Project"));
-      info(`Root:       ${project.root}`);
-      info(
-        `Scope:      ${project.scope ?? yellow("could not be derived — pass --scope to `kerstel init`")}`,
-      );
-      info(`Runtime:    ${project.runtime} (${project.packageManager})`);
-      info(
-        `Scripts:    ${project.scripts.wired} of ${project.scripts.wrappable} script${project.scripts.wrappable === 1 ? "" : "s"} wired through \`kerstel exec\`` +
-          (project.scripts.wired < project.scripts.wrappable ? yellow("  (run `kerstel init`)") : ""),
-      );
-      info(
-        `References: ${project.references.resolvable} of ${project.references.total} reference${project.references.total === 1 ? "" : "s"} in ${project.envFiles.join(", ") || "no env files"} resolve here`,
-      );
-      if (project.unreadable.length > 0) {
-        console.log(
-          yellow(
-            `!  Could not read ${project.unreadable.join(", ")}. Any reference in ` +
-              `${project.unreadable.length === 1 ? "that file is" : "those files are"} missing from the count above; ` +
-              "check the file's permissions.",
-          ),
-        );
-      }
-      for (const missing of project.references.unresolved) {
-        console.log(yellow(`!  ${missing} has no value in this vault. Run \`kerstel init\` to supply it.`));
-      }
+      const title = project.scope ? `This project · ${project.scope}` : "This project";
+      step(title, renderChecks(checks.filter((check) => check.group === "project")));
     }
 
-    if (await isDaemonRunning()) ok("Daemon is running.");
-    else info("Daemon is not running. Start it with `kerstel daemon start`.");
+    console.log("");
+    console.log(summaryLine(checks));
 
-    return 0;
+    return exitCode(checks);
   } finally {
     ctx.vault.close();
   }

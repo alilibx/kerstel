@@ -258,9 +258,11 @@ test("doctor reports the keychain backend and vault location", async () => {
 
   capture();
   expect(await runCli(["doctor"])).toBe(0);
-  const out = captured.join("\n");
-  expect(out).toContain("file");
-  expect(out).toContain(dir);
+  expect(captured.join("\n")).toContain("1 secret, key kept in a file");
+
+  capture();
+  expect(await runCli(["doctor", "--verbose"])).toBe(0);
+  expect(captured.join("\n")).toContain(dir);
 });
 
 // A failed hook install used to throw out of openContext(), which is on the way
@@ -293,8 +295,7 @@ test.if(process.platform !== "win32")(
       capture();
       expect(await runCli(["doctor"])).toBe(0);
       const out = captured.join("\n");
-      expect(out).toContain("(not installed)");
-      expect(out).toContain("Could not install the runtime hook");
+      expect(out).toContain("not installed:");
       // The reason has to be in there, not just the fact.
       expect(out).toMatch(/EACCES|permission denied/i);
     } finally {
@@ -305,9 +306,15 @@ test.if(process.platform !== "win32")(
     // And it recovers on the next run once the permissions are back.
     capture();
     expect(await runCli(["doctor"])).toBe(0);
-    expect(captured.join("\n")).not.toContain("Could not install the runtime hook");
+    expect(captured.join("\n")).not.toContain("not installed:");
   },
 );
+
+test("bare kerstel lists the commands and exits 0; --help does the same", async () => {
+  isolate();
+  expect(await runCli([])).toBe(0);
+  expect(await runCli(["--help"])).toBe(0);
+});
 
 test("an unknown command exits 2 with usage", async () => {
   isolate();

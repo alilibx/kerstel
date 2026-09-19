@@ -4,6 +4,7 @@ import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
 import { fail, info, ok } from "../output";
 import { socketPath } from "../paths";
+import { cliName } from "../ui/cli-name";
 
 const START_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 100;
@@ -105,7 +106,7 @@ async function startCommand(): Promise<number> {
   }
 
   fail(
-    "Could not start the Kerstel daemon within 10s. Run `kerstel daemon serve` directly to see what went wrong.",
+    `Could not start the Kerstel daemon within 10s. Run \`${cliName()} daemon serve\` directly to see what went wrong.`,
   );
   return 1;
 }
@@ -124,7 +125,7 @@ async function stopCommand(): Promise<number> {
 
 async function statusCommand(): Promise<number> {
   if (!(await isDaemonRunning())) {
-    fail("Kerstel daemon is not running. Start it with `kerstel daemon start`.");
+    fail(`Kerstel daemon is not running. Start it with \`${cliName()} daemon start\`.`);
     return 1;
   }
   const client = await connectDaemon();
@@ -145,6 +146,6 @@ export async function daemonCommand(args: string[]): Promise<number> {
   if (sub === "stop") return stopCommand();
   if (sub === "status") return statusCommand();
 
-  fail("Usage: kerstel daemon <serve|start|stop|status>");
+  fail(`Usage: ${cliName()} daemon <serve|start|stop|status>`);
   return 2;
 }

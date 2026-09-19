@@ -51,11 +51,11 @@ test("doctor exits 0 against a malformed package.json", async () => {
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await doctorCommand(root)).toBe(0);
+    expect(await doctorCommand([], root)).toBe(0);
   } finally {
     console.log = realLog;
   }
-  expect(captured.join("\n")).not.toContain("Project");
+  expect(captured.join("\n")).not.toContain("This project");
 });
 
 test("projectStatus reports an unwired project", () => {
@@ -104,16 +104,18 @@ test("doctor prints the project section when run inside a project", async () => 
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await doctorCommand(root)).toBe(0);
+    // The reference is never `set`, so it can't resolve -- References is a
+    // problem, and a problem exits 1.
+    expect(await doctorCommand([], root)).toBe(1);
   } finally {
     console.log = realLog;
   }
 
   const out = captured.join("\n");
-  expect(out).toContain("Project");
+  expect(out).toContain("This project");
   expect(out).toContain("site");
-  expect(out).toContain("1 of 1 script");
-  expect(out).toContain("0 of 1 reference");
+  expect(out).toContain("1 of 1 go through Kerstel");
+  expect(out).toContain("1 of 1 can't be found: kerstel://site/PRESENT");
 });
 
 test("doctor outside a project prints no project section", async () => {
@@ -124,11 +126,11 @@ test("doctor outside a project prints no project section", async () => {
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await doctorCommand(root)).toBe(0);
+    expect(await doctorCommand([], root)).toBe(0);
   } finally {
     console.log = realLog;
   }
-  expect(captured.join("\n")).not.toContain("Project");
+  expect(captured.join("\n")).not.toContain("This project");
 });
 
 /**
@@ -157,6 +159,9 @@ test.skipIf(asRoot)("projectStatus reports an unreadable env file instead of thr
 
 test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", async () => {
   isolateEnv({ prefix: "status-doctor-unreadable" });
+  // The point of this test is the unreadable file, not an unresolved
+  // reference -- give PRESENT a value so References itself stays a pass.
+  await runCli(["set", "site/PRESENT", "--value", "x"]);
   const root = makeProject({
     "package.json": '{\n  "name": "site"\n}\n',
     ".env": "PRESENT=kerstel://site/PRESENT\n",
@@ -168,7 +173,7 @@ test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", as
   const realLog = console.log;
   console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
   try {
-    expect(await doctorCommand(root)).toBe(0);
+    expect(await doctorCommand([], root)).toBe(0);
   } finally {
     console.log = realLog;
   }

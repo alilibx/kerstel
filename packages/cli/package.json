@@ -8,5 +8,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "build:hook": "bun run ../hook/build.ts",
     "build": "bun run build:hook && bun build src/index.ts --compile --outfile ../../dist/kerstel"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1"
   }
 }
