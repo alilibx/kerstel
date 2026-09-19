@@ -789,7 +789,7 @@ test("--keep naming a key that is already a reference is reported", async () => 
 class CancellingPrompter extends ScriptedPrompter {
   private remaining: number;
 
-  constructor(answers: (string | boolean | string[])[]) {
+  constructor(answers: (string | string[])[]) {
     super(answers);
     this.remaining = answers.length;
   }
@@ -797,11 +797,6 @@ class CancellingPrompter extends ScriptedPrompter {
   private take(): void {
     if (this.remaining === 0) throw new CancelledError();
     this.remaining -= 1;
-  }
-
-  override async confirm(question: string, defaultValue: boolean): Promise<boolean> {
-    this.take();
-    return super.confirm(question, defaultValue);
   }
 
   override async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
