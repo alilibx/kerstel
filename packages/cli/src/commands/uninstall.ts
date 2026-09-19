@@ -107,15 +107,31 @@ export function removeLinks(binaryPath: string, search: LinkSearch): LinkSweep |
   }
 
   const pathDirs = search.pathDirs ?? (process.env.PATH ?? "").split(delimiter).filter((d) => d.length > 0);
-  const folders = new Set<string>([dirname(resolve(binaryPath))]);
+  // Keyed by real path, so one folder reached two ways -- `~/.local/bin` and
+  // `~/.local/bin/`, or `/tmp` and `/private/tmp` -- is scanned once. Scanned
+  // twice, its links would be collected twice, removed once, and the second
+  // attempt reported as a failure.
+  const folders = new Map<string, string>();
+  const addFolder = (dir: string): void => {
+    const absolute = resolve(dir);
+    let key = absolute;
+    try {
+      key = realpathSync(absolute);
+    } catch {
+      // A folder that does not exist has no links in it; keep it so the
+      // lstat below finds nothing, rather than guessing here.
+    }
+    if (!folders.has(key)) folders.set(key, absolute);
+  };
+  addFolder(dirname(binaryPath));
   // A bare `ks` (found through PATH) says nothing about its folder, but
   // `./bin/ks` or `/opt/kerstel/ks` does, relative to the cwd or not.
   const invoked = search.invokedAs;
-  if (invoked && (invoked.includes("/") || invoked.includes(sep))) folders.add(dirname(resolve(invoked)));
-  for (const dir of pathDirs) folders.add(resolve(dir));
+  if (invoked && (invoked.includes("/") || invoked.includes(sep))) addFolder(dirname(invoked));
+  for (const dir of pathDirs) addFolder(dir);
 
   const ours: string[] = [];
-  for (const folder of folders) {
+  for (const folder of folders.values()) {
     for (const name of LINK_NAMES) {
       const link = join(folder, name);
       let stat: ReturnType<typeof lstatSync>;

@@ -178,6 +178,23 @@ test("removeLinks follows a kerstel symlink on PATH to the ks beside it", () => 
   expect(readFileSync(join(other, "kerstel"), "utf8")).toBe("someone else's kerstel");
 });
 
+test("removeLinks scans a folder once however many ways PATH names it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-dup-"));
+  dirs.push(dir);
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const binary = join(bin, "kerstel");
+  writeFileSync(binary, "bin");
+  symlinkSync("kerstel", join(bin, "ks"));
+  // The same folder as the binary's own, with a trailing slash, through a
+  // symlinked alias, and via `..`: one scan, one removal, no false failure.
+  const alias = join(dir, "alias");
+  symlinkSync(bin, alias);
+  const sweep = removeLinks(binary, { pathDirs: [`${bin}/`, alias, join(bin, "..", "bin")] });
+  expect(sweep?.removed).toEqual([join(bin, "ks")]);
+  expect(sweep?.failed).toEqual([]);
+});
+
 test("removeLinks searches the folder the binary was invoked from, even off PATH", () => {
   const dir = mkdtempSync(join(tmpdir(), "kerstel-argv0-"));
   dirs.push(dir);
