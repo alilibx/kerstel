@@ -14,7 +14,7 @@ Nothing here needs a hooked process or a wired project. A program running as you
 
 - run `kerstel get <scope>/<KEY> --reveal`, which prints the value and needs no prompt;
 - read `~/.kerstel/session.token` and ask the resolver daemon for any key over its socket;
-- on macOS, run `security find-generic-password -a kerstel -s dev.kerstel.vault -w` and get the vault's data key without a Keychain prompt, because the item's access list trusts the `security` tool that created it.
+- on macOS, ask the Keychain for the vault's data key through the same `security` tool Kerstel uses, and get it without a prompt, because the item's access list trusts that tool.
 
 The `0700` home directory, the `0600` socket and token file, and the OS credential store all keep *other users on the machine* out. None of them keeps *you* out, and a malicious `postinstall` script, a compromised editor extension, or a coding agent you gave shell access runs as you.
 
@@ -58,7 +58,7 @@ Kerstel's own `KERSTEL_*` settings are never taken from the project it is protec
 
 ## Supply chain
 
-The installer and `kerstel update` download over TLS and verify the release checksum before writing anything, and the update is staged beside the target and renamed into place. The checksums are published alongside the binaries, which proves integrity but not authorship: signed releases are [open work](https://github.com/alilibx/kerstel/issues).
+The installer and `kerstel update` download over TLS and verify the release checksum before writing anything, and the update is staged beside the target and renamed into place. The checksums are published alongside the binaries, which proves the download arrived intact but not who built it: whoever can alter a release can forge both. Signing them is [issue #49](https://github.com/alilibx/kerstel/issues/49).
 
 Package managers put `node_modules/.bin` ahead of `PATH` when they run a script, and `kerstel exec` is what `init` writes into your scripts. A dependency declaring a `bin` named `kerstel` would therefore run in place of Kerstel, without a `postinstall` and without ever being imported. `kerstel init` and `kerstel exec` refuse when such a file exists in the project or a parent directory, and `kerstel doctor` reports it as a problem. `init` and `doctor` run from your shell, where that directory is not on `PATH`, so they are the authoritative checks; the one inside `exec` catches a bin that stays in place, not a shim that deletes itself before delegating.
 
