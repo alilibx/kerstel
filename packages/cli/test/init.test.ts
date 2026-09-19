@@ -117,6 +117,46 @@ test("init refuses, before writing anything, when node_modules/.bin holds a kers
   expect(existsSync(join(home, "vault.db"))).toBe(false);
 });
 
+test("init leaves an unquoted PEM block alone, never prints it, and does not call the file safe to commit", async () => {
+  isolateEnv({ prefix: "init-pem" });
+  const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7PEMBODY";
+  const tail = "kL0tuEJ6abcdEFGH1234567890abcdefghijklmnopqrstuvwxyz==";
+  const source = [
+    "API_KEY=sk-pem-test-value",
+    "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----",
+    body,
+    tail,
+    "-----END PRIVATE KEY-----",
+    "",
+  ].join("\n");
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": source });
+  await bootLocalDaemon();
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  let code: number;
+  try {
+    code = await runInit(options(root, ["--yes", "--non-interactive"]), new DefaultsPrompter());
+  } finally {
+    console.log = realLog;
+  }
+  expect(code).toBe(0);
+
+  const out = captured.join("\n");
+  expect(out).not.toContain("PEMBODY");
+  expect(out).not.toContain("kL0tu");
+  expect(out).toContain("PRIVATE_KEY left untouched");
+  expect(out).not.toContain("safe to commit");
+
+  const after = readFileSync(join(root, ".env"), "utf8");
+  expect(after).toContain("API_KEY=kerstel://demo-app/API_KEY");
+  expect(after).toContain("PRIVATE_KEY=-----BEGIN PRIVATE KEY-----");
+  expect(after).toContain(body);
+  expect(after).toContain(tail);
+  expect(after).not.toContain(`${tail.slice(0, -2)}=kerstel://`);
+});
+
 test("collectKeys applies the documented precedence and records conflicts", () => {
   const root = makeProject({
     ".env": "SHARED=from-env\nONLY_BASE=base\n",

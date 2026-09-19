@@ -12,6 +12,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Fixed
 
+- `kerstel init` no longer mistakes key material for a variable name. An unquoted multi-line PEM block is left untouched as one value and named by its key; a base64 line, or a name too long to be a variable, is reported by line number and never printed; and every other line that is not `KEY=value` now counts as plaintext remaining. Before, the last line of a pasted private key became a key name that was printed, stored, and written back, while the wizard called the file safe to commit.
 - `kerstel init` no longer treats backup copies such as `.env.bak`, `.env.orig`, `.env.swp`, or `.env.local~` as env files. Before, a stale value in `.env.bak` outranked the live one in `.env` and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext, and to rename it if it is a real env file.
 
 ## 0.1.1 (2026-09-19)

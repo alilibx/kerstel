@@ -119,7 +119,48 @@ const BLANK_OR_COMMENT = /^\s*(#.*)?$/;
  * Anything else is more likely to be value material, and rule 1 (never print
  * a value) outranks the warning.
  */
-const KEY_SHAPED = /^[A-Za-z_][^\s]{0,63}$/;
+const KEY_SHAPED = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+
+/** Longer than any variable name in practice; base64 lines are often longer. */
+const MAX_KEY_LENGTH = 64;
+
+/**
+ * The label for a line that has no printable key: prose, a base64 line, a
+ * name too long to be one. It names the line, never its text, so a warning
+ * can point at it and `plaintextKeysRemaining` can count it without either
+ * reprinting what may be key material.
+ */
+function lineLabel(lineNumber: number): string {
+  return `line ${lineNumber}`;
+}
+
+/**
+ * The last line of an unquoted base64 blob: `kL0tuEJ6...abcd==`. `PAIR`
+ * reads it as a key named `kL0tuEJ6...abcd` assigned `=`, which would put
+ * 60 characters of key material into the overview, the vault, and the
+ * rewritten file as a NAME. No variable is named like that: long, mixed case,
+ * digits, no underscore, and nothing after the `=` but more padding.
+ */
+function looksLikeBase64Line(key: string, rest: string): boolean {
+  return (
+    key.length >= 16 &&
+    /^[A-Za-z0-9]+$/.test(key) &&
+    /[a-z]/.test(key) &&
+    /[A-Z]/.test(key) &&
+    /[0-9]/.test(key) &&
+    /^=?$/.test(rest.trim())
+  );
+}
+
+/**
+ * An unquoted PEM value spans lines: the header is a pair whose value is
+ * `-----BEGIN ...-----`, the body is base64, the footer is `-----END ...-----`.
+ * No loader reads it back as one value either, but the developer who pasted
+ * it has a secret in the file, so the whole block is treated as ONE unsupported
+ * value: named by its key, never rewritten, never mined for key names.
+ */
+const PEM_BEGIN = /^-----BEGIN [A-Z0-9 ]+-----/;
+const PEM_END = /-----END [A-Z0-9 ]+-----\s*$/;
 
 interface ParsedLine {
   line: DotenvLine;
@@ -136,25 +177,44 @@ function parseLine(
   lineNumber: number,
   unsupported: UnsupportedValue[],
 ): ParsedLine {
+  const raw: ParsedLine = { line: { kind: "raw", text, eol }, openQuote: null };
+
   const match = PAIR.exec(text);
   if (!match) {
-    const equals = text.indexOf("=");
-    if (equals > 0 && !BLANK_OR_COMMENT.test(text)) {
-      const candidate = text.slice(0, equals).replace(/^\s*(export[ \t]+)?/, "").trimEnd();
-      if (KEY_SHAPED.test(candidate)) {
+    // Every line that is neither blank, a comment, nor a pair is recorded:
+    // it stays in the file untouched, so the wizard must count it as
+    // plaintext remaining rather than calling the file safe to commit. It is
+    // NAMED only when the text before `=` looks like a variable name (`MY-KEY`,
+    // `my.key`); anything else is more likely value material and gets a line
+    // number instead.
+    if (!BLANK_OR_COMMENT.test(text)) {
+      const equals = text.indexOf("=");
+      const candidate = equals > 0 ? text.slice(0, equals).replace(/^\s*(export[ \t]+)?/, "").trimEnd() : "";
+      if (equals > 0 && KEY_SHAPED.test(candidate)) {
         unsupported.push({
           key: candidate,
           line: lineNumber,
           reason: "the key contains characters Kerstel does not support",
         });
+      } else {
+        unsupported.push({ key: lineLabel(lineNumber), line: lineNumber, reason: "the line is not KEY=value" });
       }
     }
-    return { line: { kind: "raw", text, eol }, openQuote: null };
+    return raw;
   }
 
   const prefix = match[1] ?? "";
   const key = match[4] ?? "";
   const rest = match[5] ?? "";
+
+  if (key.length > MAX_KEY_LENGTH || looksLikeBase64Line(key, rest)) {
+    unsupported.push({
+      key: lineLabel(lineNumber),
+      line: lineNumber,
+      reason: "the text before = does not look like a variable name",
+    });
+    return raw;
+  }
 
   let i = 0;
   while (i < rest.length && (rest[i] === " " || rest[i] === "\t")) i += 1;
@@ -223,10 +283,14 @@ export function parseDotenv(source: string): DotenvFile {
   // carried through as raw text and never inspected, because inspecting it
   // would mean reading key material looking for something to print.
   let openQuote: string | null = null;
+  // Inside an unquoted PEM block (see PEM_BEGIN): every line through the
+  // footer is body, carried raw and never inspected, for the same reason.
+  let inPem = false;
 
   for (let i = 0; i < parts.length; i += 2) {
     const text = parts[i] ?? "";
     const eol = parts[i + 1] ?? "";
+    const lineNumber = i / 2 + 1;
     // split() leaves an empty final piece after a trailing terminator. Keeping
     // it would append a phantom empty line on every serialize.
     if (i > 0 && text === "" && eol === "") break;
@@ -236,8 +300,30 @@ export function parseDotenv(source: string): DotenvFile {
       lines.push({ kind: "raw", text, eol });
       continue;
     }
+    if (inPem) {
+      if (PEM_END.test(text)) inPem = false;
+      lines.push({ kind: "raw", text, eol });
+      continue;
+    }
 
-    const parsed = parseLine(text, eol, i / 2 + 1, unsupported);
+    const parsed = parseLine(text, eol, lineNumber, unsupported);
+    if (
+      parsed.line.kind === "pair" &&
+      parsed.line.quote === "" &&
+      PEM_BEGIN.test(parsed.line.value) &&
+      !PEM_END.test(parsed.line.value)
+    ) {
+      unsupported.push({
+        key: parsed.line.key,
+        line: lineNumber,
+        reason:
+          "the value is a PEM block spanning several lines; store it with `kerstel set` " +
+          "(pipe the file in) and reference it, or put it on one line in double quotes with \\n",
+      });
+      lines.push({ kind: "raw", text, eol });
+      inPem = true;
+      continue;
+    }
     openQuote = parsed.openQuote;
     lines.push(parsed.line);
   }
