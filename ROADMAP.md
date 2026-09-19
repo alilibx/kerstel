@@ -16,6 +16,10 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] `kerstel uninstall`, which restores plaintext `.env` files before removing Kerstel
 - [x] `ks` shortcut, and a friendlier `init` and `doctor`
 
+## 0.1.1: update in place
+
+- [x] `kerstel update`, which installs the latest release over the running binary, with an update check in `--version` and `doctor`
+
 ## 0.2.0: local portal
 
 - [ ] `kerstel ui`: a local web portal on `127.0.0.1`, opened with a one-time token ([#8](https://github.com/alilibx/kerstel/issues/8))
