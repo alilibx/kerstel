@@ -31,9 +31,15 @@ export interface ReleaseHeading {
   date: string | null;
 }
 
-const HEADING = /^(\d+\.\d+\.\d+)\s+\((unreleased|\d{4}-\d{2}-\d{2})\)$/;
+/**
+ * "0.1.0 (2026-09-19)", "0.1.1 (unreleased)", or a pre-release such as
+ * "0.2.0-rc.1 (2026-10-01)". Kept at least as permissive as the version match
+ * in scripts/release-verify.ts, so a heading that passes release verification
+ * never fails the site build.
+ */
+const HEADING = /^(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)\s+\((unreleased|\d{4}-\d{2}-\d{2})\)$/;
 
-/** Parses "0.1.0 (2026-09-19)" or "0.1.1 (unreleased)". Null for anything else. */
+/** Parses a release heading. Null for anything else. */
 export function parseReleaseHeading(text: string): ReleaseHeading | null {
   const m = HEADING.exec(text.trim());
   if (!m) return null;
@@ -49,7 +55,11 @@ const MONTHS = [
 /** "2026-09-19" → "19 September 2026". No locale, so the build is byte-stable everywhere. */
 export function formatReleaseDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
-  return `${d} ${MONTHS[m! - 1]} ${y}`;
+  const month = m === undefined ? undefined : MONTHS[m - 1];
+  if (y === undefined || d === undefined || !month || d < 1 || d > 31) {
+    throw new Error(`CHANGELOG.md: "${iso}" is not a date like 2026-09-19`);
+  }
+  return `${d} ${month} ${y}`;
 }
 
 interface Release extends ReleaseHeading {
@@ -124,7 +134,7 @@ function renderBody(release: Release): string {
 function renderVideo(release: Release, media: ReleaseMedia): string {
   return [
     '<figure class="release-video">',
-    `<video controls playsinline preload="metadata" poster="${escapeHtml(media.poster)}" width="1920" height="1080">`,
+    `<video controls playsinline preload="metadata" poster="${escapeHtml(media.poster)}" width="1920" height="1080" aria-label="Kerstel ${escapeHtml(release.version)} release video">`,
     `<source src="${escapeHtml(media.video)}" type="video/mp4">`,
     "</video>",
     "<figcaption>",
@@ -163,7 +173,7 @@ function renderRelease(release: Release): string {
 export function renderChangelog(markdown: string, media: ReleaseMedia[] = RELEASE_MEDIA): string {
   const { intro, releases } = splitReleases(markdown);
 
-  const head = render(intro).replace("<p>", '<p class="lede">');
+  const head = render(intro);
 
   const featured = releases.find((r) => r.date !== null && media.some((m) => m.version === r.version));
   const video = featured ? renderVideo(featured, media.find((m) => m.version === featured.version)!) : "";

@@ -361,7 +361,7 @@ main td code { white-space: nowrap; }
 
 .page-head { margin: 48px 0 32px; }
 .page-head h1 { margin: 0 0 10px; }
-.page-head .lede { margin: 0; }
+.page-head > p { margin: 0; font-size: 18px; color: var(--text-secondary); }
 
 .release-video { margin: 0 0 48px; }
 .release-video video {
@@ -412,6 +412,7 @@ main td code { white-space: nowrap; }
   position: relative;
   padding-left: 40px;
   margin: 0 0 40px;
+  scroll-margin-top: 72px; /* clear the sticky header when jumping to #x.y.z */
 }
 .release + .release { margin-top: 0; }
 .release-marker {

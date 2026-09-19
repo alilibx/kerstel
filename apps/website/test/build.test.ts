@@ -98,10 +98,11 @@ describe("build output", () => {
 
   test("changelog page renders the repo-root CHANGELOG.md as a timeline and is linked from every page", () => {
     const changelog = readFileSync(resolve(REPO_ROOT, "CHANGELOG.md"), "utf8");
-    const version = changelog.match(/^## (\d+\.\d+\.\d+)/m)?.[1];
-    expect(version).toBeDefined();
+    const top = changelog.match(/^## (\d+\.\d+\.\d+\S*) \((unreleased|\d{4}-\d{2}-\d{2})\)$/m);
+    expect(top).not.toBeNull();
+    const [, version, when] = top!;
     const html = readFileSync(join(out, "changelog.html"), "utf8");
-    expect(html).toContain(`<li class="release is-unreleased" id="${version}">`);
+    expect(html).toContain(`<li class="release${when === "unreleased" ? " is-unreleased" : ""}" id="${version}">`);
     expect(html).toContain(`<a href="#${version}">${version}</a>`);
     expect(html).toContain(`<ol class="timeline">`);
     for (const file of htmlFiles) {

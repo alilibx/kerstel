@@ -36,6 +36,9 @@ describe("parseReleaseHeading", () => {
   test("marks an unreleased version", () => {
     expect(parseReleaseHeading("0.1.1 (unreleased)")).toEqual({ version: "0.1.1", date: null });
   });
+  test("accepts a pre-release version, as release-verify.ts does", () => {
+    expect(parseReleaseHeading("0.2.0-rc.1 (2026-10-01)")).toEqual({ version: "0.2.0-rc.1", date: "2026-10-01" });
+  });
   test("returns null for a heading that is not a release", () => {
     expect(parseReleaseHeading("Something else")).toBeNull();
   });
@@ -46,15 +49,20 @@ describe("formatReleaseDate", () => {
     expect(formatReleaseDate("2026-09-19")).toBe("19 September 2026");
     expect(formatReleaseDate("2027-01-02")).toBe("2 January 2027");
   });
+  test("refuses a month or day that does not exist instead of printing undefined", () => {
+    expect(() => formatReleaseDate("2026-13-01")).toThrow(/2026-13-01/);
+    expect(() => formatReleaseDate("2026-00-19")).toThrow(/2026-00-19/);
+    expect(() => formatReleaseDate("2026-09-32")).toThrow(/2026-09-32/);
+  });
 });
 
 describe("renderChangelog", () => {
   const html = renderChangelog(sample, media);
 
-  test("keeps the page title and intro above the timeline, with the intro as the lede", () => {
-    expect(html).toContain('<header class="page-head">');
-    expect(html).toContain("<h1>Changelog</h1>");
-    expect(html).toContain('<p class="lede">All notable changes to Kerstel are listed here.');
+  test("keeps the page title and intro together in the page head, above the timeline", () => {
+    const head = html.slice(html.indexOf('<header class="page-head">'), html.indexOf("</header>"));
+    expect(head).toContain("<h1>Changelog</h1>");
+    expect(head).toContain("<p>All notable changes to Kerstel are listed here.");
     expect(html.indexOf("<h1>")).toBeLessThan(html.indexOf('<ol class="timeline">'));
   });
 
@@ -64,6 +72,7 @@ describe("renderChangelog", () => {
     expect(figure).toBeLessThan(html.indexOf('<ol class="timeline">'));
     expect(html).toContain('poster="/release-0.1.0.jpg"');
     expect(html).toContain('<source src="/release-0.1.0.mp4" type="video/mp4">');
+    expect(html).toContain('aria-label="Kerstel 0.1.0 release video"');
     expect(html).toContain("The first release, in 22 seconds.");
     expect(html).toContain('href="#0.1.0"');
   });
