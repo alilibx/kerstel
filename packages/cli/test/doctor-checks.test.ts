@@ -362,9 +362,16 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(outside).toContain("starts on its own");
   expect(outside).toContain("Run `ks init` inside a project");
 
-  const unwired = howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 2, wired: 0 } }, cli: "kerstel" });
+  const unwired = howItWorksNote({
+    project: { ...passingProject, scripts: { wrappable: 2, wired: 0 }, references: { total: 0, resolvable: 0, unresolved: [] } },
+    cli: "kerstel",
+  });
   expect(unwired).toContain("`kerstel init`");
   expect(unwired).not.toContain("inside a project to get started");
 
   expect(howItWorksNote({ project: passingProject, cli: "ks" })).toBeNull();
+  // No scripts to wire, but references already resolve: init has been here.
+  expect(
+    howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 0, wired: 0 } }, cli: "ks" }),
+  ).toBeNull();
 });

@@ -246,3 +246,8 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
     expect(existsSync(join(installDir, "kerstel"))).toBe(true);
   },
 );
+
+test("a pinned KERSTEL_VERSION is named in the download line", async () => {
+  const result = await install({ KERSTEL_VERSION: "0.1.0", KERSTEL_DOWNLOAD_BASE: `file://${release}` });
+  expect(result.stdout).toContain("Downloading kerstel 0.1.0 for macOS (Apple Silicon)");
+});

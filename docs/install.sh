@@ -18,6 +18,7 @@ REPO_URL="https://github.com/alilibx/kerstel"
 DOCS_URL="https://kerstel.dev/docs/getting-started"
 TMP_DIR=""
 STAGED=""
+DOWNLOAD_PID=""
 
 # Colour and the progress bar need a terminal on stdout. Piped into a log
 # (CI, `| tee`), every line below prints plain and once.
@@ -40,6 +41,9 @@ die() {
 }
 
 cleanup() {
+  # A background curl ignores Ctrl-C, so it would keep pulling into a file
+  # that is about to be deleted. Stop it first.
+  if [ -n "$DOWNLOAD_PID" ]; then kill "$DOWNLOAD_PID" 2>/dev/null || true; fi
   if [ -n "$TMP_DIR" ]; then rm -rf "$TMP_DIR"; fi
   # A copy that failed partway leaves the hidden staged file next to the
   # destination. After a successful rename it no longer exists.
@@ -128,6 +132,7 @@ download_with_progress() {
   fi
   curl -fsSL "$url" -o "$dest" &
   local pid=$!
+  DOWNLOAD_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
     got=0
     if [ -f "$dest" ]; then got=$(wc -c <"$dest" | tr -d ' '); fi
@@ -137,7 +142,8 @@ download_with_progress() {
     printf '\r  %s %3d%%  %s / %s' "$(accent "$(bar_of "$filled" "$width")")" "$pct" "$(human_size "$got")" "$(human_size "$total")"
     sleep 0.1
   done
-  wait "$pid" || { printf '\r\033[2K'; return 1; }
+  wait "$pid" || { DOWNLOAD_PID=""; printf '\r\033[2K'; return 1; }
+  DOWNLOAD_PID=""
   printf '\r  %s 100%%  %s / %s\n' "$(accent "$(bar_of "$width" "$width")")" "$(human_size "$total")" "$(human_size "$total")"
 }
 
@@ -161,7 +167,11 @@ probe_asset() { # sets ASSET_SIZE and ASSET_VERSION
   local headers
   headers="$(curl -sIL "$1" 2>/dev/null | tr -d '\r' || true)"
   ASSET_SIZE="$(printf '%s\n' "$headers" | awk 'tolower($1) == "content-length:" { size = $2 } END { print size }')"
-  ASSET_VERSION="$(printf '%s\n' "$headers" | grep -o '/releases/download/v[^/]*' | head -1 | sed 's|.*/v||' || true)"
+  local found
+  found="$(printf '%s\n' "$headers" | grep -o '/releases/download/v[^/]*' | head -1 | sed 's|.*/v||' || true)"
+  # A pinned KERSTEL_VERSION was seeded by the caller and has no redirect to
+  # learn it from; only overwrite it when the probe found one.
+  if [ -n "$found" ]; then ASSET_VERSION="$found"; fi
 }
 
 path_hint() {

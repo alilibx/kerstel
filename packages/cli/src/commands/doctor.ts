@@ -100,8 +100,11 @@ function verboseLines(facts: DoctorFacts): string[] {
  * seen all of this, so they get the checks and nothing more.
  */
 export function howItWorksNote(facts: Pick<DoctorFacts, "project" | "cli">): string | null {
-  const wired = facts.project !== null && facts.project.scripts.wired > 0;
-  if (wired) return null;
+  // "Set up" means init has been through here: scripts wired, or references
+  // already resolving in a project that had no scripts to wire.
+  const setUp =
+    facts.project !== null && (facts.project.scripts.wired > 0 || facts.project.references.total > 0);
+  if (setUp) return null;
   const lines = [
     "Your secrets live in an encrypted vault on this machine, unlocked",
     "through your OS credential store.",

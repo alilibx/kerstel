@@ -42,7 +42,7 @@
 <p>Values live in <code>~/.kerstel/vault.db</code>, encrypted per value with AES-256-GCM. The data key lives in your OS credential store. The <a href="/security">security model</a> covers this in detail.</p>
 <h2>The daemon</h2>
 <p>A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (<code>~/.kerstel/kerstel.sock</code>). Each request carries a session token, so only processes running as you can ask. The daemon records an audit row for each resolution.</p>
-<p><code>kerstel run</code> never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need a running daemon, and if none answers it tells you to run <code>kerstel daemon start</code>. Only <code>kerstel resolve</code> starts the daemon on demand, on first use. <code>kerstel daemon status</code> shows whether it is up at any time.</p>
+<p><code>kerstel run</code> never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need the daemon, and <code>kerstel exec</code> (which <code>init</code> writes into your scripts) starts it on demand, as does <code>kerstel resolve</code>; you never start it by hand. If the hook can&#39;t reach it, the error names the reference and tells you to run <code>kerstel doctor</code>. <code>kerstel daemon status</code> shows whether it is up at any time, and <code>kerstel daemon start</code> is there if you want to start it yourself, or to read why it won&#39;t start.</p>
 <h2>Two ways to resolve</h2>
 <h3><code>kerstel run</code></h3>
 <pre><code class="language-bash">kerstel run -- next build
