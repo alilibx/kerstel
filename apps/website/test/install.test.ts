@@ -224,7 +224,9 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
   async () => {
     const env = {
       HOME: work,
-      SHELL: "/bin/zsh",
+      // util-linux `script -c` runs the command through $SHELL, and Ubuntu has
+      // no /bin/zsh; /bin/sh exists everywhere.
+      SHELL: "/bin/sh",
       PATH: `${shims}:/usr/bin:/bin`,
       KERSTEL_INSTALL_DIR: installDir,
       KERSTEL_DOWNLOAD_BASE: `file://${release}`,
