@@ -102,6 +102,14 @@ export async function execCommand(args: string[]): Promise<number> {
   // from outside npm. Either way the project's wiring is compromised, and the
   // loud, immediate failure of every wired script is the point. Checked before
   // the vault is opened or the daemon started, so nothing is unlocked for it.
+  //
+  // What this can and cannot see. It catches a dependency that declares the bin
+  // and leaves it in place, which is the cheap version of the attack. A shim
+  // that runs first, deletes itself, and then delegates here is invisible to a
+  // file check by construction, and that is the general "malicious dependency
+  // you installed" case level 1 does not defend against. The checks that ARE
+  // authoritative run where node_modules/.bin is not on PATH: `init` at wiring
+  // time and `doctor` on demand, both from the user's own shell.
   const shadowed = findShadowedBinaries(process.cwd());
   if (shadowed.length > 0) {
     fail(shadowedBinaryMessage(shadowed));

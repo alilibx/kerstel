@@ -57,11 +57,12 @@ export function findShadowedBinaries(root: string): string[] {
 /** The refusal `init` and `exec` print, and the fix `doctor` suggests. */
 export function shadowedBinaryMessage(paths: string[]): string {
   const list = paths.join(", ");
+  // Both bin names, since the detector refuses both.
+  const find = "grep -lE '\"(kerstel|ks)\"' node_modules/*/package.json node_modules/@*/*/package.json";
   return (
     `${list} would run in place of Kerstel: npm and bun put node_modules/.bin first on PATH when ` +
-      "they run a script, so a wired script would hand its command line, and access to the vault, to that " +
-      "file instead. Kerstel is not an npm package, so nothing legitimate installs it there. Find the " +
-      "dependency that does (grep -l '\"kerstel\"' node_modules/*/package.json node_modules/@*/*/package.json), " +
-      "remove it, and delete the file."
+    "they run a script, so a wired script would hand its command line, and access to the vault, to that " +
+    "file instead. Kerstel is not an npm package, so nothing legitimate installs it there. Find the " +
+    `dependency that does (${find}), remove it, and delete the file.`
   );
 }
