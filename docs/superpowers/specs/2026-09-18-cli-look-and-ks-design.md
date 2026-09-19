@@ -208,7 +208,7 @@ When a project's files already hold references and this machine lacks some value
 - **`doctor`:** grouping, `Fix:` lines, `--verbose`, and the exit code (0 with warnings only, 1 with a problem).
 - **Pseudo-terminal end to end.** The compiled binary runs `init` on a sample project under `script` (`script -q /dev/null …` on macOS, `script -qec … /dev/null` on Linux), answered only with Enter key presses. The resulting `.env` and `package.json` must match the non-interactive result, and the output must contain no secret value.
 - **`install.sh`:** `ks` is created, refreshed on a re-run, and skipped with the message when another `ks` is on `PATH`.
-- **`uninstall`:** removes a `ks` link to the binary it removes, and leaves any other `ks` alone.
+- **`uninstall`:** removes every `kerstel` and `ks` symlink that resolves to the binary it removes, searching the binary's folder, the folder it was invoked from (`process.argv0`, since Bun resolves symlinks into `process.execPath`), and each folder on `PATH`. It leaves any other `ks` alone: a real file, a link elsewhere, or a dangling link.
 
 ## 9. Docs and tracking
 
