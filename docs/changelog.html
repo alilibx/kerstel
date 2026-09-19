@@ -34,12 +34,13 @@
 <main class="wrap">
 <h1>Changelog</h1>
 <p>All notable changes to Kerstel are listed here. Versions follow <a href="https://semver.org">Semantic Versioning</a>.</p>
-<h2>0.1.0 (unreleased)</h2>
+<h2>0.1.1 (unreleased)</h2>
+<h2>0.1.0 (2026-09-19)</h2>
 <p>The first release: a local-first secrets manager for Node and Bun projects.</p>
 <h3>Added</h3>
 <ul>
 <li>Encrypted local vault at <code>~/.kerstel/vault.db</code>. Every value is sealed with AES-256-GCM and its own random nonce.</li>
-<li>Vault data key kept in the OS credential store: Keychain on macOS, Secret Service on Linux, and Credential Manager on Windows. Linux machines without a Secret Service provider fall back to a <code>0600</code> key file, with a warning.</li>
+<li>Vault data key kept in the OS credential store: the Keychain on macOS and Secret Service on Linux. Linux machines without a Secret Service provider fall back to a <code>0600</code> key file, with a warning.</li>
 <li><code>kerstel://&lt;scope&gt;/&lt;KEY&gt;</code> references, so <code>.env</code> files hold nothing secret and are safe to commit.</li>
 <li><code>kerstel set</code>, <code>get</code>, <code>ls</code>, and <code>rm</code> to manage secrets. <code>get</code> prints plaintext only with <code>--reveal</code>.</li>
 <li><code>kerstel run -- &lt;command&gt;</code> to run any command with every reference resolved up front.</li>
