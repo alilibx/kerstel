@@ -111,7 +111,7 @@ A small dependency-free JS file (CommonJS + ESM builds) loaded before app code. 
 `kerstel init` (in a project) — every step shows what it will do and asks:
 
 1. Detect runtime + package manager (npm/pnpm/yarn/bun).
-2. Parse `.env`, `.env.local` (and variants). Show findings. Per key: → project scope / → existing or new global key / leave plaintext (fine for non-secret URLs).
+2. Parse `.env`, `.env.local` (and variants). Two kinds of `.env*` name are not env files and are skipped: templates (`.env.example`, `.sample`, `.template`, `.dist`, with or without `.local`), silently; and backup copies (`.bak`, `.orig`, `.old`, `.save`, `.backup`, `.swp`, `.swo`, `.tmp`, `.rej`, or a trailing `~`), each named in the output with a note that it may still hold plaintext and should be deleted, or renamed if it is a real env file. A backup copy would otherwise outrank `.env` in the precedence below and put its stale value in the vault. Show findings. Per key: → project scope / → existing or new global key / leave plaintext (fine for non-secret URLs).
 3. Encrypted backup of originals to `~/.kerstel/backups/<project>/<ts>/`, then rewrite files with references.
 4. Wire the hook (§6.2); show the `package.json` diff for approval.
 5. Offer `.gitignore` update (making committing `.env` possible — user's call).

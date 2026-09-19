@@ -58,7 +58,7 @@
 <li>The OS credential-store helpers (<code>security</code> on macOS, <code>secret-tool</code> on Linux) are now run only from a fixed list of system directories, and only when the directory and the file are owned by root and writable by nobody else, never from the caller&#39;s <code>PATH</code>. <code>npm run</code> and <code>bun run</code> put <code>node_modules/.bin</code> first on <code>PATH</code>, so before this a dependency could ship a fake <code>security</code> and read the vault&#39;s data key the next time a wired script opened the vault. If the tool is missing from those directories, the error says how to install it there or switch to the key file.</li>
 </ul></section>
 <section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
-<li><code>kerstel init</code> no longer treats backup copies such as <code>.env.bak</code>, <code>.env.orig</code>, <code>.env.swp</code>, or <code>.env.local~</code> as env files. Before, a stale value in <code>.env.bak</code> outranked the live one in <code>.env</code> and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext.</li>
+<li><code>kerstel init</code> no longer treats backup copies such as <code>.env.bak</code>, <code>.env.orig</code>, <code>.env.swp</code>, or <code>.env.local~</code> as env files. Before, a stale value in <code>.env.bak</code> outranked the live one in <code>.env</code> and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext, and to rename it if it is a real env file.</li>
 </ul></section>
 </div>
 </li>

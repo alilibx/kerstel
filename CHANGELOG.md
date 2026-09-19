@@ -10,7 +10,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Fixed
 
-- `kerstel init` no longer treats backup copies such as `.env.bak`, `.env.orig`, `.env.swp`, or `.env.local~` as env files. Before, a stale value in `.env.bak` outranked the live one in `.env` and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext.
+- `kerstel init` no longer treats backup copies such as `.env.bak`, `.env.orig`, `.env.swp`, or `.env.local~` as env files. Before, a stale value in `.env.bak` outranked the live one in `.env` and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext, and to rename it if it is a real env file.
 
 ## 0.1.1 (2026-09-19)
 

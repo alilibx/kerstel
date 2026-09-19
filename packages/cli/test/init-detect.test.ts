@@ -74,6 +74,7 @@ test("editor and shell backup copies are not env files", () => {
     ".env.example",
     ".envrc",
     ".envrc~",
+    ".environment~",
     ".env.~",
     "notes.bak",
     "~",

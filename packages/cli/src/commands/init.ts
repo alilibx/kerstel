@@ -600,7 +600,11 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   // would otherwise outrank the live file), but it most likely still holds
   // the plaintext this migration is removing, so it is named rather than hidden.
   for (const name of detected.backupEnvFiles) {
-    console.log(yellow(`!  ${name} looks like a backup copy, so it was skipped. Delete it once you no longer need it: it may still hold plaintext.`));
+    console.log(
+      yellow(
+        `!  ${name} looks like a backup copy, so it was skipped. It may still hold plaintext: delete it once you no longer need it, or rename it if it is a real env file.`,
+      ),
+    );
   }
 
   if (detected.envFiles.length === 0 && detected.unreadableEnvFiles.length > 0) {

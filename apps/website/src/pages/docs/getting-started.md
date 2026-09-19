@@ -81,7 +81,7 @@ cd my-app
 ks init
 ```
 
-Run it from the project root — it needs a readable `package.json`, because it wires your scripts. It detects your runtime and package manager from your lockfile, derives the project's scope from the `package.json` name, and reads every `.env` / `.env.*` file in the root. Templates like `.env.example` are skipped, and so are backup copies like `.env.bak` or `.env.swp`, which it names so you can delete them.
+Run it from the project root — it needs a readable `package.json`, because it wires your scripts. It detects your runtime and package manager from your lockfile, derives the project's scope from the `package.json` name, and reads every `.env` / `.env.*` file in the root. Templates like `.env.example` are skipped, and so are backup copies like `.env.bak` or `.env.swp`, which it names so you can delete them, or rename one that is a real env file.
 
 It shows every variable it found up front, grouped by where it suggests putting it — the vault for this project, the vault shared across all your projects, or left as plain text — with each value shown only as its length. The exception is a configuration value that stays in plain text, like `PORT=3000` or `NODE_ENV=development`, which is shown as it is; anything that could be a credential, even a number under a name like `DB_PASSWORD`, is shown as a length. Then it asks:
 
