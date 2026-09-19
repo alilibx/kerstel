@@ -70,6 +70,7 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
   - `secrets(id, scope, project_id NULL, key, value_ciphertext, nonce, environment TEXT NULL /* reserved, unused for now */, created_at, updated_at)`
   - `audit_log(id, ts, event, scope, key, pid, process_name, project_id)`
   - Unique on `(scope, project_id, key)` — the first release ignores `environment`; adding it later extends the unique key without data migration.
+- **Settings never come from the project.** The compiled binary is a Bun runtime and loads the working directory's `.env` before any Kerstel code runs, and §8's model is that this file is committed — so a cloned repository could otherwise set `KERSTEL_HOME`, `KERSTEL_KEYCHAIN_BACKEND`, `KERSTEL_IDLE_MS` or `KERSTEL_RELEASES_URL`. Every `KERSTEL_*` whose value matches one an env file in the working directory defines is deleted from `process.env` before a command runs, and named once on stderr. The test is a value match because nothing records provenance; a user who exports the same value their project's `.env` sets loses it too, which is the safe direction. The daemon is spawned with the home directory as its cwd, so no project file is loaded into it at all.
 - **Reference syntax:** `kerstel://global/<KEY>` or `kerstel://<project-name>/<KEY>`. Explicit scoping — a reference names exactly one scope, no fallback chain. The wizard makes pointing a project at a global key a one-keystroke choice.
 
 ## 6. Runtime resolution

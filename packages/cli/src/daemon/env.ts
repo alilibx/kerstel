@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+
 /**
  * The environment a detached `daemon serve` is started with.
  *
@@ -61,6 +63,20 @@ const KERSTEL_SETTINGS = ["KERSTEL_HOME", "KERSTEL_KEYCHAIN_BACKEND", "KERSTEL_K
  * the platform adds a variable of its own to a child.
  */
 export const SCRUBBED_MARKER = "KERSTEL_DAEMON_SCRUBBED";
+
+/**
+ * Where a spawned daemon should stand.
+ *
+ * Never the project directory. The compiled binary is a Bun runtime and loads
+ * the working directory's `.env` on startup, and that file is committed in
+ * Kerstel's model, so a daemon left in the project would read its settings
+ * from the repository (see project-env.ts, which handles the CLI's own
+ * process). The home directory has no `.env` of its own, and the daemon has no
+ * reason to hold a handle on a project anyway.
+ */
+export function daemonCwd(): string {
+  return homedir();
+}
 
 export function daemonEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};

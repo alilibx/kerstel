@@ -201,7 +201,8 @@
 <td>Where <code>update</code>, <code>doctor</code>, and <code>--version</code> look for releases, instead of <code>https://github.com/alilibx/kerstel</code>. For mirrors and tests; it must serve the same <code>/releases/latest</code> redirect and <code>/releases/download/v&lt;version&gt;/</code> files as GitHub.</td>
 </tr>
 </tbody></table>
-</div><h2>Exit codes</h2>
+</div><p>Set these in your shell or your shell profile, never in a project&#39;s env file. Kerstel is a Bun binary, so it loads the <code>.env</code> of the directory you run it in — and in Kerstel&#39;s model that file is committed, which would let a repository you cloned choose your vault&#39;s location or your credential store. So any <code>KERSTEL_*</code> whose value matches what an env file here defines is ignored, and named once on stderr. Nothing records where a variable came from, so the test is the value: if you export one in your shell <em>and</em> the project&#39;s <code>.env</code> sets it to the same string, it is ignored too, and the warning tells you which file to look at. The resolver daemon is started in your home directory for the same reason, so no project&#39;s env file reaches it.</p>
+<h2>Exit codes</h2>
 <p>Commands exit <code>0</code> on success and non-zero on any failure. Errors go to stderr and name the fix, usually <code>kerstel doctor</code>. Plaintext values never appear in error output.</p>
 
 </main>

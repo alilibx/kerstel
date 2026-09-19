@@ -7,6 +7,7 @@ import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./
 import { uninstallCommand } from "./commands/uninstall";
 import { updateCommand, versionCommand } from "./commands/update";
 import { bold, fail } from "./output";
+import { ignoreProjectSettings } from "./project-env";
 import { printBanner } from "./ui/banner";
 import { cliName } from "./ui/cli-name";
 import { detectTheme, makeTheme, theme } from "./ui/theme";
@@ -37,6 +38,15 @@ Scopes are explicit: "global" or a project name. A reference resolves in exactly
 one scope — there is no fallback.`;
 
 export async function runCli(argv: string[]): Promise<number> {
+  // FIRST, before any command and before anything reads a KERSTEL_* setting:
+  // Bun has already loaded this directory's .env into process.env, and in
+  // Kerstel's model that file is committed. See project-env.ts.
+  for (const setting of ignoreProjectSettings()) {
+    process.stderr.write(
+      `Ignoring ${setting.name} from ${setting.file}: Kerstel's own settings are not read from a project's env files.\n`,
+    );
+  }
+
   const [command, ...args] = argv;
 
   if (!command) {

@@ -1,6 +1,6 @@
 import { openContext } from "../context";
 import { connectDaemon, isDaemonRunning, stopDaemonIfRunning } from "../daemon/client";
-import { daemonEnv, isScrubbedEnvironment } from "../daemon/env";
+import { daemonCwd, daemonEnv, isScrubbedEnvironment } from "../daemon/env";
 import { startDaemon, type DaemonHandle } from "../daemon/server";
 import { daemonServeCommand } from "../daemon/spawn";
 import { clearTokenIf, createToken, writeToken } from "../daemon/token";
@@ -54,6 +54,7 @@ async function serveCommand(): Promise<number> {
   // the vault.
   if (!isScrubbedEnvironment()) {
     const child = Bun.spawn(daemonServeCommand(), {
+      cwd: daemonCwd(),
       env: daemonEnv(),
       stdin: "inherit",
       stdout: "inherit",
@@ -130,6 +131,7 @@ async function startCommand(): Promise<number> {
   // Never this process's environment: see daemonEnv for what an inherited
   // BUN_OPTIONS would do to the process that holds the vault key.
   Bun.spawn(daemonServeCommand(), {
+    cwd: daemonCwd(),
     env: daemonEnv(),
     stdin: "ignore",
     stdout: "ignore",

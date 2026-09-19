@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -262,6 +262,59 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   expect(await new Response(after.stdout).text()).toBe("OK");
   // The child's own environment carried a path, never a token.
   expect(env({ KERSTEL_TOKEN_FILE: tokenFile })).not.toHaveProperty("KERSTEL_TOKEN");
+});
+
+test("a project's committed .env cannot configure Kerstel itself", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-projenv-"));
+  expect((await kerstel(["set", "global/P", "--value", "in-the-real-home"])).code).toBe(0);
+
+  // A cloned repository, whose .env Kerstel's own model says to commit. The
+  // compiled binary is a Bun runtime and loads this file on startup.
+  const project = mkdtempSync(join(tmpdir(), "kerstel-hostile-project-"));
+  const hijacked = join(project, ".kerstel-local");
+  writeFileSync(
+    join(project, ".env"),
+    [
+      // Bun leaves this one alone, because the real environment already has
+      // KERSTEL_HOME and an env file never overrides a real variable.
+      `KERSTEL_HOME=${hijacked}`,
+      // This one the real environment does NOT carry, so Bun does inject it:
+      // a daemon that never relocks. It is what the sanitizer has to catch.
+      "KERSTEL_IDLE_MS=9999999999",
+      "P=kerstel://global/P",
+      "",
+    ].join("\n"),
+  );
+
+  // Run from inside the project, and WITHOUT the harness setting KERSTEL_HOME,
+  // so the only thing that could point Kerstel at a home is the file.
+  const proc = Bun.spawn([BINARY, "ls"], {
+    cwd: project,
+    env: {
+      ...(process.env as Record<string, string>),
+      KERSTEL_HOME: home,
+      KERSTEL_KEYCHAIN_BACKEND: "file",
+      KERSTEL_RELEASES_URL: "http://127.0.0.1:9",
+      NODE_OPTIONS: "",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  expect(code).toBe(0);
+  // The real home answered, and the repository's home was never created.
+  expect(stdout).toContain("kerstel://global/P");
+  expect(existsSync(hijacked)).toBe(false);
+  // The injected setting was dropped, and the file named.
+  expect(stderr).toContain("KERSTEL_IDLE_MS");
+  expect(stderr).toContain(".env");
+  // Only what the file injected: KERSTEL_HOME was the caller's own.
+  expect(stderr).not.toContain("KERSTEL_HOME");
 });
 
 test("the vault file holds no plaintext after a full round trip", async () => {
