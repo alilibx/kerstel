@@ -85,7 +85,7 @@ test("installs the matching binary and reports its version", async () => {
   const result = await install({});
   expect(result.code).toBe(0);
   expect(readFileSync(join(installDir, "kerstel"), "utf8")).toBe(fakeBinary("kerstel-darwin-arm64"));
-  expect(result.stdout).toContain(`Installed kerstel 0.1.0 to ${installDir}/kerstel`);
+  expect(result.stdout).toContain("Installed kerstel 0.1.0 to ~/bin/kerstel");
 });
 
 test("maps Linux x86_64 to linux-x64", async () => {
@@ -156,7 +156,7 @@ test("creates ks as a link to kerstel", async () => {
   const result = await install({});
   expect(result.code).toBe(0);
   expect(readlinkSync(join(installDir, "ks"))).toBe("kerstel");
-  expect(result.stdout).toContain("Linked ks -> kerstel");
+  expect(result.stdout).toContain("Shortcut: ks");
 });
 
 test("a re-run keeps the ks link", async () => {
@@ -192,3 +192,57 @@ test("a failed ln gracefully degrades to kerstel", async () => {
   expect(result.stdout).toContain("could not create");
   expect(result.stdout).toContain("so use kerstel");
 });
+
+test("piped output is plain: no colour, no progress bar, every line once", async () => {
+  const result = await install({});
+  expect(result.code).toBe(0);
+  expect(result.stdout).not.toContain("\x1b[");
+  expect(result.stdout).not.toContain("%");
+  expect(result.stdout).toContain("Downloading kerstel for macOS (Apple Silicon)");
+  expect(result.stdout).toContain("Checksum verified");
+  expect(result.stdout).toContain("What Kerstel does");
+  expect(result.stdout).toContain("1. cd into a project and run:  ks init");
+  expect(result.stdout).toContain("3. Check everything any time:  ks doctor");
+});
+
+test("the next steps say kerstel when the ks shortcut was skipped", async () => {
+  shim("ks", "echo someone else's ks");
+  const result = await install({});
+  expect(result.stdout).toContain("1. cd into a project and run:  kerstel init");
+});
+
+test("NO_COLOR keeps a terminal's output plain", async () => {
+  const result = await install({ NO_COLOR: "1" });
+  expect(result.stdout).not.toContain("\x1b[");
+});
+
+// The progress bar only draws on a terminal, so this test gives the installer
+// one through `script`. The fake release is tiny, so the bar jumps to 100%,
+// but the bar, the size, and the redraw all have to be there.
+test.if(process.platform === "darwin" || process.platform === "linux")(
+  "on a terminal the download draws a progress bar that ends at 100%",
+  async () => {
+    const env = {
+      HOME: work,
+      SHELL: "/bin/zsh",
+      PATH: `${shims}:/usr/bin:/bin`,
+      KERSTEL_INSTALL_DIR: installDir,
+      KERSTEL_DOWNLOAD_BASE: `file://${release}`,
+      FAKE_OS: "Darwin",
+      FAKE_ARCH: "arm64",
+      FAKE_TRANSLATED: "0",
+      TERM: "xterm-256color",
+    };
+    const wrapped =
+      process.platform === "darwin"
+        ? ["script", "-q", "/dev/null", "bash", SCRIPT]
+        : ["script", "-qec", `bash '${SCRIPT}'`, "/dev/null"];
+    const proc = Bun.spawn(wrapped, { env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("\x1b[");
+    expect(stdout).toMatch(/█{30}(\x1b\[0m)? 100%/);
+    expect(stdout).toContain("KB");
+    expect(existsSync(join(installDir, "kerstel"))).toBe(true);
+  },
+);
