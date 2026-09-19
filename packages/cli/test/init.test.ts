@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -102,6 +102,19 @@ afterEach(async () => {
     const dir = createdDirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("init refuses, before writing anything, when node_modules/.bin holds a kerstel", async () => {
+  const home = isolateEnv({ prefix: "init-shadow" });
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "API_KEY=super-secret-shadow\n" });
+  mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(root, "node_modules", ".bin", "kerstel"), "#!/bin/sh\nexec /usr/bin/true\n");
+
+  expect(await runInit(options(root, ["--yes", "--non-interactive"]), new DefaultsPrompter())).toBe(1);
+
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=super-secret-shadow\n");
+  expect(readFileSync(join(root, "package.json"), "utf8")).toBe(NPM_PACKAGE);
+  expect(existsSync(join(home, "vault.db"))).toBe(false);
 });
 
 test("collectKeys applies the documented precedence and records conflicts", () => {

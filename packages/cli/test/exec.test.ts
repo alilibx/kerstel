@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildExecEnv, preloadPathFor, withBunPreload } from "../src/commands/exec";
@@ -109,6 +109,27 @@ test("exec runs a node command that resolves a reference through the daemon", as
 
   expect(code).toBe(0);
   expect(readFileSync(out, "utf8")).toBe("exec-value");
+});
+
+test("exec refuses, without starting a daemon, when node_modules/.bin holds a kerstel", async () => {
+  isolateEnv({ prefix: "exec-shadow" });
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-exec-shadow-"));
+  mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(dir, "node_modules", ".bin", "kerstel"), "#!/bin/sh\nexec /usr/bin/true\n");
+  process.chdir(dir);
+
+  const out = join(dir, "ran.txt");
+  const code = await runCli([
+    "exec",
+    "--",
+    "node",
+    "-e",
+    `require("node:fs").writeFileSync(${JSON.stringify(out)}, "ran")`,
+  ]);
+
+  expect(code).toBe(1);
+  expect(existsSync(out)).toBe(false);
+  expect(existsSync(socketPath())).toBe(false);
 });
 
 test("exec propagates the child's exit code", async () => {

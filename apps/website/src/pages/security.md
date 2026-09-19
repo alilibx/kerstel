@@ -44,6 +44,8 @@ A process that runs code inside your project can read resolved values from `proc
 
 This is file-level protection. It closes the most common leaks: agents and tools that read files, and secrets that end up in git history.
 
+One dependency trick is closed explicitly. Package managers put `node_modules/.bin` first on `PATH` when they run a script, so a dependency declaring a `bin` named `kerstel` would run in place of Kerstel for every wired script, without a `postinstall` and without ever being imported. `kerstel init` and `kerstel exec` refuse when such a file exists in the project or a parent directory, and `kerstel doctor` reports it as a problem. `init` and `doctor` run from your shell and are authoritative; the check in `exec` runs after the package manager has already chosen a `kerstel`, so it catches a bin that stays in place, not a shim that deletes itself before delegating. That shim is a dependency you installed running code as you, which is the boundary below.
+
 ## What comes next
 
 The resolver daemon already sees which process asks for which key. The next protection level uses that: an unrecognized process asking for a key triggers an approval prompt, the way macOS asks before an app reads a Keychain item. Allowlists and Touch ID or polkit for sensitive operations follow. The current design keeps resolution lazy and daemon-mediated so this layer can be added without changing how you wire a project.

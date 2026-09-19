@@ -273,6 +273,23 @@ function referencesCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
   };
 }
 
+/**
+ * A `kerstel` under node_modules/.bin runs instead of Kerstel for every wired
+ * script (npm puts that directory first on PATH), so it is a problem, not a
+ * warning: `exec` refuses in that project until the file is gone. Omitted when
+ * there is none. See init/shadow.ts.
+ */
+function shadowCheck(project: ProjectStatus): Check | null {
+  if (project.shadowed.length === 0) return null;
+  return {
+    group: "project",
+    status: "problem",
+    label: "Wrapper",
+    detail: `${project.shadowed.join(", ")} would run in place of Kerstel`,
+    fix: "remove the dependency that installs it, then delete the file",
+  };
+}
+
 /** Omitted entirely when every env file was readable -- nothing to warn about. */
 function envFilesCheck(project: ProjectStatus): Check | null {
   if (project.unreadable.length === 0) return null;
@@ -305,6 +322,8 @@ export function gatherChecks(facts: DoctorFacts): Check[] {
     const scope = scopeCheck(facts.project, facts.cli);
     if (scope) checks.push(scope);
     checks.push(scriptsCheck(facts.project, facts.cli));
+    const shadow = shadowCheck(facts.project);
+    if (shadow) checks.push(shadow);
     checks.push(referencesCheck(facts.project, facts.cli));
     const envFiles = envFilesCheck(facts.project);
     if (envFiles) checks.push(envFiles);
