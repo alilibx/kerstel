@@ -114,7 +114,7 @@ No banner, spinners, redrawn lines, or colour. Each step prints as one plain, st
    - `Vault, shared by all your projects (n)`
    - `Stays in <files> as plain text (n)`
 
-   Each row shows the key, a value column, and its source file. A value is printed in full only when all of these hold: it stays in plain text, the suggestion for it was also plain text, `--keep` did not put it there, and it is configuration rather than something shaped like a credential. That last test means either the key is a configuration name by convention (`NODE_ENV`, `PORT`, `PUBLIC_*` and the rest of the plain-text key list), or the value is empty, a boolean, a number, or a short lowercase word and the key does not name a credential (`PASSWORD`, `TOKEN`, `SECRET`, `API_KEY` and so on). A URL is printed only under a configuration key. So `PORT=3000` and `NODE_ENV=development` are shown, while `DB_PASSWORD=12345678` and a webhook URL, which stay in plain text by the suggester's rules, are not. Every other value is shown only as its length (`•••• 64 chars`): anything headed for the vault, a secret-looking value the user moved to plain text, every `--keep` key (since `--keep` can keep a real secret in the file and `init --yes` in CI would print it into build logs), and every value that fails the configuration test. A value that is shown has its control characters (C0 and C1, including ESC) removed and is cut to 40 display columns with a trailing `…`. The same rule applies to the value column in one-by-one mode. After the groups, one line per key with different values in several files names the files and says which one wins and that the others are kept in the encrypted backup.
+   Each row shows the key, a value column, and its source file. A value is printed in full only when all of these hold: it stays in plain text, the suggestion for it was also plain text, `--keep` did not put it there, and it is configuration rather than something shaped like a credential. That last test means either the key is a configuration name by convention (`NODE_ENV`, `PORT`, `PUBLIC_*` and the rest of the plain-text key list), or the value is empty, a boolean, a number, or a short lowercase word and the key does not name a credential (`PASSWORD`, `PASS`, `PWD`, `PIN`, `TOKEN`, `SECRET`, any `*_KEY` and so on; see §5.3). A URL is printed only under a configuration key. So `PORT=3000` and `NODE_ENV=development` are shown, while a webhook URL, which stays in plain text by the suggester's rules, is not. Every other value is shown only as its length (`•••• 64 chars`): anything headed for the vault, a secret-looking value the user moved to plain text, every `--keep` key (since `--keep` can keep a real secret in the file and `init --yes` in CI would print it into build logs), and every value that fails the configuration test. A value that is shown has its control characters (C0 and C1, including ESC) removed and is cut to 40 display columns with a trailing `…`. The same rule applies to the value column in one-by-one mode. After the groups, one line per vault-bound key with different values in several files names the files and says which one wins and that the others are kept in the encrypted backup. A conflicting key that stays in plain text gets no such line, because each file keeps its own value.
 3. **"Look right?"** A `select`:
    - **Yes, use these** (default): accept every suggestion.
    - **Let me change some**: a `multiselect` of every variable, then a `select` for each ticked one, with its suggestion pre-selected.
@@ -140,10 +140,14 @@ The menus use these words everywhere, with these hints:
 
 `classify.ts` gains `explain(key, value)`, which walks the same branches as `suggest()` in the same order and returns the suggestion with a reason, shown in one-by-one mode. `suggest()` becomes `explain(...).suggestion`, so the two cannot disagree.
 
+`SECRET_KEYS` names a credential by a whole segment of the key: `PASSWORD`, `PASSWD`, `PASSPHRASE`, `PASSCODE`, `PASS`, `PWD`, `PIN`, `SECRET`, `TOKEN`, `KEY` (so any `*_KEY`), `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `SECRET_KEY`, `AUTH`, `CREDENTIAL(S)`, and `DSN`. A whole segment means `SPINNER` is not `PIN` and `KEYBOARD` is not `KEY`.
+
 | Branch in `suggest()` | Reason |
 | --- | --- |
 | Empty value | It's empty, so there's nothing to protect |
-| Boolean or number | An on/off switch or a number, not a credential |
+| Boolean, whatever the key is called | An on/off switch or a number, not a credential |
+| Number, when the key names a credential (`SECRET_KEYS`) and is not a known config name | The name says it's a secret |
+| Any other number | An on/off switch or a number, not a credential |
 | URL with `user:pass@` | The URL has a username and password in it |
 | URL with a credential in the query | The URL carries a key or token |
 | Known config name (`PLAINTEXT_KEYS`) | A setting, not a credential |

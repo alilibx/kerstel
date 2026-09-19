@@ -59,7 +59,7 @@ const PLAINTEXT_KEYS =
  * A whole segment, not a substring: AUTHOR_NAME is not an AUTH key.
  */
 const SECRET_KEYS =
-  /(^|[^A-Za-z0-9])(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|SECRET_?KEY|AUTH|CREDENTIALS?|DSN)($|[^A-Za-z0-9])/i;
+  /(^|[^A-Za-z0-9])(PASSWORD|PASSWD|PASSPHRASE|PASSCODE|PASS|PWD|PIN|SECRET|TOKEN|KEY|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|SECRET_?KEY|AUTH|CREDENTIALS?|DSN)($|[^A-Za-z0-9])/i;
 
 /**
  * A query parameter that hands the credential over in the URL itself --
@@ -96,8 +96,10 @@ function stored(key: string, reason: string): Explanation {
 /**
  * The order below is the whole design, so it is worth stating:
  *
- *   1. A value with no content to protect (empty, a boolean, a number) is
- *      plaintext whatever the key is called.
+ *   1. A value with no content to protect (empty, or a boolean) is
+ *      plaintext whatever the key is called. A number is plaintext too,
+ *      unless the key names a credential: `PIN=4821` and
+ *      `DB_PASSWORD=12345678` are secrets that happen to be digits.
  *   2. A URL is judged on its own contents first: userinfo or a credential in
  *      the query beats every key-name convention.
  *   3. `PUBLIC_*` and friends beat the credential words, because a developer
@@ -109,7 +111,11 @@ export function explain(key: string, value: string): Explanation {
   const trimmed = value.trim();
 
   if (trimmed === "") return { suggestion: "plaintext", reason: "It's empty, so there's nothing to protect" };
-  if (BOOLEANS.has(trimmed.toLowerCase()) || NUMBER.test(trimmed)) {
+  if (BOOLEANS.has(trimmed.toLowerCase())) {
+    return { suggestion: "plaintext", reason: "An on/off switch or a number, not a credential" };
+  }
+  if (NUMBER.test(trimmed)) {
+    if (SECRET_KEYS.test(key) && !PLAINTEXT_KEYS.test(key)) return stored(key, "The name says it's a secret");
     return { suggestion: "plaintext", reason: "An on/off switch or a number, not a credential" };
   }
 

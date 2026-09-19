@@ -78,6 +78,27 @@ const CASES: [key: string, value: string, expected: Suggestion][] = [
   ["AUTHOR_NAME", "ali", "plaintext"],
   // An empty value is still nothing to encrypt.
   ["PASSWORD", "", "plaintext"],
+  // Short credential names, and bare *_KEY names, are credentials too.
+  ["DB_PASS", "hunter", "project"],
+  ["SMTP_PWD", "letmein", "project"],
+  ["DOOR_PASSCODE", "abc", "project"],
+  ["GPG_PASSPHRASE", "correct horse", "project"],
+  ["SIGNING_KEY", "secret", "project"],
+  ["MASTER_KEY", "abc", "project"],
+  // A number under a credential name is a secret that happens to be digits.
+  ["PIN", "4821", "project"],
+  ["SMTP_PASS", "12345678", "project"],
+  ["ENCRYPTION_KEY", "12345678901234567890", "project"],
+  ["DB_PASSWORD", "12345678", "project"],
+  // A number under any other name, or under a declared-public name, is still a setting.
+  ["PORT", "3000", "plaintext"],
+  ["NEXT_PUBLIC_PIN_LENGTH", "4", "plaintext"],
+  // A boolean stays a switch even under a credential word.
+  ["AUTH_ENABLED", "true", "plaintext"],
+  // Whole segments only: SPINNER is not PIN, KEYBOARD is not KEY, PASSENGER is not PASS.
+  ["SPINNER_STYLE", "dots", "plaintext"],
+  ["KEYBOARD_LAYOUT", "us", "plaintext"],
+  ["PASSENGER_COUNT", "4", "plaintext"],
 ];
 
 test("suggest classifies every documented case", () => {
@@ -131,6 +152,7 @@ test.each([
   ["API_BASE", "https://api.test/v1", "plaintext" as Suggestion, "A plain URL with no credentials in it"],
   ["MODE", "dev", "plaintext" as Suggestion, "A short word, like a mode or a name"],
   ["SESSION_BLOB", "a9f8e7d6c5b4a3f2", "project" as Suggestion, "Might be a secret, so it's safer in the vault"],
+  ["PIN", "4821", "project" as Suggestion, "The name says it's a secret"],
 ])("explain(%s) suggests %s with its reason", (key, value, suggestion, reason) => {
   expect(explain(key, value)).toEqual({ suggestion, reason });
   expect(suggest(key, value)).toBe(suggestion);
@@ -154,6 +176,9 @@ test.each([
   ["EMPTY", "", true],
   ["DB_PASSWORD", "12345678", false],
   ["STRIPE_SECRET_KEY", "1234567890", false],
+  ["PIN", "4821", false],
+  ["DB_PASS", "hunter", false],
+  ["SIGNING_KEY", "secret", false],
   ["API_TOKEN", "true", false],
   ["SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/abc", false],
   ["HOMEPAGE", "https://example.com", false],
