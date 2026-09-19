@@ -8,6 +8,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 - The OS credential-store helpers (`security` on macOS, `secret-tool` on Linux) are now run only from a fixed list of system directories, and only when the directory and the file are owned by root and writable by nobody else, never from the caller's `PATH`. `npm run` and `bun run` put `node_modules/.bin` first on `PATH`, so before this a dependency could ship a fake `security` and read the vault's data key the next time a wired script opened the vault. If the tool is missing from those directories, the error says how to install it there or switch to the key file.
 
+### Fixed
+
+- `kerstel init` no longer treats backup copies such as `.env.bak`, `.env.orig`, `.env.swp`, or `.env.local~` as env files. Before, a stale value in `.env.bak` outranked the live one in `.env` and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext.
+
 ## 0.1.1 (2026-09-19)
 
 ### Added

@@ -7,6 +7,7 @@ import {
   detectProject,
   discoverEnvFiles,
   envFileRank,
+  isBackupEnvFileName,
   isEnvFileName,
 } from "../src/init/detect";
 
@@ -44,6 +45,50 @@ test("isEnvFileName accepts .env and its variants and rejects templates", () => 
   ]) {
     expect(isEnvFileName(name)).toBe(false);
   }
+});
+
+test("editor and shell backup copies are not env files", () => {
+  for (const name of [
+    ".env.bak",
+    ".env.orig",
+    ".env.old",
+    ".env.save",
+    ".env.backup",
+    ".env.swp",
+    ".env.swo",
+    ".env.tmp",
+    ".env.rej",
+    ".env.local.bak",
+    ".env.production.swp",
+    ".env.local~",
+    ".env.bak.local",
+  ]) {
+    expect(isEnvFileName(name)).toBe(false);
+    expect(isBackupEnvFileName(name)).toBe(true);
+  }
+  for (const name of [".env", ".env.local", ".env.production.local", ".env.example", ".envrc", "notes.bak"]) {
+    expect(isBackupEnvFileName(name)).toBe(false);
+  }
+});
+
+test("a backup copy is skipped, reported by name, and never outranks the live file", () => {
+  const root = project({
+    ".env": "API_TOKEN=live\n",
+    ".env.bak": "API_TOKEN=stale\n",
+    ".env.swp": "garbage",
+    ".env.example": "API_TOKEN=\n",
+    "package.json": "{}",
+  });
+  const detected = detectProject(root);
+  expect(detected.envFiles.map((f) => f.name)).toEqual([".env"]);
+  expect(detected.backupEnvFiles).toEqual([".env.bak", ".env.swp"]);
+  expect(discoverEnvFiles(root).map((f) => f.name)).toEqual([".env"]);
+});
+
+test("a directory with a backup-like name is not reported as a backup", () => {
+  const root = project({ ".env": "A=1" });
+  mkdirSync(join(root, ".env.old"));
+  expect(detectProject(root).backupEnvFiles).toEqual([]);
 });
 
 test("envFileRank implements the documented precedence", () => {

@@ -596,6 +596,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
   for (const name of detected.unreadableEnvFiles) {
     console.log(yellow(`!  ${name} could not be read (a broken symlink?), so it was skipped.`));
   }
+  // A backup copy is not migrated (no loader reads it, and its stale values
+  // would otherwise outrank the live file), but it most likely still holds
+  // the plaintext this migration is removing, so it is named rather than hidden.
+  for (const name of detected.backupEnvFiles) {
+    console.log(yellow(`!  ${name} looks like a backup copy, so it was skipped. Delete it once you no longer need it: it may still hold plaintext.`));
+  }
 
   if (detected.envFiles.length === 0 && detected.unreadableEnvFiles.length > 0) {
     fail(`No readable .env files here. Fix or remove the ones above, then re-run \`${cliName()} init\`.`);
