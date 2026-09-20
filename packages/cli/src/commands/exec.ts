@@ -5,7 +5,7 @@ import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { fail } from "../output";
 import { socketPath, tokenPath } from "../paths";
 import { cliName } from "../ui/cli-name";
-import { spawnChild } from "./spawn";
+import { refuseMissingExecutable, spawnChild } from "./spawn";
 
 /**
  * Runs one command with Kerstel's runtime hook wired in, then gets out of the
@@ -126,6 +126,11 @@ export async function execCommand(args: string[]): Promise<number> {
     fail(shadowedBinaryMessage(shadowed));
     return 1;
   }
+
+  // A command that cannot start unlocks nothing: checked here, before the
+  // vault is opened or the daemon started, for the same reason as above.
+  const missing = refuseMissingExecutable(command);
+  if (missing !== null) return missing;
 
   // Opening the context is what installs/refreshes ~/.kerstel/hook/. The vault
   // itself is not needed here -- `exec` never reads a secret -- so it is closed

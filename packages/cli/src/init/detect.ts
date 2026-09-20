@@ -163,11 +163,11 @@ export function detectPackageManager(
   return "npm";
 }
 
-type PackageJsonRead =
+export type PackageJsonRead =
   | { json: Record<string, unknown>; error: null }
   | { json: null; error: "missing" | "invalid" };
 
-function readPackageJson(path: string): PackageJsonRead {
+export function readPackageJson(path: string): PackageJsonRead {
   let source: string;
   try {
     source = readFileSync(path, "utf8");

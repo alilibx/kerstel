@@ -10,6 +10,7 @@ import { runCli } from "../src/index";
 import { socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
+import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 let handle: DaemonHandle | null = null;
@@ -151,32 +152,28 @@ test("exec refuses, without starting a daemon, when node_modules/.bin holds a ke
   expect(existsSync(socketPath())).toBe(false);
 });
 
-test("exec exits 127 and names the install command when the executable is not on PATH", async () => {
+test("exec exits 127 and names the install command, without starting a daemon, when the executable is not on PATH", async () => {
   isolateEnv({ prefix: "exec-missing" });
-  await bootLocalDaemon();
   const dir = mkdtempSync(join(tmpdir(), "kerstel-exec-missing-"));
   writeFileSync(join(dir, "package.json"), '{"name":"app"}');
   writeFileSync(join(dir, "bun.lock"), "");
   process.chdir(dir);
 
-  const lines: string[] = [];
-  const realLog = console.log;
-  console.log = (...args: unknown[]) => {
-    lines.push(args.map(String).join(" "));
-  };
+  const log = captureLog();
   let code: number;
   try {
     code = await runCli(["exec", "--", "kerstel-test-no-such-executable", "dev"]);
   } finally {
-    console.log = realLog;
+    log.restore();
   }
 
   expect(code).toBe(EXIT_COMMAND_NOT_FOUND);
-  const out = lines.join("\n");
-  expect(out).toContain('"kerstel-test-no-such-executable" was not found on PATH');
-  expect(out).toContain("no node_modules yet");
-  expect(out).toContain("`bun install`");
-  expect(out).not.toContain("Executable not found in $PATH");
+  expect(log.text()).toContain('"kerstel-test-no-such-executable" was not found on PATH');
+  expect(log.text()).toContain("no node_modules yet");
+  expect(log.text()).toContain("`bun install`");
+  expect(log.text()).not.toContain("Executable not found in $PATH");
+  // Refused before the vault opened or the daemon started.
+  expect(existsSync(socketPath())).toBe(false);
 });
 
 test("exec propagates the child's exit code", async () => {
