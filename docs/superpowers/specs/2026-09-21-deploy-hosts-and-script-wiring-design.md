@@ -1,7 +1,7 @@
 # Deploy hosts and script wiring
 
 **Status:** approved design, 2026-09-21. Replaces the wiring rule in §6.2 of the [product spec](2026-09-17-kerstel-secrets-manager-design.md) and extends §8 step 4.
-**Release:** 0.1.3. Three issues: the `Bun.env` fix, compound scripts, and the launcher.
+**Release:** 0.1.3 ([#60](https://github.com/alilibx/kerstel/issues/60) `Bun.env`, [#61](https://github.com/alilibx/kerstel/issues/61) compound scripts, [#62](https://github.com/alilibx/kerstel/issues/62) the launcher).
 **Related:** the [monorepo and checkouts spec](2026-09-19-monorepo-and-checkouts-design.md), whose per-package wiring step (§4 step 9) runs the wiring this spec defines. The [research notes](../research/2026-09-21-deploy-hosts-and-script-wiring-research.md) hold the host, framework, and prior-art findings this spec rests on.
 
 ## 1. Problem
