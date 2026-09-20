@@ -2,7 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXIT_COMMAND_NOT_FOUND, executableExists, missingExecutableMessage } from "../src/commands/spawn";
+import {
+  EXIT_COMMAND_NOT_EXECUTABLE,
+  EXIT_COMMAND_NOT_FOUND,
+  executableExists,
+  missingExecutableMessage,
+} from "../src/commands/spawn";
 import { runCli } from "../src/index";
 import { vaultPath } from "../src/paths";
 import { captureLog } from "./helpers/capture-log";
@@ -64,6 +69,17 @@ test("missingExecutableMessage counts a hoisted node_modules above a workspace m
   expect(message).toContain("If it is a dependency of this project");
 });
 
+test("missingExecutableMessage finds the project from a subdirectory of it", () => {
+  const root = tempDir("spawn-nested");
+  writeFileSync(join(root, "package.json"), '{"name":"app"}');
+  writeFileSync(join(root, "yarn.lock"), "");
+  const nested = join(root, "scripts", "tools");
+  mkdirSync(nested, { recursive: true });
+  const message = missingExecutableMessage("next", nested);
+  expect(message).toContain("no node_modules yet");
+  expect(message).toContain("`yarn install`");
+});
+
 test("missingExecutableMessage reads packageManager when there is no lockfile", () => {
   const dir = tempDir("spawn-corepack");
   writeFileSync(join(dir, "package.json"), '{"name":"app","packageManager":"yarn@4.1.0"}');
@@ -102,6 +118,25 @@ test("run exits 127 with the message, and opens no vault, when the command is no
   expect(log.text()).not.toContain("Executable not found in $PATH");
   // Refused before openContext(): nothing was created, and nothing prompted.
   expect(existsSync(vaultPath())).toBe(false);
+});
+
+test("run exits 126 and blames the interpreter when the executable exists but its #! target does not", async () => {
+  isolateEnv({ prefix: "spawn-run-shebang" });
+  const dir = tempDir("spawn-run-shebang-project");
+  writeFileSync(join(dir, "package.json"), '{"name":"app"}');
+  const script = join(dir, "tool.sh");
+  writeFileSync(script, "#!/nonexistent/interpreter\necho ran\n");
+  chmodSync(script, 0o755);
+
+  const log = captureLog();
+  restoreLog = log.restore;
+  const code = await runCli(["run", "--", script]);
+
+  expect(code).toBe(EXIT_COMMAND_NOT_EXECUTABLE);
+  expect(log.text()).toContain("exists but could not be started");
+  expect(log.text()).toContain("interpreter");
+  expect(log.text()).not.toContain("install`");
+  expect(log.text()).not.toContain("does not exist");
 });
 
 test("run leaves a spawn failure other than a missing file to the top-level handler", async () => {

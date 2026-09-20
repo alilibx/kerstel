@@ -10,9 +10,32 @@ import { fail } from "../output";
  */
 export const EXIT_COMMAND_NOT_FOUND = 127;
 
+/** What a shell exits with when the command exists but cannot be run. */
+export const EXIT_COMMAND_NOT_EXECUTABLE = 126;
+
 /** A command with a path separator is run as a file and never looked up on PATH. */
 function isPathForm(executable: string): boolean {
   return /[\\/]/.test(executable);
+}
+
+/** The nearest directory at or above `dir` for which `predicate` holds, or null. */
+function findUpwards(dir: string, predicate: (candidate: string) => boolean): string | null {
+  let current = resolve(dir);
+  for (;;) {
+    if (predicate(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/**
+ * The package the command runs in: the nearest `package.json` at or above the
+ * working directory, as npm and bun find it, so a script run from a
+ * subdirectory of the project still gets the project's guidance.
+ */
+function findPackageRoot(cwd: string): string | null {
+  return findUpwards(cwd, (dir) => existsSync(join(dir, "package.json")));
 }
 
 /**
@@ -21,13 +44,7 @@ function isPathForm(executable: string): boolean {
  * project directory would call an installed workspace "not installed".
  */
 function hasNodeModulesAbove(dir: string): boolean {
-  let current = resolve(dir);
-  for (;;) {
-    if (existsSync(join(current, "node_modules"))) return true;
-    const parent = dirname(current);
-    if (parent === current) return false;
-    current = parent;
-  }
+  return findUpwards(dir, (candidate) => existsSync(join(candidate, "node_modules"))) !== null;
 }
 
 /**
@@ -47,10 +64,10 @@ export function missingExecutableMessage(executable: string, cwd: string): strin
   }
 
   const base = `"${executable}" was not found on PATH.`;
-  const packageJsonPath = join(cwd, "package.json");
-  if (!existsSync(packageJsonPath)) return base;
+  const root = findPackageRoot(cwd);
+  if (root === null) return base;
 
-  const manager = detectPackageManager(cwd, readPackageJson(packageJsonPath).json);
+  const manager = detectPackageManager(root, readPackageJson(join(root, "package.json")).json);
   const install = `\`${manager} install\``;
   if (!hasNodeModulesAbove(cwd)) {
     return `${base} This project has no node_modules yet: run ${install}, then try again.`;
@@ -83,10 +100,25 @@ export function refuseMissingExecutable(command: string[]): number | null {
 }
 
 /**
+ * The line for an executable that exists but still fails with ENOENT: the
+ * kernel found the file and then could not find something the file needs,
+ * which for a script is the interpreter its `#!` line names. Blaming the
+ * dependency install here would send the user to reinstall a file that is
+ * right there.
+ */
+export function unstartableExecutableMessage(executable: string): string {
+  return (
+    `"${executable}" exists but could not be started: the interpreter named on its first line (#!) was not found. ` +
+    "Check that line, or reinstall the tool that provides it."
+  );
+}
+
+/**
  * Starts the child with inherited stdio and waits for it. A command whose
  * executable does not exist is reported as a shell would report it, message
- * plus exit 127, instead of surfacing as an internal error. Every other
- * failure to spawn is rethrown for the top-level handler.
+ * plus exit 127, instead of surfacing as an internal error; one that exists
+ * but cannot start gets exit 126 and a message about its interpreter. Every
+ * other failure to spawn is rethrown for the top-level handler.
  */
 export async function spawnChild(command: string[], env: Record<string, string>): Promise<number> {
   let child: Bun.Subprocess;
@@ -94,7 +126,12 @@ export async function spawnChild(command: string[], env: Record<string, string>)
     child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      fail(missingExecutableMessage(command[0] ?? "", process.cwd()));
+      const executable = command[0] ?? "";
+      if (executableExists(executable)) {
+        fail(unstartableExecutableMessage(executable));
+        return EXIT_COMMAND_NOT_EXECUTABLE;
+      }
+      fail(missingExecutableMessage(executable, process.cwd()));
       return EXIT_COMMAND_NOT_FOUND;
     }
     throw error;
