@@ -10,7 +10,7 @@
 
 ## 2. Product statement
 
-Kerstel is a local-first secrets manager for Node and Bun projects. Secrets live in an encrypted vault on the developer's machine, unlocked via the OS credential store. `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. A setup wizard migrates projects without changing how the developer works: `npm run dev` stays `npm run dev`. A local web portal manages the vault. No account, no cloud, no telemetry, no AI — fully deterministic, and offline apart from the update check that `update`, `--version` on a terminal, and `doctor` make against GitHub Releases (added in 0.1.1).
+Kerstel is a local-first secrets manager for Node and Bun projects. Secrets live in an encrypted vault on the developer's machine, unlocked via the OS credential store. `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. A setup wizard migrates projects without changing how the developer works: `npm run dev` stays `npm run dev`. A terminal UI, `kerstel ui`, manages the vault. No account, no cloud, no telemetry, no AI — fully deterministic, and offline apart from the update check that `update`, `--version` on a terminal, and `doctor` make against GitHub Releases (added in 0.1.1).
 
 **Non-goals for the first release (0.1.0):** cloud sync, team sharing, environments (dev/staging/prod), per-process access approval. All are roadmap items the first release's architecture must not block (see §10).
 
@@ -54,7 +54,7 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
 | Vault engine | `packages/cli` (module) | Encrypted SQLite storage, crypto, schema migrations |
 | Resolver daemon | `packages/cli` (subcommand) | Unlocks vault, serves resolutions over local IPC, audit log |
 | Runtime hook | `packages/hook` | JS preload; `process.env` Proxy that resolves references lazily |
-| Portal | `packages/portal` | Local web UI served by the binary on `kerstel ui` |
+| Terminal UI | `packages/cli` (module) | `kerstel ui`, a full-screen view of the vault in the terminal. See the [terminal UI spec](2026-09-19-terminal-ui-design.md). |
 | Website | `apps/website` | kerstel.dev — marketing + docs |
 
 ## 5. Vault
@@ -66,7 +66,7 @@ One TypeScript codebase. One compiled artifact per platform via `bun build --com
   - A key is minted only when the vault file has neither a `key_check` nor any secret. Otherwise "no key readable" is an error naming the store, decided before any fetch, so a lost or unreachable store never causes a fresh key to be written over the real one.
   - Windows: a DPAPI-sealed blob at `~/.kerstel/vault.key.dpapi`, not Credential Manager as first designed. Only that Windows account can unseal it, so a copy taken off the machine is useless. Windows is unsupported either way until its binaries ship.
 - **Schema (versioned, `schema_version` pragma):**
-  - `projects(id, name, root_path, created_at)`
+  - `projects(id, name, root_path UNIQUE, package_name NULL, created_at)` — one row per checkout; `name` is the scope, shared by every checkout of one package. See the [monorepo and checkouts spec](2026-09-19-monorepo-and-checkouts-design.md).
   - `secrets(id, scope, project_id NULL, key, value_ciphertext, nonce, environment TEXT NULL /* reserved, unused for now */, created_at, updated_at)`
   - `audit_log(id, ts, event, scope, key, pid, process_name, project_id)`
   - Unique on `(scope, key)` as built — `project_id` was designed into the constraint but the scope name already identifies the project, so the shipped schema leaves it out. The first release ignores `environment`; adding it later extends the unique key without data migration.
@@ -124,20 +124,24 @@ When one key appears in several files with different values, `init` stores the h
 
 **Teammate flow:** clone → `kerstel init` reads committed references, lists keys the local vault lacks, prompts for values. References double as a living `.env.example`. Values are held in memory as they are entered and stored when the user applies the plan, so declining leaves the vault untouched and "nothing is written before the user says yes" holds without exception. If nothing else in the project needs changing, there is no plan to approve, and the values are stored straight away. `--dry-run` asks for no values and writes nothing, not even to `~/.kerstel`.
 
-Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plaintext), `ui`, `run`, `doctor` (wiring + daemon + keychain diagnostics), `daemon start|stop|status`, `uninstall` (restores plaintext `.env` from vault before removing itself, with confirmation).
+**Monorepos:** at a workspace root (`workspaces` in `package.json`, or `pnpm-workspace.yaml`), `init` lists every package with `.env` files, preselected, and runs one overview and one apply for the selection, registering each package on its own. See the [monorepo and checkouts spec](2026-09-19-monorepo-and-checkouts-design.md).
 
-## 9. Portal
+Other commands: `set/get/ls/rm` (get requires a `--reveal` flag to print plaintext), `ui`, `refs`, `audit`, `run`, `doctor` (wiring + daemon + keychain diagnostics), `daemon start|stop|status`, `uninstall` (restores plaintext `.env` from vault before removing itself, with confirmation).
 
-`kerstel ui` → daemon serves a SPA on `127.0.0.1:<random port>`, opens the browser with a one-time bearer token in the URL; all API calls require it. Features: manage global/project secrets, see which projects reference which keys, audit log view, vault lock/unlock. Values render masked; reveal is per-value and audited. No remote assets — everything ships in the binary.
+## 9. Terminal UI
+
+`kerstel ui` opens a full-screen view of the vault in the terminal: secrets by scope with values masked and a per-value, audited reveal; which project files reference which keys; and, once audit ships (Next), the audit log. It runs in the same process model as `kerstel set` and opens no network socket. The original plan, a web page on `127.0.0.1` served by the daemon, was dropped because a loopback port is reachable by every local process and every open browser tab, and because the daemon's `lock` exits the process on purpose. Design: [terminal UI spec](2026-09-19-terminal-ui-design.md).
 
 ## 10. Roadmap
 
 The public, tick-box version of this roadmap is the repo-root `ROADMAP.md`, published at kerstel.dev/roadmap.
 
 
-- **First release, 0.1.0 (this build):** everything above except the portal (§9).
-- **0.2.0 — local portal:** `kerstel ui` as described in §9. Moved out of 0.1.0 so binaries ship sooner.
-- **Next — access gating:** daemon approval prompts per unknown process/key, allowlists, Touch ID / polkit for sensitive ops.
+- **First release, 0.1.0:** everything above except the terminal UI (§9).
+- **0.1.1 — update in place:** `kerstel update`.
+- **0.1.2 — security hardening:** Kerstel's settings never come from the project's env files, the session token leaves every environment, the daemon runs with a scrubbed environment, credential-store helpers run only from system directories, and `init` refuses a shadowed `kerstel` in `node_modules/.bin`.
+- **0.2.0 — terminal UI and monorepos:** `kerstel ui` as described in §9, `kerstel refs`, `init` at a workspace root, one registration per checkout, the shorter `ks:` references, and `kerstel scan`.
+- **Next — access gating:** audit rows for every write with `kerstel audit` and the Audit screen, daemon approval prompts per unknown process/key, allowlists, proof of user presence for sensitive ops (Touch ID, polkit, Windows Hello, with the data key bound to presence where the platform allows), and vault lock/unlock once unlock can ask for one of those.
 - **Later — optional sync & teams:** E2E-encrypted sync (client-side keys only), environments, shared vaults.
 
 ## 11. Repo & open source
@@ -145,7 +149,7 @@ The public, tick-box version of this roadmap is the repo-root `ROADMAP.md`, publ
 Bun workspace monorepo, MIT license:
 
 ```
-packages/cli  packages/hook  packages/portal  apps/website
+packages/cli  packages/hook  apps/website
 docs/   (this spec, roadmap, SECURITY.md threat model, CONTRIBUTING.md)
 ```
 
