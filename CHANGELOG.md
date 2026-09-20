@@ -2,7 +2,9 @@
 
 All notable changes to Kerstel are listed here. Versions follow [Semantic Versioning](https://semver.org). Kerstel is pre-1.0: minor releases may change behaviour.
 
-## 0.1.2 (unreleased)
+## 0.1.3 (unreleased)
+
+## 0.1.2 (2026-09-20)
 
 ### Security
 
