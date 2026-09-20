@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { detectPackageManager, readPackageJson } from "../init/detect";
+import { detectPackageManager, hasLockfile, readPackageJson } from "../init/detect";
 import { fail } from "../output";
 
 /**
@@ -67,7 +67,11 @@ export function missingExecutableMessage(executable: string, cwd: string): strin
   const root = findPackageRoot(cwd);
   if (root === null) return base;
 
-  const manager = detectPackageManager(root, readPackageJson(join(root, "package.json")).json);
+  // A workspace member has a package.json of its own but shares the root's
+  // lockfile, so the lockfile is looked for from the package upwards. With
+  // none anywhere, the package's own `packageManager` field decides.
+  const lockfileDir = findUpwards(root, hasLockfile) ?? root;
+  const manager = detectPackageManager(lockfileDir, readPackageJson(join(root, "package.json")).json);
   const install = `\`${manager} install\``;
   if (!hasNodeModulesAbove(cwd)) {
     return `${base} This project has no node_modules yet: run ${install}, then try again.`;

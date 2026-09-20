@@ -67,6 +67,17 @@ test("missingExecutableMessage counts a hoisted node_modules above a workspace m
   const message = missingExecutableMessage("next", member);
   expect(message).not.toContain("no node_modules yet");
   expect(message).toContain("If it is a dependency of this project");
+  // The lockfile is the root's, so the install command is the root's manager, not npm.
+  expect(message).toContain("`pnpm install`");
+});
+
+test("missingExecutableMessage prefers a lockfile above the member over the member's packageManager", () => {
+  const root = tempDir("spawn-workspace-field");
+  writeFileSync(join(root, "bun.lock"), "");
+  const member = join(root, "packages", "api");
+  mkdirSync(member, { recursive: true });
+  writeFileSync(join(member, "package.json"), '{"name":"api","packageManager":"npm@10.0.0"}');
+  expect(missingExecutableMessage("tsx", member)).toContain("`bun install`");
 });
 
 test("missingExecutableMessage finds the project from a subdirectory of it", () => {
