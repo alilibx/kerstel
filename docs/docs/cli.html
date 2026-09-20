@@ -128,7 +128,7 @@
 </tr>
 <tr>
 <td><code>kerstel exec -- &lt;command&gt;</code></td>
-<td>Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read. See above.</td>
+<td>Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read (under Bun, also once at startup, so <code>Bun.env</code> sees the value). See above.</td>
 </tr>
 <tr>
 <td><code>kerstel resolve kerstel://&lt;scope&gt;/&lt;KEY&gt;</code></td>

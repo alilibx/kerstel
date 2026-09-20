@@ -328,3 +328,28 @@ test("under node, an unresolvable reference that is never read costs nothing", a
   expect(stderr).toBe("");
   expect(code).toBe(0);
 });
+
+test("a reference rewritten through Bun.env is not served from the cache", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "SWAP_A" }, "value-a");
+  vault.setSecret({ scope: "global", key: "SWAP_B" }, "value-b");
+
+  const { stdout } = await runHooked("bun", sock, join(FIXTURES, "swap-bun-env.cjs"), [], {
+    SWAP: "kerstel://global/SWAP_A",
+  });
+  expect(stdout).toBe("value-a|value-b");
+});
+
+test("under bun, an unreachable daemon stops eager resolution after one warning", async () => {
+  const { stdout, stderr, code } = await runHooked(
+    "bun",
+    join(mkdtempSync(join(tmpdir(), "kerstel-nosock-")), "none.sock"),
+    join(FIXTURES, "read-bun-env.cjs"),
+    ["FIRST"],
+    { FIRST: "kerstel://global/FIRST", SECOND: "kerstel://global/SECOND", THIRD: "kerstel://global/THIRD" },
+  );
+  expect(stdout).toBe("kerstel://global/FIRST|ERROR:unreachable");
+  expect(stderr.split("Warning:").length - 1).toBe(1);
+  expect(stderr).toContain("left for process.env");
+  expect(code).toBe(0);
+});
