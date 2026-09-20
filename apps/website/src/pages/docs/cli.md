@@ -45,7 +45,7 @@ When the same key appears in several files, the highest-precedence one is stored
 | Command | What it does |
 | --- | --- |
 | `kerstel run -- <command>` | Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook. A command that is not on `PATH` gets the same message and exit `127` as with `exec`. |
-| `kerstel exec -- <command>` | Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read. See above. |
+| `kerstel exec -- <command>` | Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read (under Bun, also once at startup, so `Bun.env` sees the value). See above. |
 | `kerstel resolve kerstel://<scope>/<KEY>` | Print one resolved value. Useful in scripts. |
 
 ## Daemon and diagnostics

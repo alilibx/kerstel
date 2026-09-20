@@ -124,9 +124,9 @@ echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | ker
 | | `kerstel exec -- <cmd>` | `kerstel run -- <cmd>` |
 |---|---|---|
 | What the child's environment holds | references, untouched | resolved plaintext |
-| When values are resolved | lazily, on each `process.env` read, through the daemon | all at once, before the command starts |
+| When values are resolved | lazily, on each `process.env` read, through the daemon; under Bun also once at startup, so `Bun.env` sees the value | all at once, before the command starts |
 | What it needs | the runtime hook (Node or Bun) | nothing |
-| Audit log | one row per key the app actually reads | one row per reference in the environment |
+| Audit log | one row per key the app actually reads (under Bun, one per reference) | one row per reference in the environment |
 | Used by | your wired `package.json` scripts | IDE run configurations, other languages, anything the hook cannot reach |
 
 `exec` is what the wizard writes into your scripts; `run` is the universal fallback that always works. Both tell you when the command itself is not on `PATH`, and in a project name the install command for your package manager, since in a fresh clone the missing binary is usually a dependency you haven't installed yet. They exit `127` in that case, as a shell does.

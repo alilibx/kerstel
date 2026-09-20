@@ -10,6 +10,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Fixed
 
+- Under Bun, `Bun.env` now returns the real value of a `kerstel://` reference, as `process.env` already did. `Bun.env` is the raw environment object and cannot be wrapped, so the runtime hook resolves every reference in the environment when a Bun process starts and writes the value back; `process.env` keeps resolving lazily, so a reference assigned later still works. A reference the daemon cannot resolve is left in place with one warning naming the variable, and reading it through `process.env` fails the way it did before. Under Node nothing changes.
 - `kerstel exec` and `kerstel run` now say what to do when the command they were given is not on `PATH`: they name the executable, and in a project they name the install command for its package manager (`bun install`, `npm install`, `pnpm install`, or `yarn install`), saying outright when `node_modules` is missing altogether. They exit `127`, as a shell does. Before, a wired `npm run dev` in a fresh clone failed with Bun's own `Executable not found in $PATH` and exit `1`.
 
 ## 0.1.2 (2026-09-20)

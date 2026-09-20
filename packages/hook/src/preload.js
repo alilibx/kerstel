@@ -49,7 +49,11 @@ function install() {
     const ref = parseReference(value);
     if (!ref) return value;
 
-    if (cache.has(name)) return cache.get(name);
+    // Keyed by name and checked against the reference: a raw write through
+    // Bun.env bypasses the proxy's set trap, so a name alone could hand back
+    // the value of a reference that is no longer there.
+    const hit = cache.get(name);
+    if (hit && hit.ref === value) return hit.resolved;
 
     if (!bridge) {
       bridge = createBridge({
@@ -61,7 +65,7 @@ function install() {
     }
 
     const resolved = bridge.resolveSync(ref.scope, ref.key);
-    cache.set(name, resolved);
+    cache.set(name, { ref: value, resolved });
     return resolved;
   }
 
@@ -99,6 +103,42 @@ function install() {
       return { ...descriptor, value: resolveValue(property, descriptor.value) };
     },
   });
+
+  // Bun.env is this same raw object, and it cannot be redirected at the
+  // proxy: the property is non-configurable and non-writable, so is
+  // globalThis.Bun, and Bun's env object rejects accessor descriptors
+  // (measured on 1.4.2). The only way for `Bun.env.KEY` to be the value is
+  // for the raw object to HOLD the value, so under Bun every reference in the
+  // environment is resolved now and written back. process.env still gets the
+  // proxy, so a reference assigned later (by a dotenv library, say) resolves
+  // lazily as it does under Node. One that cannot resolve is left as it is,
+  // named once, and the lazy read through process.env throws the same error
+  // it always did: a stale reference the app never reads must not crash every
+  // Bun process at startup.
+  if (process.versions && process.versions.bun) {
+    for (const name of Object.keys(raw)) {
+      const value = raw[name];
+      if (!parseReference(value)) continue;
+      try {
+        raw[name] = resolveValue(name, value);
+      } catch (error) {
+        const advice = /doctor/.test(error.message) ? "" : " Run `kerstel doctor`.";
+        // A key the vault lacks is that key's problem; keep going. A daemon
+        // that is unreachable or not answering is everyone's problem, and
+        // each further attempt would wait out the full timeout again, so the
+        // rest stay references and resolve lazily, or fail, on the read.
+        if (error.code === "not_found") {
+          process.emitWarning(`Kerstel could not resolve ${name} for Bun.env: ${error.message}${advice}`);
+          continue;
+        }
+        process.emitWarning(
+          `Kerstel could not resolve ${name} for Bun.env: ${error.message}${advice} ` +
+            "The remaining references were left for process.env to resolve on the read.",
+        );
+        break;
+      }
+    }
+  }
 
   // Children inherit the resolution wiring, so a variable they set or build
   // themselves resolves too. Variables already present are handed over

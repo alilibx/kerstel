@@ -288,3 +288,68 @@ test("Object.keys and spread still see every variable", async () => {
   });
   expect(stdout).toBe("true:spread-value");
 });
+
+// ---------------------------------------------------------------------------
+// Bun.env. Spec 2026-09-21 §8: Bun.env is the raw env object and cannot be
+// proxied (non-configurable, rejects accessors), so under Bun the hook
+// resolves every reference eagerly at startup and writes the plaintext back.
+
+test("bun resolves a reference through Bun.env", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "BUN_ENV_KEY" }, "bun-env-value");
+
+  const { stdout, stderr } = await runHooked("bun", sock, join(FIXTURES, "read-bun-env.cjs"), ["BUN_ENV_KEY"], {
+    BUN_ENV_KEY: "kerstel://global/BUN_ENV_KEY",
+  });
+  expect(stdout).toBe("bun-env-value|bun-env-value");
+  expect(stderr).toBe("");
+});
+
+test("under bun, an unresolvable reference stays a reference, warns once, and still throws on the process.env read", async () => {
+  const { sock } = await boot();
+
+  const { stdout, stderr, code } = await runHooked("bun", sock, join(FIXTURES, "read-bun-env.cjs"), ["MISSING_BUN"], {
+    MISSING_BUN: "kerstel://global/MISSING_BUN",
+  });
+  expect(stdout).toBe("kerstel://global/MISSING_BUN|ERROR:not_found");
+  expect(stderr).toContain("MISSING_BUN");
+  expect(stderr).toContain("kerstel doctor");
+  expect(stderr.split("Warning:").length - 1).toBe(1);
+  expect(code).toBe(0);
+});
+
+test("under node, an unresolvable reference that is never read costs nothing", async () => {
+  const { sock } = await boot();
+
+  const { stdout, stderr, code } = await runHooked("node", sock, join(FIXTURES, "read-bun-env.cjs"), ["MISSING_NODE"], {
+    MISSING_NODE: "kerstel://global/MISSING_NODE",
+  });
+  expect(stdout).toBe("NOBUN");
+  expect(stderr).toBe("");
+  expect(code).toBe(0);
+});
+
+test("a reference rewritten through Bun.env is not served from the cache", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "SWAP_A" }, "value-a");
+  vault.setSecret({ scope: "global", key: "SWAP_B" }, "value-b");
+
+  const { stdout } = await runHooked("bun", sock, join(FIXTURES, "swap-bun-env.cjs"), [], {
+    SWAP: "kerstel://global/SWAP_A",
+  });
+  expect(stdout).toBe("value-a|value-b");
+});
+
+test("under bun, an unreachable daemon stops eager resolution after one warning", async () => {
+  const { stdout, stderr, code } = await runHooked(
+    "bun",
+    join(mkdtempSync(join(tmpdir(), "kerstel-nosock-")), "none.sock"),
+    join(FIXTURES, "read-bun-env.cjs"),
+    ["FIRST"],
+    { FIRST: "kerstel://global/FIRST", SECOND: "kerstel://global/SECOND", THIRD: "kerstel://global/THIRD" },
+  );
+  expect(stdout).toBe("kerstel://global/FIRST|ERROR:unreachable");
+  expect(stderr.split("Warning:").length - 1).toBe(1);
+  expect(stderr).toContain("left for process.env");
+  expect(code).toBe(0);
+});
