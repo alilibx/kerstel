@@ -34,7 +34,7 @@
 <main class="wrap">
 <header class="page-head">
 <h1>Changelog</h1>
-<p>All notable changes to Kerstel are listed here. Versions follow <a href="https://semver.org">Semantic Versioning</a>.</p>
+<p>All notable changes to Kerstel are listed here. Versions follow <a href="https://semver.org">Semantic Versioning</a>. Kerstel is pre-1.0: minor releases may change behaviour.</p>
 </header>
 <figure class="release-video">
 <video controls playsinline preload="metadata" poster="/release-0.1.0.jpg" width="1920" height="1080" aria-label="Kerstel 0.1.0 release video">
@@ -49,10 +49,14 @@
 <ol class="timeline">
 <li class="release is-unreleased" id="0.1.2">
 <span class="release-marker" aria-hidden="true"></span>
+<details class="release-details">
+<summary>
 <div class="release-head">
-<h2 class="release-version"><a href="#0.1.2">0.1.2</a></h2>
-<span class="release-date release-unreleased">Unreleased</span>
+<h2 class="release-version">0.1.2</h2>
+<span class="release-date release-unreleased">In development</span>
+<span class="release-count">9 changes</span>
 </div>
+</summary>
 <div class="release-body">
 <section class="change-group change-security"><h3 class="change-type">Security</h3><ul>
 <li>Kerstel no longer takes its own settings from the project it is protecting. Kerstel is a Bun binary, so it loads the <code>.env</code> of the directory you run it in, and Kerstel&#39;s model is that this file is committed: a repository you cloned could set <code>KERSTEL_HOME</code> to a directory inside itself, force the weaker key-file credential store, or stop the daemon ever relocking. Any <code>KERSTEL_*</code> that an env file there names is now ignored and named on stderr, whatever its value, so a setting you made yourself is ignored too while that line is in the file. The resolver daemon runs from <code>~/.kerstel</code>, so no env file reaches it. Set these in your shell or shell profile instead.</li>
@@ -61,17 +65,22 @@
 <li><code>kerstel init</code> and <code>kerstel exec</code> refuse, and <code>kerstel doctor</code> reports a problem, when <code>node_modules/.bin</code> in the project or any parent directory holds a <code>kerstel</code> or <code>ks</code>. npm and bun put that directory first on <code>PATH</code> when they run a script, so a dependency declaring such a <code>bin</code> would run in place of Kerstel for every wired script, with access to the vault. The message names the file and how to find the dependency that installs it.</li>
 <li>The OS credential-store helpers (<code>security</code> on macOS, <code>secret-tool</code> on Linux) are now run only from a fixed list of system directories, and only when the directory and the file are owned by root and writable by nobody else, never from the caller&#39;s <code>PATH</code>. <code>npm run</code> and <code>bun run</code> put <code>node_modules/.bin</code> first on <code>PATH</code>, so before this a dependency could ship a fake <code>security</code> and read the vault&#39;s data key the next time a wired script opened the vault. If the tool is missing from those directories, the error says how to install it there or switch to the key file.</li>
 </ul></section>
+<section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
+<li>The <a href="https://kerstel.dev/changelog">changelog</a> page keeps the unreleased section collapsed until you expand it, and marks the newest release as the latest.</li>
+</ul></section>
 <section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
 <li><code>kerstel init</code> no longer mistakes key material for a variable name. An unquoted multi-line PEM block is left untouched as one value and named by its key; a base64 line, or a name too long to be a variable, is reported by line number and never printed; and every other line that is not <code>KEY=value</code> now counts as plaintext remaining. Before, the last line of a pasted private key became a key name that was printed, stored, and written back, while the wizard called the file safe to commit.</li>
 <li>Kerstel never creates a new vault key while a vault sealed with one exists. Before, on Linux, a Secret Service that failed to answer for a moment (a D-Bus hiccup, an agent still starting, a session with no bus) read as &quot;no key stored&quot;, a fresh key was minted and <code>secret-tool store</code> silently replaced the real one, and every secret and backup became unreadable. Now a lookup that fails for any reason other than &quot;not found&quot; counts as &quot;a key is stored&quot;, a vault with a key check or any secrets refuses to mint at all, and <code>init</code> seals its backup with the key the vault is already open with instead of fetching it a second time.</li>
 <li><code>kerstel init</code> no longer treats backup copies such as <code>.env.bak</code>, <code>.env.orig</code>, <code>.env.swp</code>, or <code>.env.local~</code> as env files. Before, a stale value in <code>.env.bak</code> outranked the live one in <code>.env</code> and went into the vault, and a Vim swap file was rewritten in place. Each skipped copy is now named, with a reminder that it may still hold plaintext, and to rename it if it is a real env file.</li>
 </ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.1.1">
 <span class="release-marker" aria-hidden="true"></span>
 <div class="release-head">
 <h2 class="release-version"><a href="#0.1.1">0.1.1</a></h2>
+<span class="release-pill release-latest">Latest</span>
 <time class="release-date" datetime="2026-09-19">19 September 2026</time>
 </div>
 <div class="release-body">

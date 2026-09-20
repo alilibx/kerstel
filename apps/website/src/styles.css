@@ -456,6 +456,21 @@ main .release-version {
   border-radius: 999px;
   padding: 1px 10px;
 }
+.release-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.release-details > summary::-webkit-details-marker { display: none; }
+.release-details > summary .release-head { margin-bottom: 0; }
+.release-details[open] > summary .release-head { margin-bottom: 14px; }
+.release-count {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+.release-count::after { content: " ▸"; }
+.release-details[open] .release-count::after { content: " ▾"; }
+.release-details > summary:hover .release-count { color: var(--text-secondary); }
 .release-body {
   background: var(--surface);
   border: 1px solid var(--surface-border);

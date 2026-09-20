@@ -82,7 +82,16 @@ describe("renderChangelog", () => {
     expect(html).toContain('<li class="release" id="0.1.0">');
     expect(html).toContain('<h2 class="release-version"><a href="#0.1.0">0.1.0</a></h2>');
     expect(html).toContain('<time class="release-date" datetime="2026-09-19">19 September 2026</time>');
-    expect(html).toContain('<span class="release-date release-unreleased">Unreleased</span>');
+    expect(html).toContain('<span class="release-date release-unreleased">In development</span>');
+  });
+
+  test("marks the newest released version as the latest, and only that one", () => {
+    const entry = html.slice(html.indexOf('id="0.1.0"'), html.indexOf("</h2>", html.indexOf('id="0.1.0"')) + 100);
+    expect(entry).toContain('<span class="release-pill release-latest">Latest</span>');
+    expect(html.split('release-latest').length - 1).toBe(1);
+    // The unreleased entry above it is never the latest.
+    const unreleased = html.slice(html.indexOf('id="0.1.1"'), html.indexOf('id="0.1.0"'));
+    expect(unreleased).not.toContain("release-latest");
   });
 
   test("lists releases newest first, as the changelog does", () => {
@@ -103,6 +112,39 @@ describe("renderChangelog", () => {
   test("says when an unreleased version has nothing yet and points at the roadmap", () => {
     const entry = html.slice(html.indexOf('id="0.1.1"'), html.indexOf('id="0.1.0"'));
     expect(entry).toContain('<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>');
+    // Nothing to expand, so no disclosure around an empty entry.
+    expect(entry).not.toContain("<details");
+  });
+
+  test("collapses an unreleased section with changes behind a disclosure that counts them", () => {
+    const withChanges = sample.replace(
+      "## 0.1.1 (unreleased)\n",
+      ["## 0.1.1 (unreleased)", "", "### Security", "", "- One thing.", "- Another thing.", "", "### Fixed", "", "- A third.", ""].join("\n"),
+    );
+    const out = renderChangelog(withChanges, media);
+    const entry = out.slice(out.indexOf('id="0.1.1"'), out.indexOf('id="0.1.0"'));
+    expect(entry).toContain('<details class="release-details">');
+    expect(entry).toContain("<summary>");
+    expect(entry).toContain('<span class="release-count">3 changes</span>');
+    // The version is not a link inside the summary: a click there must toggle, not navigate.
+    expect(entry).toContain('<h2 class="release-version">0.1.1</h2>');
+    expect(entry).not.toContain('<a href="#0.1.1">');
+    // The notes still render inside, grouped by type.
+    expect(entry).toContain('<h3 class="change-type">Security</h3>');
+  });
+
+  test("counts a single change in the singular", () => {
+    const withOne = sample.replace(
+      "## 0.1.1 (unreleased)\n",
+      ["## 0.1.1 (unreleased)", "", "### Fixed", "", "- The only thing.", ""].join("\n"),
+    );
+    const out = renderChangelog(withOne, media);
+    expect(out).toContain('<span class="release-count">1 change</span>');
+  });
+
+  test("never collapses a released version, whatever its size", () => {
+    const entry = html.slice(html.indexOf('id="0.1.0"'));
+    expect(entry).not.toContain("<details");
   });
 
   test("renders no video when no release has media", () => {
