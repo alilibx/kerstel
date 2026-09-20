@@ -93,7 +93,7 @@ The **whole script is skipped**, with the reason shown in the wiring summary and
 | `no command` | A simple command that is only assignments, or an operator with nothing after it |
 | `nothing to wire` | Every command word is on the left-unwrapped list, as in `rm -rf dist` |
 
-A skipped script keeps its text and is never counted as wired. Re-running `init` on a script wired by an older Kerstel finishes it: `kerstel exec -- node a.js && next dev` becomes `node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev`.
+A skipped script keeps its text and is never counted as wired, with one exception. An older `init` put one prefix in front of the whole script whatever its shape, and a script the tokeniser cannot read (a redirection, a subshell, an open quote) that starts with a prefix still runs through the shell and still works: it counts as wired, `init` leaves it alone, and `uninstall` strips the leading prefix. A script refused for a command word, such as `kerstel exec -- cd x && node a.js`, is broken (`exec` cannot run `cd`) and stays refused with that reason. The rules look through an existing `kerstel ... -- ` to the word after it, so a wrapped `cd` is still a `cd`. Re-running `init` on a script wired by an older Kerstel finishes it: `kerstel exec -- node a.js && next dev` becomes `node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev`.
 
 The wiring summary line becomes `Wired 4 package.json scripts through the Kerstel launcher. Skipped 1: postbuild (changes directory).` Lifecycle and already-wired scripts are not listed there, since they are the expected shape of a `package.json`.
 

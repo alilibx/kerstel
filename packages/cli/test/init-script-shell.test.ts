@@ -119,6 +119,25 @@ test.each<[string, ScriptSkipReason]>([
   expect(wireScript(script, P)).toEqual({ kind: "skipped", reason });
 });
 
+test("a script an older init wrapped whole is wired, whatever its shape", () => {
+  const old = "kerstel exec -- node build.js > out.log";
+  expect(wireScript(old, P)).toEqual({ kind: "wired", text: old, changed: false });
+  expect(scriptState(old, P)).toEqual({ state: "wired" });
+  expect(unwireScript(old, [P])).toBe("node build.js > out.log");
+  expect(unwireScript("kerstel exec -- (cd x && node a.js)", [P])).toBe("(cd x && node a.js)");
+});
+
+test("the rules see through an existing prefix to the real command", () => {
+  expect(wireScript("kerstel exec -- cd packages/x && node run.js", P)).toEqual({
+    kind: "skipped",
+    reason: "changes-directory",
+  });
+  expect(wireScript("kerstel exec -- export A=1 && node run.js", P)).toEqual({ kind: "skipped", reason: "shell-control" });
+  expect(scriptState("kerstel exec -- cd x && node run.js", P)).toEqual({ state: "skipped", reason: "changes-directory" });
+  // A prefixed rm is wrapped already; it is not the reason to call the script unwired.
+  expect(scriptState("kerstel exec -- rm -rf dist && kerstel exec -- next build", P)).toEqual({ state: "wired" });
+});
+
 test("a brace inside a word is not shell control", () => {
   expect(wired("node a.js --glob={a,b}")).toBe("kerstel exec -- node a.js --glob={a,b}");
 });
@@ -158,8 +177,10 @@ test("unwireScript strips any of several prefixes", () => {
   expect(unwireScript("old -- node a.js && new -- next dev", ["old -- ", "new -- "])).toBe("node a.js && next dev");
 });
 
-test("unwireScript returns an unparseable script unchanged", () => {
-  expect(unwireScript("kerstel exec -- node a.js > out.log", [P])).toBe("kerstel exec -- node a.js > out.log");
+test("unwireScript strips only a whole-script prefix from a script it cannot read", () => {
+  expect(unwireScript("node a.js > out.log", [P])).toBe("node a.js > out.log");
+  expect(unwireScript("kerstel exec -- node a.js > out.log", [P])).toBe("node a.js > out.log");
+  expect(unwireScript("kerstel exec -- cd x && node a.js", [P])).toBe("cd x && node a.js");
 });
 
 // --- analysis -------------------------------------------------------------
@@ -169,8 +190,8 @@ test("analyseScript reports the offsets of each command word", () => {
   expect(analysed).toEqual({
     kind: "ok",
     commands: [
-      { commandStart: 4, commandWord: "node" },
-      { commandStart: 17, commandWord: "next" },
+      { commandStart: 4, commandWord: "node", effectiveWord: "node" },
+      { commandStart: 17, commandWord: "next", effectiveWord: "next" },
     ],
   });
 });

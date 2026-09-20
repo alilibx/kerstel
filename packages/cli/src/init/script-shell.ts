@@ -32,11 +32,22 @@ export interface SimpleCommand {
   commandStart: number;
   /** The command word with its quotes and escapes removed. */
   commandWord: string;
+  /**
+   * The word the rules are applied to. For a command that is already a
+   * `kerstel ... -- <cmd>` call this is `<cmd>`, so a wrapped `cd` is still
+   * a `cd`; for anything else it is the command word itself.
+   */
+  effectiveWord: string;
 }
 
 export type ScriptAnalysis =
   | { kind: "ok"; commands: SimpleCommand[] }
-  | { kind: "skipped"; reason: ScriptSkipReason };
+  /**
+   * `shape` means the tokeniser could not read the script (a redirection, a
+   * subshell, a quote left open); `command` means it read it and a command
+   * word is one the rules refuse (`cd`, `export`).
+   */
+  | { kind: "skipped"; reason: ScriptSkipReason; at: "shape" | "command" };
 
 /**
  * Command words that never load a JavaScript runtime, so wrapping them would
@@ -173,23 +184,30 @@ export function analyseScript(script: string): ScriptAnalysis {
     }
     const command = words[index];
     if (!command || command.kind !== "word") return "no-command";
-    if (CHANGES_DIRECTORY.has(command.text)) return "changes-directory";
-    if (SHELL_CONTROL.has(command.text)) return "shell-control";
-    commands.push({ commandStart: command.start, commandWord: command.text });
+    let effective = command.text;
+    if (command.text === "kerstel") {
+      const rest = words.slice(index + 1);
+      const separator = rest.findIndex((word) => word.kind === "word" && word.text === "--");
+      const wrapped = separator === -1 ? undefined : rest[separator + 1];
+      if (wrapped && wrapped.kind === "word") effective = wrapped.text;
+    }
+    if (CHANGES_DIRECTORY.has(effective)) return "changes-directory";
+    if (SHELL_CONTROL.has(effective)) return "shell-control";
+    commands.push({ commandStart: command.start, commandWord: command.text, effectiveWord: effective });
     return null;
   };
 
   for (const token of tokens) {
-    if (token.kind === "skip") return { kind: "skipped", reason: token.reason };
+    if (token.kind === "skip") return { kind: "skipped", reason: token.reason, at: "shape" };
     if (token.kind === "operator") {
       const reason = flush();
-      if (reason) return { kind: "skipped", reason };
+      if (reason) return { kind: "skipped", reason, at: "command" };
       continue;
     }
     current.push(token);
   }
   const reason = flush();
-  if (reason) return { kind: "skipped", reason };
+  if (reason) return { kind: "skipped", reason, at: "command" };
   return { kind: "ok", commands };
 }
 
@@ -208,11 +226,26 @@ export type ScriptWiring =
  * is left as it is, so a half-wired script is finished and a wired one is
  * returned unchanged.
  */
+/**
+ * An older `init` put one prefix in front of the whole script, whatever its
+ * shape. Such a script may be one this tokeniser cannot read (a redirection,
+ * a subshell); the shell still runs it and it still works, so it is reported
+ * and unwired as wired. A script refused for a command word (`kerstel exec --
+ * cd x && ...`) is a different case: `exec` cannot run `cd`, so that script
+ * is broken and stays refused.
+ */
+function wrappedWhole(script: string, prefixes: readonly string[]): string | null {
+  return prefixes.find((prefix) => script.startsWith(prefix)) ?? null;
+}
+
 export function wireScript(script: string, prefix: string): ScriptWiring {
   const analysed = analyseScript(script);
-  if (analysed.kind === "skipped") return analysed;
+  if (analysed.kind === "skipped") {
+    if (analysed.at === "shape" && wrappedWhole(script, [prefix])) return { kind: "wired", text: script, changed: false };
+    return { kind: "skipped", reason: analysed.reason };
+  }
 
-  const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.commandWord));
+  const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.effectiveWord));
   if (wrappable.length === 0) return { kind: "skipped", reason: "nothing-to-wire" };
 
   const insertAt = wrappable.filter((command) => !isWiredAt(script, command, [prefix])).map((c) => c.commandStart);
@@ -230,8 +263,11 @@ export type ScriptState =
 /** What `doctor` says about one script. Spec §6, first matching row wins. */
 export function scriptState(script: string, prefix: string): ScriptState {
   const analysed = analyseScript(script);
-  if (analysed.kind === "skipped") return { state: "skipped", reason: analysed.reason };
-  const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.commandWord));
+  if (analysed.kind === "skipped") {
+    if (analysed.at === "shape" && wrappedWhole(script, [prefix])) return { state: "wired" };
+    return { state: "skipped", reason: analysed.reason };
+  }
+  const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.effectiveWord));
   if (wrappable.length === 0) return { state: "skipped", reason: "nothing-to-wire" };
   const wired = wrappable.filter((command) => isWiredAt(script, command, [prefix])).length;
   if (wired === 0) return { state: "not-wired" };
@@ -241,12 +277,16 @@ export function scriptState(script: string, prefix: string): ScriptState {
 
 /**
  * The script with every occurrence of any of `prefixes` removed from in front
- * of a command word. A script the tokeniser refuses is returned unchanged,
- * since nothing can be said about where its commands start.
+ * of a command word. A script the tokeniser refuses has nothing known about
+ * where its commands start, so only a prefix on the whole script (the old
+ * form) is stripped from it.
  */
 export function unwireScript(script: string, prefixes: readonly string[]): string {
   const analysed = analyseScript(script);
-  if (analysed.kind === "skipped") return script;
+  if (analysed.kind === "skipped") {
+    const whole = wrappedWhole(script, prefixes);
+    return whole ? script.slice(whole.length) : script;
+  }
 
   const removals: Array<{ start: number; length: number }> = [];
   for (const command of analysed.commands) {
