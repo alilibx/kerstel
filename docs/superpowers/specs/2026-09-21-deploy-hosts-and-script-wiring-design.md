@@ -52,11 +52,11 @@ The launcher takes everything after the first `--` as the command.
 2. **With the binary,** it spawns `kerstel exec -- <command>` with inherited stdio, forwards `SIGINT`, `SIGTERM`, and `SIGHUP` to the child, and exits with the child's exit code, or `128` plus the signal number when the child died of a signal. Everything `exec` does today stays where it is: the shadow tripwire, the missing-command message and exit `127`, the hook install, the daemon start, `--preload` for a `bun` command.
 3. **Without the binary,** it writes one line to stderr, `kerstel: not installed here, running without it: next build`, and spawns the command as written with the same stdio and signal handling. A command that cannot start prints `kerstel: "next" was not found on PATH.` and exits `127`, or `126` when it exists but cannot run, matching `exec`. The line always prints, on a deploy host and on a teammate's fresh clone alike: on a host it is one line of noise per script, on a clone it is the only hint that the app is about to read literal references.
 
-The command runs through `child_process.spawn` with no shell, so arguments reach the child byte for byte. Under `bun run`, Bun runs `node .kerstel/exec.cjs` with the system `node`, or with itself when `node` is absent, and either way step 2 hands the command to `kerstel exec`, which adds `--preload` for Bun.
+On macOS and Linux the command runs through `child_process.spawn` with no shell, so arguments reach the child byte for byte. Under `bun run`, Bun runs `node .kerstel/exec.cjs` with the system `node`, or with itself when `node` is absent, and either way step 2 hands the command to `kerstel exec`, which adds `--preload` for Bun.
 
 ### 4.3 Windows
 
-The launcher looks for `kerstel.exe` and honours `PATHEXT` for the command it runs without the binary. Windows binaries are a Later roadmap item, so until they ship every Windows run takes step 3.
+The launcher looks for `kerstel.exe`, and resolves the command it runs without the binary through `PATH` and `PATHEXT`. On Windows the executables a package installs, `next`, `vite`, and every other `node_modules/.bin` entry, are `.cmd` shims, and Node refuses to spawn a `.cmd` or `.bat` file without a shell. When the resolved file ends in `.cmd` or `.bat`, the launcher runs it through `cmd.exe /d /s /c` with the command line built the way npm's own `@npmcli/run-script` builds it: each argument wrapped in double quotes with inner quotes doubled, and `cmd.exe`'s metacharacters (`&`, `|`, `<`, `>`, `^`, `%`, `!`, and parentheses) escaped with `^`. Any other resolved file (`.exe`, a `#!` script under Git Bash is not a case here) is spawned directly, as on the other platforms. Windows binaries are a Later roadmap item, so until they ship every Windows run takes step 3, and a Windows teammate on a wired repo depends on this path.
 
 ## 5. Wiring scripts
 
@@ -78,9 +78,9 @@ Some command words never run JavaScript and are **left unwrapped** so a `rm -rf 
 | --- | --- |
 | `echo`, `printf`, `true`, `false`, `exit`, `test`, `[`, `sleep` | Shell builtins and no-ops |
 | `rm`, `rmdir`, `mkdir`, `cp`, `mv`, `touch`, `ls`, `cat`, `chmod`, `ln`, `find`, `tar`, `gzip` | File utilities |
-| `git`, `docker`, `make`, `curl`, `wget` | Never load the hook |
+| `git`, `docker`, `curl`, `wget` | Never load the hook |
 
-Anything else is wrapped, including `env`, `sh`, `bash`, `npx`, `bunx`, `npm`, `pnpm`, `yarn`, and `bun`: the hook reaches every Node and Bun descendant through `NODE_OPTIONS`, so `sh -c "node x.js"` under the launcher is hooked too. A command word that is `kerstel`, or `node` followed by `.kerstel/exec.cjs`, is already wired.
+Anything else is wrapped, including `make`, `env`, `sh`, `bash`, `npx`, `bunx`, `npm`, `pnpm`, `yarn`, and `bun`: the hook reaches every Node and Bun descendant through `NODE_OPTIONS`, so `sh -c "node x.js"` under the launcher is hooked too. A command word that is `kerstel`, or `node` followed by `.kerstel/exec.cjs`, is already wired.
 
 The **whole script is skipped**, with the reason shown in the wiring summary and in `doctor`, when it contains any of:
 
@@ -149,7 +149,7 @@ The [monorepo spec](2026-09-19-monorepo-and-checkouts-design.md) applies wiring 
 ## 11. Testing
 
 - **Tokeniser** (`init-wiring.test.ts`): every operator; quoted operators that must not split (`echo "a && b"`); escaped spaces; leading assignments before and after wrapping; each left-unwrapped word; each skip reason with the exact text; a script already in the legacy form finished into the new form; an idempotent second run; byte-identical output outside the inserted prefixes, including tabs and `\r\n`.
-- **Launcher** (`launcher.test.ts`, new): with a fake `kerstel` on `PATH` it spawns `exec` with the command intact and forwards the exit code and a signal death; with `kerstel` only inside a `node_modules/.bin` on `PATH` it treats the binary as absent; without the binary it prints the one line and runs the command; a missing command exits `127`; the marker line and format version are what `doctor` and `uninstall` read; under `bun run` with the system `node` and with `node` absent.
+- **Launcher** (`launcher.test.ts`, new): with a fake `kerstel` on `PATH` it spawns `exec` with the command intact and forwards the exit code and a signal death; with `kerstel` only inside a `node_modules/.bin` on `PATH` it treats the binary as absent; without the binary it prints the one line and runs the command; a missing command exits `127`; the marker line and format version are what `doctor` and `uninstall` read; under `bun run` with the system `node` and with `node` absent; the Windows command line for a `.cmd` shim with an argument containing a space, a double quote, `&`, and `%`, checked as a string on every platform and end to end on the Windows CI runner.
 - **`init`** (`init.test.ts`): writes the launcher, rewrites an older format and a hand-edited body, leaves a matching one untouched and unlisted, warns about a `.gitignore` that hides it, and the self-check passes through the file just written.
 - **`doctor`** (`doctor-checks.test.ts`, `init-status.test.ts`): each state in §6 including the two precedence examples, the `Launcher` row's five outcomes, and no `Launcher` row in a project with nothing wired.
 - **`uninstall`** (`uninstall-unwire.test.ts`, `uninstall-plan.test.ts`): both prefixes stripped per command; the launcher deleted with an empty `.kerstel/` removed; a foreign file left and named.
