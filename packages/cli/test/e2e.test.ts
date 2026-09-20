@@ -449,3 +449,40 @@ test("the binary uninstalls: the project gets its values back and Kerstel is gon
   expect(existsSync(home)).toBe(false);
   expect(existsSync(copy)).toBe(false);
 });
+
+test("a wired compound script runs every command hooked, with its leading assignment intact", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-compound-"));
+  expect((await kerstel(["set", "global/COMPOUND_KEY", "--value", "sk-compound"])).code).toBe(0);
+
+  // What `init` writes for `MARK=one node a.cjs && node b.cjs`: one wrapper
+  // per command, each after that command's own assignments. The reference sits
+  // in the project's .env, exactly as it would in a committed file.
+  const project = mkdtempSync(join(tmpdir(), "kerstel-compound-"));
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify(
+      { name: "compound", scripts: { both: "MARK=one kerstel exec -- node a.cjs && kerstel exec -- node b.cjs" } },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(join(project, ".env"), "COMPOUND_KEY=kerstel://global/COMPOUND_KEY\n");
+  writeFileSync(join(project, "a.cjs"), 'process.stdout.write(`${process.env.MARK}:${process.env.COMPOUND_KEY}\\n`);');
+  writeFileSync(join(project, "b.cjs"), 'process.stdout.write(`${process.env.MARK}:${process.env.COMPOUND_KEY}\\n`);');
+
+  // `npm run` finds `kerstel` on PATH, as it does on a developer's machine.
+  const proc = Bun.spawn(["npm", "run", "--silent", "both"], {
+    cwd: project,
+    env: env({ PATH: `${dirname(BINARY)}:${process.env.PATH ?? ""}` }),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) console.error(stderr);
+  expect(code).toBe(0);
+  expect(stdout).toBe("one:sk-compound\nundefined:sk-compound\n");
+});

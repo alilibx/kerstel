@@ -91,10 +91,11 @@ The **whole script is skipped**, with the reason shown in the wiring summary and
 | `redirection` | `<`, `>`, `>>`, `2>`, `&>`, or a lone `&` |
 | `unbalanced quote` | A quote with no closing partner |
 | `no command` | A simple command that is only assignments, or an operator with nothing after it |
+| `nothing to wire` | Every command word is on the left-unwrapped list, as in `rm -rf dist` |
 
 A skipped script keeps its text and is never counted as wired. Re-running `init` on a script wired by an older Kerstel finishes it: `kerstel exec -- node a.js && next dev` becomes `node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev`.
 
-The wiring summary line becomes `Wired 4 package.json scripts through the Kerstel launcher; skipped 1 (postbuild: changes directory).`, and the skip list names lifecycle scripts as today.
+The wiring summary line becomes `Wired 4 package.json scripts through the Kerstel launcher. Skipped 1: postbuild (changes directory).` Lifecycle and already-wired scripts are not listed there, since they are the expected shape of a `package.json`.
 
 ### 5.4 Lifecycle scripts
 
@@ -114,11 +115,11 @@ The wiring summary line becomes `Wired 4 package.json scripts through the Kerste
 | wired (old form) | At least one command carries `kerstel exec -- ` and none carries the launcher prefix |
 | partly wired | Some wrappable commands carry a prefix and some carry none |
 | not wired | No prefix anywhere |
-| skipped: `<reason>` | The wirer skips the script, with the reason from §5.3 |
+| skipped: `<reason>` | The wirer skips the script, with the reason from §5.3, including `nothing to wire` |
 
 The first matching row from the top of this order decides: skipped, then not wired, then partly wired, then wired (old form), then wired. So `kerstel exec -- node a.js && next dev` is `partly wired`, because `next dev` carries no prefix, and `kerstel exec -- node a.js && kerstel exec -- next dev` is `wired (old form)`.
 
-The `Scripts` row reads `4 of 5 go through Kerstel` and passes when every wrappable script is wired in the current form. Otherwise it warns with `Fix: kerstel init` and lists the exceptions on the lines under it, one per script: `dev: partly wired`, `build: wired (old form)`, `postbuild: skipped, changes directory`. Skipped scripts do not count against the pass.
+The `Scripts` row reads `4 of 5 go through Kerstel` and passes when every wrappable script is wired in the current form. Otherwise it warns with `Fix: kerstel init`. Exceptions are named in the same detail, separated by semicolons: `2 of 3 go through Kerstel; partly wired: dev; skipped: postbuild (changes directory)`. Skipped scripts do not count against the pass, and are named even when it passes.
 
 A new `Launcher` row in the project group, judged by comparing the file with the text this Kerstel generates: `.kerstel/exec.cjs is current` passes; `.kerstel/exec.cjs is missing` is a problem with `Fix: kerstel init`; `.kerstel/exec.cjs is format 1, current is 2` (the marker names an older format) and `.kerstel/exec.cjs differs from what kerstel init writes` (the marker is current, the body is not) both warn with the same fix; `.kerstel/exec.cjs is not Kerstel's (no marker line)` warns and names the file. The row appears only when at least one script is wired in either form.
 

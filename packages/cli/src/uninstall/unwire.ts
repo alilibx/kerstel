@@ -1,3 +1,4 @@
+import { unwireScript } from "../init/script-shell";
 import { EXEC_PREFIX, GITIGNORE_NOTE, serializePackageJson } from "../init/wiring";
 
 /**
@@ -13,8 +14,10 @@ export function unwirePackageJson(source: string): { changed: boolean; contents:
   if (scripts && typeof scripts === "object" && !Array.isArray(scripts)) {
     const table = scripts as Record<string, unknown>;
     for (const [name, value] of Object.entries(table)) {
-      if (typeof value !== "string" || !value.startsWith(EXEC_PREFIX)) continue;
-      table[name] = value.slice(EXEC_PREFIX.length);
+      if (typeof value !== "string") continue;
+      const after = unwireScript(value, [EXEC_PREFIX]);
+      if (after === value) continue;
+      table[name] = after;
       unwrapped.push(name);
     }
   }

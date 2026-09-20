@@ -19,7 +19,7 @@ import {
   type Prompter,
 } from "../init/prompts";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
-import { GITIGNORE_NOTE, renderDiff, wirePackageJson } from "../init/wiring";
+import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
 import { vaultPath } from "../paths";
@@ -867,9 +867,19 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
 
     if (packageWiring.changed) {
       const n = packageWiring.rewrites.length;
+      // Lifecycle scripts and already-wired ones are the expected shape of a
+      // package.json; a script the wirer REFUSED is worth a word, since the
+      // user may expect it to be hooked.
+      const refused = packageWiring.skipped.filter(
+        (skip) => skip.reason !== "lifecycle" && skip.reason !== "already-wired" && skip.reason !== "not-a-string",
+      );
+      const refusedNote =
+        refused.length === 0
+          ? ""
+          : ` Skipped ${refused.length}: ${refused.map((skip) => `${skip.name} (${skipReasonText(skip.reason)})`).join(", ")}.`;
       await withSpinner(
         "Wiring package.json",
-        `Wired ${n} package.json script${n === 1 ? "" : "s"} through \`kerstel exec\`.`,
+        `Wired ${n} package.json script${n === 1 ? "" : "s"} through \`kerstel exec\`.${refusedNote}`,
         async () => writeFileSync(detected.packageJsonPath, packageWiring.contents),
       );
     }
