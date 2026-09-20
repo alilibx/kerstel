@@ -50,15 +50,17 @@ export type ScriptAnalysis =
   | { kind: "skipped"; reason: ScriptSkipReason; at: "shape" | "command" };
 
 /**
- * Command words that never load a JavaScript runtime, so wrapping them would
- * start the daemon for nothing. Everything else is wrapped, including `sh`,
- * `env`, `make`, and the package managers, because the hook reaches every
- * Node and Bun descendant through NODE_OPTIONS.
+ * Command words that never load a JavaScript runtime and cannot start a
+ * process that does, so wrapping them would start the daemon for nothing.
+ * `find` (`-exec node ...`) and `git` (hooks) can, so they are not here.
+ * Everything else is wrapped, including `sh`, `env`, `make`, and the package
+ * managers, because the hook reaches every Node and Bun descendant through
+ * NODE_OPTIONS.
  */
 const LEFT_UNWRAPPED = new Set([
   "echo", "printf", "true", "false", "exit", "test", "[", "sleep",
-  "rm", "rmdir", "mkdir", "cp", "mv", "touch", "ls", "cat", "chmod", "ln", "find", "tar", "gzip",
-  "git", "docker", "curl", "wget",
+  "rm", "rmdir", "mkdir", "cp", "mv", "touch", "ls", "cat", "chmod", "ln", "tar", "gzip",
+  "docker", "curl", "wget",
 ]);
 
 /** A `cd` breaks a launcher path relative to the package root. */
@@ -68,6 +70,9 @@ const CHANGES_DIRECTORY = new Set(["cd", "pushd", "popd"]);
 const SHELL_CONTROL = new Set([
   "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "in",
   "export", "set", "unset", "source", ".", "eval", "exec", "{", "}",
+  // `exec` runs its first argument, not a shell, so a builtin or keyword in
+  // command position would be looked up on PATH and fail with 127.
+  "!", "command", "builtin", "time", "[[",
 ]);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;

@@ -52,14 +52,14 @@ test("everything outside the inserted prefixes is byte-identical", () => {
 
 test("words that never run JavaScript are left unwrapped", () => {
   expect(wired("rm -rf dist && next build")).toBe("rm -rf dist && kerstel exec -- next build");
-  expect(wireScript("echo start; git rev-parse HEAD; docker build .", P)).toEqual({
+  expect(wireScript("echo start; rm -rf dist; docker build .", P)).toEqual({
     kind: "skipped",
     reason: "nothing-to-wire",
   });
 });
 
 test("dispatchers that can run JavaScript are wrapped", () => {
-  for (const word of ["make", "env", "sh", "bash", "npx", "bunx", "npm", "pnpm", "yarn", "bun"]) {
+  for (const word of ["make", "env", "sh", "bash", "npx", "bunx", "npm", "pnpm", "yarn", "bun", "find", "git"]) {
     expect(wired(`${word} build`)).toBe(`kerstel exec -- ${word} build`);
   }
 });
@@ -100,6 +100,9 @@ test.each<[string, ScriptSkipReason]>([
   ["eval node a.js", "shell-control"],
   ["exec node a.js", "shell-control"],
   ["{ node a.js; }", "shell-control"],
+  ["! node test.js", "shell-control"],
+  ["command node app.js", "shell-control"],
+  ["time node app.js", "shell-control"],
   ["node a.js\nnode b.js", "shell-control"],
   ["node a.js > out.log", "redirection"],
   ["node a.js 2>&1", "redirection"],

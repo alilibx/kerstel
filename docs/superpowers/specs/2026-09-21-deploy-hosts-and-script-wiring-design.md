@@ -77,8 +77,10 @@ Some command words never run JavaScript and are **left unwrapped** so a `rm -rf 
 | Left unwrapped | Why |
 | --- | --- |
 | `echo`, `printf`, `true`, `false`, `exit`, `test`, `[`, `sleep` | Shell builtins and no-ops |
-| `rm`, `rmdir`, `mkdir`, `cp`, `mv`, `touch`, `ls`, `cat`, `chmod`, `ln`, `find`, `tar`, `gzip` | File utilities |
-| `git`, `docker`, `curl`, `wget` | Never load the hook |
+| `rm`, `rmdir`, `mkdir`, `cp`, `mv`, `touch`, `ls`, `cat`, `chmod`, `ln`, `tar`, `gzip` | File utilities that start no process |
+| `docker`, `curl`, `wget` | Never load the hook |
+
+`find` and `git` are not on the list: `find -exec node ...` and a git hook can start a Node process, which would then run unhooked.
 
 Anything else is wrapped, including `make`, `env`, `sh`, `bash`, `npx`, `bunx`, `npm`, `pnpm`, `yarn`, and `bun`: the hook reaches every Node and Bun descendant through `NODE_OPTIONS`, so `sh -c "node x.js"` under the launcher is hooked too. A command word that is `kerstel`, or `node` followed by `.kerstel/exec.cjs`, is already wired.
 
@@ -87,7 +89,7 @@ The **whole script is skipped**, with the reason shown in the wiring summary and
 | Reason | Trigger |
 | --- | --- |
 | `changes directory` | A command word `cd`, `pushd`, or `popd`. The launcher path is relative to the package root, and npm runs the script there; after a `cd` it would not be found. |
-| `shell control` | `(`, `)`, `{`, `}`, backticks, `$(`, or a command word `if`, `for`, `while`, `until`, `case`, `export`, `set`, `unset`, `source`, `.`, `eval`, `exec` |
+| `shell control` | `(`, `)`, `{`, `}`, backticks, `$(`, a newline, or a command word `if`, `for`, `while`, `until`, `case`, `export`, `set`, `unset`, `source`, `.`, `eval`, `exec`, `!`, `command`, `builtin`, `time`, `[[`. `exec` runs its first argument without a shell, so a builtin in command position would be looked up on `PATH` and fail. |
 | `redirection` | `<`, `>`, `>>`, `2>`, `&>`, or a lone `&` |
 | `unbalanced quote` | A quote with no closing partner |
 | `no command` | A simple command that is only assignments, or an operator with nothing after it |
@@ -95,7 +97,7 @@ The **whole script is skipped**, with the reason shown in the wiring summary and
 
 A skipped script keeps its text and is never counted as wired, with one exception. An older `init` put one prefix in front of the whole script whatever its shape, and a script the tokeniser cannot read (a redirection, a subshell, an open quote) that starts with a prefix still runs through the shell and still works: it counts as wired, `init` leaves it alone, and `uninstall` strips the leading prefix. A script refused for a command word, such as `kerstel exec -- cd x && node a.js`, is broken (`exec` cannot run `cd`) and stays refused with that reason. The rules look through an existing `kerstel ... -- ` to the word after it, so a wrapped `cd` is still a `cd`. Re-running `init` on a script wired by an older Kerstel finishes it: `kerstel exec -- node a.js && next dev` becomes `node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev`.
 
-The wiring summary line becomes `Wired 4 package.json scripts through the Kerstel launcher. Skipped 1: postbuild (changes directory).` Lifecycle and already-wired scripts are not listed there, since they are the expected shape of a `package.json`.
+Each refused script is named on its own line before the overview, whether or not anything else changes: `!  Script "postbuild" is not wired through Kerstel: changes directory.` Lifecycle and already-wired scripts are not listed, since they are the expected shape of a `package.json`. When a script was refused, the closing lines say `the scripts Kerstel can wire are wired` rather than `your scripts are wired`.
 
 ### 5.4 Lifecycle scripts
 
