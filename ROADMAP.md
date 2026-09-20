@@ -35,8 +35,8 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 - [ ] Approval prompt the first time an unknown process asks for a key ([#14](https://github.com/alilibx/kerstel/issues/14))
 - [ ] Allowlists ([#15](https://github.com/alilibx/kerstel/issues/15))
-- [ ] Touch ID or polkit for sensitive actions ([#16](https://github.com/alilibx/kerstel/issues/16))
-- [ ] Bind the vault data key to user presence through the Secure Enclave or TPM, so bypassing the daemon yields nothing ([#54](https://github.com/alilibx/kerstel/issues/54))
+- [ ] Proof of user presence for sensitive actions: Touch ID with a password fallback on macOS, polkit or a fingerprint on Linux, and reveals denied by default where no prompt is possible ([#16](https://github.com/alilibx/kerstel/issues/16))
+- [ ] Bind the vault data key to user presence through the Secure Enclave on macOS and the TPM on Windows, so bypassing the daemon there yields nothing ([#54](https://github.com/alilibx/kerstel/issues/54))
 
 ## Later: sync and teams
 
