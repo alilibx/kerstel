@@ -61,7 +61,7 @@ ks --version                                # Print the version, and whether it'
 curl -fsSL https://kerstel.dev/install.sh | bash
 ```
 
-macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Run `ks update` to upgrade in place, or set `KERSTEL_VERSION=0.1.0` when installing to pin a version. `ks --version` and `ks doctor` tell you when a newer release exists.
+macOS and Linux, x64 and arm64. The installer verifies the release checksum and puts the binary at `~/.local/bin/kerstel`, without `sudo`. Run `ks update` to upgrade in place: it shows the download's progress, verifies the checksum, and only then swaps the binary. Set `KERSTEL_VERSION=0.1.0` when installing to pin a version. `ks --version` and `ks doctor` tell you when a newer release exists.
 
 The installer also adds `ks`, a shortcut for `kerstel`. If something else on your `PATH` is already called `ks`, it leaves that alone and tells you to use `kerstel` instead. Everything below works the same either way — `ks` and `kerstel` are the same binary.
 
