@@ -39,7 +39,7 @@ export function detectWorkspace(dir: string): Workspace | null;
 
 ## 4. `init` at a workspace root
 
-1. **Refuse `--scope`.** A scope names one package. Exit `2` with `--scope names one package. Run kerstel init --scope <name> inside that package.`
+1. **`--scope` names the root package only.** A scope names one package, and at a workspace root the package in this folder is the root itself. When the root is a selected package, `--scope <name>` sets its scope exactly as it does for a lone project; members keep their derived scopes, and a member gets its own name by running `init --scope <name>` inside it. When the root has no env files, or is deselected in the pick step, exit `2` with `--scope names the package in this folder, and the root is not being set up. Run kerstel init --scope <name> inside the package you want to rename.` This is what makes a scope collision on the root package (§6.2) recoverable: the fix it names is run in the same place.
 2. **Pick.** After the banner, one step line: `Workspace: 4 packages with .env files`. Then a multiselect, every package preselected, labelled by its path relative to the root (`(root)` for the root itself) with a hint naming its env files and its `package.json` name. `--yes` and `--non-interactive` take all. An empty selection ends the run with `Nothing selected. Nothing was changed.` and exit `0`. An empty `packages` list ends it with `No package in this workspace has a .env file.` and exit `1`, as a lone project without env files does today.
 3. **Detect and parse each selected package** through the existing per-package pipeline: `detectProject`, `loadEnvFiles`, `collectKeys`, the unreadable and unsupported warnings, each prefixed with the package's relative path.
 4. **Teammate flow, per package,** for references whose values the vault lacks. Prompts name the package. `--from-stdin` JSON may nest by package path, `{"apps/web": {"KEY": "value"}}`, or stay flat, in which case a key applies to every package that lacks it.
@@ -86,7 +86,7 @@ Before registering, `init` looks at the rows that already hold the derived scope
 | None | Register. |
 | One whose `root_path` is this folder | Re-run on the same checkout. Register, which updates `package_name`. |
 | One whose package is this package | A second checkout. Register a new row. |
-| Otherwise | A different package with the same slug. Exit `2`: `The scope "api" belongs to @acme/api at /Users/ali/src/acme/apps/api. Re-run with --scope <name> to give this package its own.` |
+| Otherwise | A different package with the same slug. Exit `2`: `The scope "api" belongs to @acme/api at /Users/ali/src/acme/apps/api. Re-run with --scope <name> to give this package its own.` In a workspace run the message names the colliding member and says to run `init --scope <name>` inside it; when the colliding package is the root itself, it says to re-run here at the root with `--scope <name>`, which §4 step 1 accepts. |
 
 "The same package" means the row's `package_name` equals this package's `package.json` name. A row with a null `package_name`, written before this version, is compared by reading the `package.json` at its `root_path`; when that folder is gone the row counts as the same package only if this package has no name and the two basenames match, which is the old rule's best guess. A package with no name in either place matches by basename.
 
@@ -114,7 +114,7 @@ The second checkout has either references, plaintext, or a mix.
 ## 8. Testing
 
 - **Detection:** fixtures for the `workspaces` array, the object form, `pnpm-workspace.yaml` with plain and quoted entries, a negation glob, a member under `node_modules` that must be skipped, a member without env files that must be excluded, an unparsable YAML that must warn, and a root with env files of its own.
-- **`init` at a root** with the scripted prompter: all packages, a subset, an empty selection, `--yes`, `--dry-run` writing nothing, `--scope` refused, a shared key suggested `global`, a shared key with differing values kept per package, a failure in the second package leaving the first applied, and the nested `--from-stdin` form.
+- **`init` at a root** with the scripted prompter: all packages, a subset, an empty selection, `--yes`, `--dry-run` writing nothing, `--scope` renaming the root package when it is selected and refused when it is not, a root-package scope collision recovered by re-running at the root with `--scope`, a shared key suggested `global`, a shared key with differing values kept per package, a failure in the second package leaving the first applied, and the nested `--from-stdin` form.
 - **Migration:** a version-2 vault upgrades with every `id`, `name`, `root_path`, and `created_at` intact and `package_name` null; `secrets.project_id` still joins.
 - **Registration:** each row of the table in §6.2, including the null `package_name` cases.
 - **Second checkout:** equal values become references without a store, a differing value with each answer, references already in the vault.
