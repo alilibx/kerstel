@@ -146,23 +146,52 @@ function renderVideo(release: Release, media: ReleaseMedia): string {
   ].join("\n");
 }
 
-function renderRelease(release: Release): string {
+/** Counts the changes in a release: one per list item, across every group. */
+function countChanges(release: Release): number {
+  let count = 0;
+  for (const token of release.tokens) {
+    if (token.type === "list") count += (token as Tokens.List).items.length;
+  }
+  return count;
+}
+
+function renderRelease(release: Release, latest: boolean): string {
   const id = escapeHtml(release.version);
+  const empty = release.tokens.every((t) => t.type === "space");
   const when = release.date
     ? `<time class="release-date" datetime="${release.date}">${formatReleaseDate(release.date)}</time>`
-    : '<span class="release-date release-unreleased">Unreleased</span>';
+    : '<span class="release-date release-unreleased">In development</span>';
+  const body = `<div class="release-body">\n${renderBody(release)}\n</div>`;
+
+  // An unreleased section with content collapses behind a disclosure, so the
+  // draft never outranks the release people can install. The heading stays
+  // outside the <summary>: a summary exposes as a button, which would strip
+  // the version from the heading outline.
+  let bodyHtml = body;
+  if (!release.date && !empty) {
+    const changes = countChanges(release);
+    const label = changes > 0 ? `${changes} ${changes === 1 ? "change" : "changes"}` : "Show the notes";
+    bodyHtml = [
+      '<details class="release-details">',
+      `<summary><span class="release-count">${label}</span></summary>`,
+      body,
+      "</details>",
+    ].join("\n");
+  }
+
   return [
     `<li class="release${release.date ? "" : " is-unreleased"}" id="${id}">`,
     '<span class="release-marker" aria-hidden="true"></span>',
     '<div class="release-head">',
     `<h2 class="release-version"><a href="#${id}">${id}</a></h2>`,
+    latest ? '<span class="release-pill release-latest">Latest</span>' : "",
     when,
     "</div>",
-    '<div class="release-body">',
-    renderBody(release),
-    "</div>",
+    bodyHtml,
     "</li>",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -178,10 +207,11 @@ export function renderChangelog(markdown: string, media: ReleaseMedia[] = RELEAS
   const featured = releases.find((r) => r.date !== null && media.some((m) => m.version === r.version));
   const video = featured ? renderVideo(featured, media.find((m) => m.version === featured.version)!) : "";
 
+  const latest = releases.find((r) => r.date !== null);
   return [
     `<header class="page-head">\n${head}\n</header>`,
     video,
-    `<ol class="timeline">\n${releases.map(renderRelease).join("\n")}\n</ol>`,
+    `<ol class="timeline">\n${releases.map((r) => renderRelease(r, r === latest)).join("\n")}\n</ol>`,
   ]
     .filter(Boolean)
     .join("\n");
