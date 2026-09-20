@@ -35,7 +35,7 @@ Every screen in the UI has a plain command for pipes and scripts: `ls` for Secre
 
 Lists which project files reference which secrets, and which secrets nothing references.
 
-- For every registered checkout (one `projects` row each, see the monorepo spec), it runs `detectProject(root)` and `loadEnvFiles`, parses each `.env*` file with `parseDotenv`, and collects every `kerstel://` value. The scan lives in a new module, `packages/cli/src/project-refs.ts`, which `uninstall`'s planner also calls for its `unresolvable` and `unused` lists, so the two cannot drift.
+- For every registered checkout (one `projects` row each, see the monorepo spec), it runs `detectProject(root)` and `loadEnvFiles`, parses each `.env*` file with `parseDotenv`, and collects every reference value, `kerstel://` and the shorter `ks:` form that ships in the same release ([#36](https://github.com/alilibx/kerstel/issues/36)). The scan lives in a new module, `packages/cli/src/project-refs.ts`, which `uninstall`'s planner also calls for its `unresolvable` and `unused` lists, so the two cannot drift.
 - Existence comes from `listSecrets()`, so `refs` never decrypts a value. It reads project files and never writes them.
 - Default output groups by scope, then by checkout root, then by file:
 
@@ -106,7 +106,7 @@ A small module tree in `packages/cli/src/tui/`, with no new dependency. Renderin
 
 Each frame is a full redraw: cursor home, every row written and cleared to the end of line. No diffing. A frame is written only after an event, so an idle UI costs nothing.
 
-Colour comes from the existing theme module, which already honours `NO_COLOR` and a dumb terminal.
+Colour comes from the existing theme module, which already honours `NO_COLOR` and prints plain text when stdout is not a terminal. `TERM=dumb` is not detected today; the UI needs raw mode and the alternate screen anyway, so it refuses to start there with the same message as the no-TTY case.
 
 ### 4.3 Screens and keys
 
@@ -124,7 +124,7 @@ Every screen ends with a status bar naming the keys that apply to the current ro
 
 ### 4.4 Secrets
 
-The list groups by scope, `global` first and then each project scope alphabetically, with columns for the reference, the value shown as eight dots, and the last update.
+The list groups by scope, `global` first and then each project scope alphabetically, with columns for the reference, the value shown as the CLI's fixed-width mask (`mask()` in `output.ts`, twelve dots, so the mask never hints at length), and the last update.
 
 | Key | Action |
 | --- | --- |
