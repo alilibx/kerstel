@@ -29,12 +29,14 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] Lock and unlock the vault ([#12](https://github.com/alilibx/kerstel/issues/12))
 - [ ] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall` ([#13](https://github.com/alilibx/kerstel/issues/13))
 - [ ] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))
+- [ ] `kerstel scan`: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value ([#52](https://github.com/alilibx/kerstel/issues/52))
 
 ## Next: access gating
 
 - [ ] Approval prompt the first time an unknown process asks for a key ([#14](https://github.com/alilibx/kerstel/issues/14))
 - [ ] Allowlists ([#15](https://github.com/alilibx/kerstel/issues/15))
 - [ ] Touch ID or polkit for sensitive actions ([#16](https://github.com/alilibx/kerstel/issues/16))
+- [ ] Bind the vault data key to user presence through the Secure Enclave or TPM, so bypassing the daemon yields nothing ([#54](https://github.com/alilibx/kerstel/issues/54))
 
 ## Later: sync and teams
 
