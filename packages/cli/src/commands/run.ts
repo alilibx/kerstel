@@ -2,6 +2,7 @@ import { openContext } from "../context";
 import { fail } from "../output";
 import { parseReference } from "../reference";
 import { cliName } from "../ui/cli-name";
+import { spawnChild } from "./spawn";
 
 /**
  * Universal fallback: resolves every reference in the current environment up
@@ -49,6 +50,5 @@ export async function runCommand(args: string[]): Promise<number> {
     ctx.vault.close();
   }
 
-  const child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  return await child.exited;
+  return await spawnChild(command, env);
 }

@@ -15,7 +15,7 @@ order: 2
 | Command | What it does |
 | --- | --- |
 | `kerstel init [--yes] [--dry-run]` | Show every `.env` variable grouped by where it suggests putting it, then walk through **"Look right?"** (accept every suggestion, change some from a checklist, or go through them one by one), an optional `.gitignore` question, and **"Apply these changes?"** (apply, show the full diff first, or cancel). Once applied: store each value in the vault, rewrite the files with references, and wire the runtime hook into your scripts. Run it from the project root; it needs a readable `package.json`. |
-| `kerstel exec -- <command>` | Run one command with the runtime hook wired in. It resolves nothing itself: it sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN_FILE` (the path of the session token file, never the token) and `KERSTEL_HOOK_DIR`, appends `--require <the hook>` to `NODE_OPTIONS`, and adds `--preload=<the hook>` for a `bun` or `bunx` command, which `NODE_OPTIONS` does not reach. This is what `init` writes into your scripts. |
+| `kerstel exec -- <command>` | Run one command with the runtime hook wired in. It resolves nothing itself: it sets `KERSTEL_SOCKET`, `KERSTEL_TOKEN_FILE` (the path of the session token file, never the token) and `KERSTEL_HOOK_DIR`, appends `--require <the hook>` to `NODE_OPTIONS`, and adds `--preload=<the hook>` for a `bun` or `bunx` command, which `NODE_OPTIONS` does not reach. This is what `init` writes into your scripts. If the command is not on `PATH`, it says so and, in a project, names the install command for your package manager (`bun install`, `npm install`, `pnpm install`, or `yarn install`), then exits `127` as a shell would. |
 
 ### `kerstel init` flags
 
@@ -44,7 +44,7 @@ When the same key appears in several files, the highest-precedence one is stored
 
 | Command | What it does |
 | --- | --- |
-| `kerstel run -- <command>` | Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook. |
+| `kerstel run -- <command>` | Resolve every reference in the current environment, then run the command with real values injected. Works for anything that cannot load the runtime hook. A command that is not on `PATH` gets the same message and exit `127` as with `exec`. |
 | `kerstel exec -- <command>` | Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read. See above. |
 | `kerstel resolve kerstel://<scope>/<KEY>` | Print one resolved value. Useful in scripts. |
 

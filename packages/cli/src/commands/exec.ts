@@ -5,6 +5,7 @@ import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { fail } from "../output";
 import { socketPath, tokenPath } from "../paths";
 import { cliName } from "../ui/cli-name";
+import { spawnChild } from "./spawn";
 
 /**
  * Runs one command with Kerstel's runtime hook wired in, then gets out of the
@@ -155,7 +156,5 @@ export async function execCommand(args: string[]): Promise<number> {
   client.close();
 
   const env = buildExecEnv({ base: process.env, socketPath: socketPath(), tokenFile: tokenPath(), hookDir });
-  const argv = withBunPreload(command, hookDir);
-  const child = Bun.spawn(argv, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  return await child.exited;
+  return await spawnChild(withBunPreload(command, hookDir), env);
 }

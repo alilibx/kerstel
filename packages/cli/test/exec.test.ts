@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildExecEnv, preloadPathFor, withBunPreload } from "../src/commands/exec";
+import { EXIT_COMMAND_NOT_FOUND } from "../src/commands/spawn";
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { runCli } from "../src/index";
@@ -148,6 +149,34 @@ test("exec refuses, without starting a daemon, when node_modules/.bin holds a ke
   expect(code).toBe(1);
   expect(existsSync(out)).toBe(false);
   expect(existsSync(socketPath())).toBe(false);
+});
+
+test("exec exits 127 and names the install command when the executable is not on PATH", async () => {
+  isolateEnv({ prefix: "exec-missing" });
+  await bootLocalDaemon();
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-exec-missing-"));
+  writeFileSync(join(dir, "package.json"), '{"name":"app"}');
+  writeFileSync(join(dir, "bun.lock"), "");
+  process.chdir(dir);
+
+  const lines: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  let code: number;
+  try {
+    code = await runCli(["exec", "--", "kerstel-test-no-such-executable", "dev"]);
+  } finally {
+    console.log = realLog;
+  }
+
+  expect(code).toBe(EXIT_COMMAND_NOT_FOUND);
+  const out = lines.join("\n");
+  expect(out).toContain('"kerstel-test-no-such-executable" was not found on PATH');
+  expect(out).toContain("no node_modules yet");
+  expect(out).toContain("`bun install`");
+  expect(out).not.toContain("Executable not found in $PATH");
 });
 
 test("exec propagates the child's exit code", async () => {

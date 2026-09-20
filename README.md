@@ -129,7 +129,7 @@ echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | ker
 | Audit log | one row per key the app actually reads | one row per reference in the environment |
 | Used by | your wired `package.json` scripts | IDE run configurations, other languages, anything the hook cannot reach |
 
-`exec` is what the wizard writes into your scripts; `run` is the universal fallback that always works.
+`exec` is what the wizard writes into your scripts; `run` is the universal fallback that always works. Both tell you when the command itself is not on `PATH`, and in a project name the install command for your package manager, since in a fresh clone the missing binary is usually a dependency you haven't installed yet. They exit `127` in that case, as a shell does.
 
 ## Security model
 
