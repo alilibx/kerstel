@@ -100,6 +100,31 @@ function install() {
     },
   });
 
+  // Bun.env is this same raw object, and it cannot be redirected at the
+  // proxy: the property is non-configurable and non-writable, so is
+  // globalThis.Bun, and Bun's env object rejects accessor descriptors
+  // (measured on 1.4.2). The only way for `Bun.env.KEY` to be the value is
+  // for the raw object to HOLD the value, so under Bun every reference in the
+  // environment is resolved now and written back. process.env still gets the
+  // proxy, so a reference assigned later (by a dotenv library, say) resolves
+  // lazily as it does under Node. One that cannot resolve is left as it is,
+  // named once, and the lazy read through process.env throws the same error
+  // it always did: a stale reference the app never reads must not crash every
+  // Bun process at startup.
+  if (process.versions && process.versions.bun) {
+    for (const name of Object.keys(raw)) {
+      const value = raw[name];
+      if (!parseReference(value)) continue;
+      try {
+        raw[name] = resolveValue(name, value);
+      } catch (error) {
+        process.emitWarning(
+          `Kerstel could not resolve ${name} for Bun.env: ${error.message} Run \`kerstel doctor\`.`,
+        );
+      }
+    }
+  }
+
   // Children inherit the resolution wiring, so a variable they set or build
   // themselves resolves too. Variables already present are handed over
   // already resolved: building a child's envp reads process.env through the
