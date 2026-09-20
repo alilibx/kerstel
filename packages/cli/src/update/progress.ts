@@ -40,6 +40,8 @@ export interface ProgressBarOptions extends ProgressStyle {
 export class ProgressBar {
   private drawn = false;
   private last = -Infinity;
+  /** The newest update the rate limit skipped, drawn by `finish` so the line ends on the true count. */
+  private pending: [number, number | null] | null = null;
 
   constructor(
     private readonly write: (text: string) => void,
@@ -49,15 +51,24 @@ export class ProgressBar {
   update(received: number, total: number | null): void {
     const now = (this.options.now ?? Date.now)();
     const complete = total !== null && received >= total;
-    if (this.drawn && !complete && now - this.last < (this.options.minIntervalMs ?? 100)) return;
-    this.write(`\r${progressLine(received, total, this.options)}`);
-    this.drawn = true;
-    this.last = now;
+    if (this.drawn && !complete && now - this.last < (this.options.minIntervalMs ?? 100)) {
+      this.pending = [received, total];
+      return;
+    }
+    this.draw(received, total, now);
   }
 
   finish(): void {
+    if (this.pending) this.draw(this.pending[0], this.pending[1], (this.options.now ?? Date.now)());
     if (!this.drawn) return;
     this.write("\n");
     this.drawn = false;
+  }
+
+  private draw(received: number, total: number | null, now: number): void {
+    this.write(`\r${progressLine(received, total, this.options)}`);
+    this.drawn = true;
+    this.last = now;
+    this.pending = null;
   }
 }

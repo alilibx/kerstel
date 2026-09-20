@@ -4,7 +4,8 @@ import { isCompiledBinary } from "../daemon/spawn";
 import { fail, info, ok, yellow } from "../output";
 import { SYMBOLS } from "../ui/theme";
 import { cliName } from "../ui/cli-name";
-import { performUpdate } from "../update/install";
+import { interactive } from "../ui/steps";
+import { performUpdate, type UpdateOutcome } from "../update/install";
 import { ProgressBar } from "../update/progress";
 import { githubReleases, type ReleaseSource } from "../update/release-source";
 import { assetName, compareVersions } from "../update/versions";
@@ -106,9 +107,9 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
 
   // The bar redraws one line with `\r`, which only reads well on a terminal;
   // piped, the stage lines alone are the record, as with install.sh.
-  const tty = deps.isTTY ?? process.stdout.isTTY === true;
+  const tty = deps.isTTY ?? interactive();
   const bar = tty ? new ProgressBar((text) => process.stdout.write(text)) : null;
-  let outcome: Awaited<ReturnType<typeof performUpdate>>;
+  let outcome: UpdateOutcome;
   try {
     outcome = await performUpdate({
       source: deps.source,

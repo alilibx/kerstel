@@ -137,13 +137,7 @@ async function download(
   } catch (error) {
     throw new Error(`could not download ${url}: ${(error as Error).message}`);
   }
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return Buffer.concat(chunks, received);
 }
 
 /** The hash on the `<sha256>  <name>` line for `asset`, as `sha256sum` writes it. */

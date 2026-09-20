@@ -62,6 +62,20 @@ test("ProgressBar rate-limits redraws but always draws the first and a completed
   expect(writes.at(-1)).toContain("100%");
 });
 
+test("ProgressBar.finish draws a rate-limited final update first, so an unknown-total download ends on its true size", () => {
+  const writes: string[] = [];
+  let now = 1_000;
+  const bar = new ProgressBar((s) => writes.push(s), { width: 10, accent: plain, minIntervalMs: 100, now: () => now });
+  bar.update(0, null);
+  now += 10;
+  bar.update(5 * 1048576, null);
+  expect(writes).toHaveLength(1);
+  bar.finish();
+  expect(writes).toHaveLength(3);
+  expect(writes[1]).toBe("\r  5.0 MB received");
+  expect(writes[2]).toBe("\n");
+});
+
 test("ProgressBar.finish without any update writes nothing", () => {
   const writes: string[] = [];
   new ProgressBar((s) => writes.push(s), { width: 10, accent: plain }).finish();
