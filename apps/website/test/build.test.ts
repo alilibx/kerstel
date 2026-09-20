@@ -103,12 +103,7 @@ describe("build output", () => {
     const [, version, when] = top!;
     const html = readFileSync(join(out, "changelog.html"), "utf8");
     expect(html).toContain(`<li class="release${when === "unreleased" ? " is-unreleased" : ""}" id="${version}">`);
-    if (when === "unreleased") {
-      // Inside a <summary> the version is plain text: a link there would navigate instead of toggling.
-      expect(html).toContain(`<h2 class="release-version">${version}</h2>`);
-    } else {
-      expect(html).toContain(`<a href="#${version}">${version}</a>`);
-    }
+    expect(html).toContain(`<a href="#${version}">${version}</a>`);
     expect(html).toContain(`<ol class="timeline">`);
     for (const file of htmlFiles) {
       expect(readFileSync(join(out, file), "utf8"), file).toContain('href="/changelog"');

@@ -49,14 +49,12 @@
 <ol class="timeline">
 <li class="release is-unreleased" id="0.1.2">
 <span class="release-marker" aria-hidden="true"></span>
-<details class="release-details">
-<summary>
 <div class="release-head">
-<h2 class="release-version">0.1.2</h2>
+<h2 class="release-version"><a href="#0.1.2">0.1.2</a></h2>
 <span class="release-date release-unreleased">In development</span>
-<span class="release-count">9 changes</span>
 </div>
-</summary>
+<details class="release-details">
+<summary><span class="release-count">9 changes</span></summary>
 <div class="release-body">
 <section class="change-group change-security"><h3 class="change-type">Security</h3><ul>
 <li>Kerstel no longer takes its own settings from the project it is protecting. Kerstel is a Bun binary, so it loads the <code>.env</code> of the directory you run it in, and Kerstel&#39;s model is that this file is committed: a repository you cloned could set <code>KERSTEL_HOME</code> to a directory inside itself, force the weaker key-file credential store, or stop the daemon ever relocking. Any <code>KERSTEL_*</code> that an env file there names is now ignored and named on stderr, whatever its value, so a setting you made yourself is ignored too while that line is in the file. The resolver daemon runs from <code>~/.kerstel</code>, so no env file reaches it. Set these in your shell or shell profile instead.</li>

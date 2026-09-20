@@ -461,8 +461,7 @@ main .release-version {
   list-style: none;
 }
 .release-details > summary::-webkit-details-marker { display: none; }
-.release-details > summary .release-head { margin-bottom: 0; }
-.release-details[open] > summary .release-head { margin-bottom: 14px; }
+.release-details[open] > summary { margin-bottom: 12px; }
 .release-count {
   font-family: var(--mono);
   font-size: 13px;

@@ -124,13 +124,25 @@ describe("renderChangelog", () => {
     const out = renderChangelog(withChanges, media);
     const entry = out.slice(out.indexOf('id="0.1.1"'), out.indexOf('id="0.1.0"'));
     expect(entry).toContain('<details class="release-details">');
-    expect(entry).toContain("<summary>");
-    expect(entry).toContain('<span class="release-count">3 changes</span>');
-    // The version is not a link inside the summary: a click there must toggle, not navigate.
-    expect(entry).toContain('<h2 class="release-version">0.1.1</h2>');
-    expect(entry).not.toContain('<a href="#0.1.1">');
+    expect(entry).toContain('<summary><span class="release-count">3 changes</span></summary>');
+    // The heading stays outside the <summary>, a real heading with its anchor:
+    // a summary exposes as a button, which would drop the version from the outline.
+    expect(entry).toContain('<h2 class="release-version"><a href="#0.1.1">0.1.1</a></h2>');
+    expect(entry.indexOf("</div>")).toBeLessThan(entry.indexOf("<details"));
     // The notes still render inside, grouped by type.
     expect(entry).toContain('<h3 class="change-type">Security</h3>');
+  });
+
+  test("collapses an unreleased section that has only prose, with a plain label", () => {
+    const withProse = sample.replace(
+      "## 0.1.1 (unreleased)\n",
+      ["## 0.1.1 (unreleased)", "", "Groundwork for the next release.", ""].join("\n"),
+    );
+    const out = renderChangelog(withProse, media);
+    const entry = out.slice(out.indexOf('id="0.1.1"'), out.indexOf('id="0.1.0"'));
+    expect(entry).toContain('<details class="release-details">');
+    expect(entry).toContain('<summary><span class="release-count">Show the notes</span></summary>');
+    expect(entry).toContain("<p>Groundwork for the next release.</p>");
   });
 
   test("counts a single change in the singular", () => {

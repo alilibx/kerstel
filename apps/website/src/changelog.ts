@@ -157,30 +157,25 @@ function countChanges(release: Release): number {
 
 function renderRelease(release: Release, latest: boolean): string {
   const id = escapeHtml(release.version);
-  const changes = countChanges(release);
+  const empty = release.tokens.every((t) => t.type === "space");
   const when = release.date
     ? `<time class="release-date" datetime="${release.date}">${formatReleaseDate(release.date)}</time>`
     : '<span class="release-date release-unreleased">In development</span>';
   const body = `<div class="release-body">\n${renderBody(release)}\n</div>`;
 
-  // An unreleased section with changes collapses behind a disclosure, so the
-  // draft never outranks the release people can install. The version is plain
-  // text there: a link inside a <summary> would navigate instead of toggling.
-  if (!release.date && changes > 0) {
-    return [
-      `<li class="release is-unreleased" id="${id}">`,
-      '<span class="release-marker" aria-hidden="true"></span>',
+  // An unreleased section with content collapses behind a disclosure, so the
+  // draft never outranks the release people can install. The heading stays
+  // outside the <summary>: a summary exposes as a button, which would strip
+  // the version from the heading outline.
+  let bodyHtml = body;
+  if (!release.date && !empty) {
+    const changes = countChanges(release);
+    const label = changes > 0 ? `${changes} ${changes === 1 ? "change" : "changes"}` : "Show the notes";
+    bodyHtml = [
       '<details class="release-details">',
-      "<summary>",
-      '<div class="release-head">',
-      `<h2 class="release-version">${id}</h2>`,
-      when,
-      `<span class="release-count">${changes} ${changes === 1 ? "change" : "changes"}</span>`,
-      "</div>",
-      "</summary>",
+      `<summary><span class="release-count">${label}</span></summary>`,
       body,
       "</details>",
-      "</li>",
     ].join("\n");
   }
 
@@ -192,7 +187,7 @@ function renderRelease(release: Release, latest: boolean): string {
     latest ? '<span class="release-pill release-latest">Latest</span>' : "",
     when,
     "</div>",
-    body,
+    bodyHtml,
     "</li>",
   ]
     .filter(Boolean)
