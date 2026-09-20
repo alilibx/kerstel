@@ -4,7 +4,9 @@ import { isCompiledBinary } from "../daemon/spawn";
 import { fail, info, ok, yellow } from "../output";
 import { SYMBOLS } from "../ui/theme";
 import { cliName } from "../ui/cli-name";
-import { performUpdate } from "../update/install";
+import { interactive } from "../ui/steps";
+import { performUpdate, type UpdateOutcome } from "../update/install";
+import { ProgressBar } from "../update/progress";
 import { githubReleases, type ReleaseSource } from "../update/release-source";
 import { assetName, compareVersions } from "../update/versions";
 import { VERSION } from "../version";
@@ -20,6 +22,8 @@ export interface UpdateDeps {
   currentVersion: string;
   /** Stops a running daemon; resolves to whether one was running. */
   stopDaemon: () => Promise<boolean>;
+  /** Whether stdout is a terminal, where the download draws a bar. Defaults to the real stream. */
+  isTTY?: boolean;
 }
 
 function realDeps(): UpdateDeps {
@@ -101,16 +105,30 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
     return 1;
   }
 
-  const outcome = await performUpdate({
-    source: deps.source,
-    currentVersion: deps.currentVersion,
-    targetPath: deps.targetPath,
-    asset: deps.asset ?? "",
-    checkOnly,
-    onStage: (stage) => {
-      if (stage === "download") info("Downloading the latest release...");
-    },
-  });
+  // The bar redraws one line with `\r`, which only reads well on a terminal;
+  // piped, the stage lines alone are the record, as with install.sh.
+  const tty = deps.isTTY ?? interactive();
+  const bar = tty ? new ProgressBar((text) => process.stdout.write(text)) : null;
+  let outcome: UpdateOutcome;
+  try {
+    outcome = await performUpdate({
+      source: deps.source,
+      currentVersion: deps.currentVersion,
+      targetPath: deps.targetPath,
+      asset: deps.asset ?? "",
+      checkOnly,
+      onStage: (stage) => {
+        bar?.finish();
+        if (stage === "download") info("Downloading the latest release...");
+        if (stage === "verify") info("Verifying the checksum...");
+        if (stage === "install") info("Installing...");
+      },
+      onProgress: (received, total) => bar?.update(received, total),
+    });
+  } finally {
+    // A download that fails midway leaves the bar's line open otherwise.
+    bar?.finish();
+  }
 
   switch (outcome.kind) {
     case "unreachable":

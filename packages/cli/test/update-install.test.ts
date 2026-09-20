@@ -39,6 +39,8 @@ interface FakeRelease {
   missingAsset?: boolean;
   /** Stream the asset body in chunks this far apart, to imitate a slow link. */
   chunkDelayMs?: number;
+  /** Stream without a content-length header, as a server that does not know the size would. */
+  unknownLength?: boolean;
 }
 
 const assetRequests: string[] = [];
@@ -66,7 +68,7 @@ function fakeRelease(release: FakeRelease): ReleaseSource {
             controller.close();
           },
         });
-        return new Response(stream, { headers: { "content-length": String(body.length) } });
+        return new Response(stream, release.unknownLength ? undefined : { headers: { "content-length": String(body.length) } });
       }
       return new Response("not found", { status: 404 });
     },
@@ -180,6 +182,43 @@ test("an unwritable install directory is named, and nothing is installed", async
   }
   expect(readFileSync(target, "utf8")).toBe(script("0.1.0"));
   expect(readdirSync(dir)).toEqual(["kerstel"]);
+});
+
+test("reports the binary's bytes as they arrive, from zero to the content-length, and never the checksum file's", async () => {
+  const target = installedBinary("0.1.0");
+  const body = script("0.1.1");
+  const calls: [number, number | null][] = [];
+  // A buffered Response is the one Bun.serve sends with a content-length; a
+  // streamed one goes out chunked without it, which the next test covers.
+  await performUpdate({
+    source: fakeRelease({ latest: "0.1.1" }),
+    currentVersion: "0.1.0",
+    targetPath: target,
+    asset: ASSET,
+    onProgress: (received, total) => calls.push([received, total]),
+  });
+  expect(calls[0]).toEqual([0, body.length]);
+  expect(calls.at(-1)).toEqual([body.length, body.length]);
+  // The checksum file is a different size and downloads first; it must not show up here.
+  expect(calls.every(([, total]) => total === body.length)).toBe(true);
+  for (let i = 1; i < calls.length; i++) expect(calls[i]![0]).toBeGreaterThanOrEqual(calls[i - 1]![0]);
+});
+
+test("reports a null total when the server sends no content-length, and still installs", async () => {
+  const target = installedBinary("0.1.0");
+  const body = script("0.1.1");
+  const calls: [number, number | null][] = [];
+  const outcome = await performUpdate({
+    source: fakeRelease({ latest: "0.1.1", chunkDelayMs: 1, unknownLength: true }),
+    currentVersion: "0.1.0",
+    targetPath: target,
+    asset: ASSET,
+    onProgress: (received, total) => calls.push([received, total]),
+  });
+  expect(outcome).toEqual({ kind: "updated", from: "0.1.0", to: "0.1.1" });
+  expect(calls.every(([, total]) => total === null)).toBe(true);
+  expect(calls.at(-1)![0]).toBe(body.length);
+  expect(readFileSync(target, "utf8")).toBe(body);
 });
 
 test("a slow download still completes: the timeout covers the headers, not the body", async () => {

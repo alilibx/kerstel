@@ -15,6 +15,8 @@ export interface UpdateOptions {
   checkOnly?: boolean;
   /** Called as each stage begins, for a spinner or a log line. */
   onStage?: (stage: "download" | "verify" | "install") => void;
+  /** Called as the binary's bytes arrive. `total` is the content-length, or null when the server sent none. */
+  onProgress?: (received: number, total: number | null) => void;
   /** How long a download may take to answer with headers. The body has no limit: a slow link is not an error. */
   headerTimeoutMs?: number;
 }
@@ -51,7 +53,7 @@ export async function performUpdate(options: UpdateOptions): Promise<UpdateOutco
   const checksums = await download(options.source.checksumsUrl(latest), headerTimeoutMs);
   const expected = checksumFor(new TextDecoder().decode(checksums), options.asset);
   if (!expected) throw new Error(`SHA256SUMS has no entry for ${options.asset}; nothing was installed`);
-  const bytes = await download(options.source.assetUrl(latest, options.asset), headerTimeoutMs);
+  const bytes = await download(options.source.assetUrl(latest, options.asset), headerTimeoutMs, options.onProgress);
 
   options.onStage?.("verify");
   const actual = createHash("sha256").update(bytes).digest("hex");
@@ -98,7 +100,11 @@ export async function performUpdate(options: UpdateOptions): Promise<UpdateOutco
  * may take as long as the link needs: a 60 MB binary over a slow connection
  * is a working update, not a hung one.
  */
-async function download(url: string, headerTimeoutMs: number): Promise<Uint8Array> {
+async function download(
+  url: string,
+  headerTimeoutMs: number,
+  onProgress?: (received: number, total: number | null) => void,
+): Promise<Uint8Array> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), headerTimeoutMs);
   let response: Response;
@@ -110,7 +116,28 @@ async function download(url: string, headerTimeoutMs: number): Promise<Uint8Arra
     clearTimeout(timer);
   }
   if (!response.ok) throw new Error(`could not download ${url} (HTTP ${response.status})`);
-  return new Uint8Array(await response.arrayBuffer());
+  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+
+  // Read the body chunk by chunk so the caller can draw progress; buffering
+  // it whole with arrayBuffer() would say nothing until the last byte.
+  const header = response.headers.get("content-length");
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : null;
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  onProgress?.(0, total);
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      onProgress?.(received, total);
+    }
+  } catch (error) {
+    throw new Error(`could not download ${url}: ${(error as Error).message}`);
+  }
+  return Buffer.concat(chunks, received);
 }
 
 /** The hash on the `<sha256>  <name>` line for `asset`, as `sha256sum` writes it. */

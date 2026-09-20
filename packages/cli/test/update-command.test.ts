@@ -61,8 +61,52 @@ function deps(latest: string | null, target: string, compiled = true) {
     compiled,
     currentVersion: "0.1.0",
     stopDaemon: async () => false,
+    isTTY: false,
   };
 }
+
+test("update names every step and draws no bar when stdout is not a terminal", async () => {
+  const target = fakeBinary("0.1.0");
+  const writes: string[] = [];
+  const realWrite = process.stdout.write;
+  process.stdout.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  capture();
+  try {
+    expect(await updateCommand([], deps("0.1.1", target))).toBe(0);
+  } finally {
+    process.stdout.write = realWrite;
+  }
+  const out = captured.join("\n");
+  expect(out).toContain("Downloading the latest release...");
+  expect(out).toContain("Verifying the checksum...");
+  expect(out).toContain("Installing...");
+  expect(writes.join("")).not.toContain("\r");
+});
+
+test("update draws a download bar in place on a terminal and ends its line before the next step", async () => {
+  const target = fakeBinary("0.1.0");
+  const writes: string[] = [];
+  const realWrite = process.stdout.write;
+  process.stdout.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  capture();
+  try {
+    expect(await updateCommand([], { ...deps("0.1.1", target), isTTY: true })).toBe(0);
+  } finally {
+    process.stdout.write = realWrite;
+  }
+  const bar = writes.join("");
+  expect(bar).toContain("\r");
+  expect(bar).toContain("100%");
+  expect(bar).toMatch(/\d+ KB \/ \d+ KB/);
+  expect(bar.endsWith("\n")).toBe(true);
+  expect(writes.filter((w) => w === "\n")).toHaveLength(1);
+});
 
 test("update says so when already on the latest release", async () => {
   isolateEnv({ prefix: "update-cmd" });
