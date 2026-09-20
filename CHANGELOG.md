@@ -8,6 +8,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 - `kerstel update` shows a progress bar while the binary downloads, with the size received over the total, and names each step: downloading, verifying the checksum, installing. Before, it printed one line and then nothing until the swap was done. Piped, it prints plain lines, as the installer does.
 
+### Fixed
+
+- `kerstel exec` and `kerstel run` now say what to do when the command they were given is not on `PATH`: they name the executable, and in a project they name the install command for its package manager (`bun install`, `npm install`, `pnpm install`, or `yarn install`), saying outright when `node_modules` is missing altogether. They exit `127`, as a shell does. Before, a wired `npm run dev` in a fresh clone failed with Bun's own `Executable not found in $PATH` and exit `1`.
+
 ## 0.1.2 (2026-09-20)
 
 ### Security

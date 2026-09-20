@@ -2,6 +2,7 @@ import { openContext } from "../context";
 import { fail } from "../output";
 import { parseReference } from "../reference";
 import { cliName } from "../ui/cli-name";
+import { refuseMissingExecutable, spawnChild } from "./spawn";
 
 /**
  * Universal fallback: resolves every reference in the current environment up
@@ -15,6 +16,11 @@ export async function runCommand(args: string[]): Promise<number> {
     fail(`Usage: ${cliName()} run -- <command> [args...]`);
     return 2;
   }
+
+  // Before the vault is opened: a command that cannot start should not
+  // resolve a single secret, or prompt for the credential store.
+  const missing = refuseMissingExecutable(command);
+  if (missing !== null) return missing;
 
   const ctx = await openContext();
   const env: Record<string, string> = {};
@@ -49,6 +55,5 @@ export async function runCommand(args: string[]): Promise<number> {
     ctx.vault.close();
   }
 
-  const child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  return await child.exited;
+  return await spawnChild(command, env);
 }

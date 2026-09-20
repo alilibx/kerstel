@@ -144,6 +144,11 @@ const LOCKFILES: ReadonlyArray<readonly [file: string, manager: PackageManager]>
   ["package-lock.json", "npm"],
 ];
 
+/** Whether `dir` holds a lockfile of any package manager Kerstel recognises. */
+export function hasLockfile(dir: string): boolean {
+  return LOCKFILES.some(([file]) => existsSync(join(dir, file)));
+}
+
 export function detectPackageManager(
   root: string,
   packageJson: Record<string, unknown> | null,
@@ -163,11 +168,11 @@ export function detectPackageManager(
   return "npm";
 }
 
-type PackageJsonRead =
+export type PackageJsonRead =
   | { json: Record<string, unknown>; error: null }
   | { json: null; error: "missing" | "invalid" };
 
-function readPackageJson(path: string): PackageJsonRead {
+export function readPackageJson(path: string): PackageJsonRead {
   let source: string;
   try {
     source = readFileSync(path, "utf8");

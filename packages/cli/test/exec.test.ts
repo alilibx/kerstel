@@ -3,12 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildExecEnv, preloadPathFor, withBunPreload } from "../src/commands/exec";
+import { EXIT_COMMAND_NOT_FOUND } from "../src/commands/spawn";
 import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { runCli } from "../src/index";
 import { socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
+import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 let handle: DaemonHandle | null = null;
@@ -147,6 +149,30 @@ test("exec refuses, without starting a daemon, when node_modules/.bin holds a ke
 
   expect(code).toBe(1);
   expect(existsSync(out)).toBe(false);
+  expect(existsSync(socketPath())).toBe(false);
+});
+
+test("exec exits 127 and names the install command, without starting a daemon, when the executable is not on PATH", async () => {
+  isolateEnv({ prefix: "exec-missing" });
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-exec-missing-"));
+  writeFileSync(join(dir, "package.json"), '{"name":"app"}');
+  writeFileSync(join(dir, "bun.lock"), "");
+  process.chdir(dir);
+
+  const log = captureLog();
+  let code: number;
+  try {
+    code = await runCli(["exec", "--", "kerstel-test-no-such-executable", "dev"]);
+  } finally {
+    log.restore();
+  }
+
+  expect(code).toBe(EXIT_COMMAND_NOT_FOUND);
+  expect(log.text()).toContain('"kerstel-test-no-such-executable" was not found on PATH');
+  expect(log.text()).toContain("no node_modules yet");
+  expect(log.text()).toContain("`bun install`");
+  expect(log.text()).not.toContain("Executable not found in $PATH");
+  // Refused before the vault opened or the daemon started.
   expect(existsSync(socketPath())).toBe(false);
 });
 
