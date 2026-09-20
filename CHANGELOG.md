@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.3 (unreleased)
 
+### Changed
+
+- `kerstel update` shows a progress bar while the binary downloads, with the size received over the total, and names each step: downloading, verifying the checksum, installing. Before, it printed one line and then nothing until the swap was done. Piped, it prints plain lines, as the installer does.
+
 ## 0.1.2 (2026-09-20)
 
 ### Security
