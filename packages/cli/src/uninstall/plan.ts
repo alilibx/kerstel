@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isKerstelLauncher, launcherPath } from "../init/launcher";
 import { listBackups, readBackup } from "../init/backup";
 import { collectKeys, loadEnvFiles, type LoadedEnvFile } from "../init/collect";
 import { detectProject, envFileRank } from "../init/detect";
@@ -59,8 +60,17 @@ export interface RestoredProject {
   envFiles: string[];
 }
 
+/** A committed launcher `init` wrote, to be deleted. Spec 2026-09-21 §7. */
+export interface PlannedLauncher {
+  path: string;
+  project: string;
+}
+
 export interface UninstallPlan {
   files: PlannedFile[];
+  launchers: PlannedLauncher[];
+  /** A `.kerstel/exec.cjs` without Kerstel's marker line: left alone and named. */
+  foreignLaunchers: PlannedLauncher[];
   restored: RestoredProject[];
   unreachable: UnreachableProject[];
   unresolvable: UnresolvableReference[];
@@ -73,6 +83,8 @@ export interface UninstallPlan {
 export function emptyPlan(): UninstallPlan {
   return {
     files: [],
+    launchers: [],
+    foreignLaunchers: [],
     restored: [],
     unreachable: [],
     unresolvable: [],
@@ -227,6 +239,20 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
         after,
         diffBefore: maskForDisplay(loaded.original),
         diffAfter: maskForDisplay(after),
+      });
+    }
+
+    const launcher = launcherPath(root);
+    if (existsSync(launcher)) {
+      let contents: string | null = null;
+      try {
+        contents = readFileSync(launcher, "utf8");
+      } catch {
+        contents = null;
+      }
+      (contents !== null && isKerstelLauncher(contents) ? plan.launchers : plan.foreignLaunchers).push({
+        path: launcher,
+        project: project.name,
       });
     }
 

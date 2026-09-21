@@ -37,7 +37,7 @@ function capture(): void {
   console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
 }
 
-const WIRED = '{\n  "name": "demo-app",\n  "scripts": {\n    "dev": "kerstel exec -- next dev"\n  }\n}\n';
+const WIRED = '{\n  "name": "demo-app",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n';
 const NO_BINARY = { path: "/usr/local/bin/bun", compiled: false };
 
 /** A home with one secret and one registered, wired project that uses it. */

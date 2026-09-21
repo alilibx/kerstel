@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { launcherSource } from "../src/init/launcher";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -386,7 +387,7 @@ test.if(process.platform !== "win32")(
     const rewritten = JSON.parse(await Bun.file(join(project, "package.json")).text()) as {
       scripts: Record<string, string>;
     };
-    expect(rewritten.scripts.printkey).toBe(`kerstel exec -- ${printScript}`);
+    expect(rewritten.scripts.printkey).toBe(`node .kerstel/exec.cjs -- ${printScript}`);
 
     // Run it exactly as npm would: the script text through a shell, in the
     // project directory, with the binary's directory on PATH and the .env
@@ -461,12 +462,14 @@ test("a wired compound script runs every command hooked, with its leading assign
   writeFileSync(
     join(project, "package.json"),
     JSON.stringify(
-      { name: "compound", scripts: { both: "MARK=one kerstel exec -- node a.cjs && kerstel exec -- node b.cjs" } },
+      { name: "compound", scripts: { both: "MARK=one node .kerstel/exec.cjs -- node a.cjs && node .kerstel/exec.cjs -- node b.cjs" } },
       null,
       2,
     ),
   );
   writeFileSync(join(project, ".env"), "COMPOUND_KEY=kerstel://global/COMPOUND_KEY\n");
+  mkdirSync(join(project, ".kerstel"));
+  writeFileSync(join(project, ".kerstel", "exec.cjs"), launcherSource());
   writeFileSync(join(project, "a.cjs"), 'process.stdout.write(`${process.env.MARK}:${process.env.COMPOUND_KEY}\\n`);');
   writeFileSync(join(project, "b.cjs"), 'process.stdout.write(`${process.env.MARK}:${process.env.COMPOUND_KEY}\\n`);');
 
@@ -485,4 +488,51 @@ test("a wired compound script runs every command hooked, with its leading assign
   if (code !== 0) console.error(stderr);
   expect(code).toBe(0);
   expect(stdout).toBe("one:sk-compound\nundefined:sk-compound\n");
+});
+
+test("the binary's init passes its self-check in a project with nothing to wire", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-nolauncher-"));
+  const project = mkdtempSync(join(tmpdir(), "kerstel-nolauncher-"));
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "lifecycle-only", scripts: { postinstall: "true" } }));
+  writeFileSync(join(project, ".env"), "API_KEY=sk-e2e-nolauncher\n");
+  const proc = Bun.spawn([BINARY, "init", "--yes", "--non-interactive"], {
+    cwd: project,
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) console.error(stdout + stderr);
+  expect(code).toBe(0);
+  expect(stdout).toContain("Self-check passed");
+  expect(existsSync(join(project, ".kerstel"))).toBe(false);
+});
+
+test("with nothing to wire, the binary's self-check ignores a foreign .kerstel/exec.cjs and leaves it alone", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-foreign-"));
+  const project = mkdtempSync(join(tmpdir(), "kerstel-foreign-"));
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "lifecycle-only", scripts: { postinstall: "true" } }));
+  writeFileSync(join(project, ".env"), "API_KEY=sk-e2e-foreign\n");
+  mkdirSync(join(project, ".kerstel"));
+  const foreign = "#!/bin/sh\nexit 1\n";
+  writeFileSync(join(project, ".kerstel", "exec.cjs"), foreign);
+  const proc = Bun.spawn([BINARY, "init", "--yes", "--non-interactive"], {
+    cwd: project,
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) console.error(stdout + stderr);
+  expect(code).toBe(0);
+  expect(stdout).toContain("Self-check passed");
+  expect(await Bun.file(join(project, ".kerstel", "exec.cjs")).text()).toBe(foreign);
 });

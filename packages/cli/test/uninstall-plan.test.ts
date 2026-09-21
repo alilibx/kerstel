@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBackup } from "../src/init/backup";
 import { lookup, parseDotenv, restoreLineValue, serializeDotenv, setValue } from "../src/init/dotenv-file";
+import { launcherSource } from "../src/init/launcher";
 import { hasLoss, planUninstall } from "../src/uninstall/plan";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
@@ -35,7 +36,7 @@ function project(files: Record<string, string>): string {
   return root;
 }
 
-const WIRED = '{\n  "name": "demo-app",\n  "scripts": {\n    "dev": "kerstel exec -- next dev"\n  }\n}\n';
+const WIRED = '{\n  "name": "demo-app",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n';
 
 test("rewrites references to vault values and never puts a value in the diff", async () => {
   const v = await freshVault();
@@ -324,4 +325,22 @@ test("the plan restores values in their original quoting", async () => {
 
   const env = planUninstall(v, dataKey).files.find((f) => f.path === join(root, ".env"))!;
   expect(env.after).toBe(QUOTING_CASES.join("\n") + "\n");
+});
+
+test("the plan deletes Kerstel's launcher and leaves a foreign one, named", async () => {
+  const v = await freshVault();
+  const ours = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  mkdirSync(join(ours, ".kerstel"));
+  writeFileSync(join(ours, ".kerstel", "exec.cjs"), launcherSource());
+  v.registerProject("demo-app", ours);
+
+  const theirs = project({ "package.json": WIRED.replace("demo-app", "other-app"), ".env": "PORT=3000\n" });
+  mkdirSync(join(theirs, ".kerstel"));
+  writeFileSync(join(theirs, ".kerstel", "exec.cjs"), "#!/bin/sh\necho mine\n");
+  v.registerProject("other-app", theirs);
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.launchers).toEqual([{ path: join(ours, ".kerstel", "exec.cjs"), project: "demo-app" }]);
+  expect(plan.foreignLaunchers).toEqual([{ path: join(theirs, ".kerstel", "exec.cjs"), project: "other-app" }]);
+  expect(hasLoss(plan)).toBe(false);
 });

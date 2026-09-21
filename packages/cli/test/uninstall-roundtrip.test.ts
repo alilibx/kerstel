@@ -107,8 +107,8 @@ test("init then uninstall restores every file byte for byte and gates the collap
   for (const key of ["STRIPE_KEY", "SHARED_SECRET", "PRIVATE_KEY"]) {
     expect(wiredLocal).toContain(`kerstel://gnarly-app/${key}`);
   }
-  expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "kerstel exec -- vite"');
-  expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"build": "kerstel exec -- vite build"');
+  expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "node .kerstel/exec.cjs -- vite"');
+  expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"build": "node .kerstel/exec.cjs -- vite build"');
 
   await stopLocalDaemon();
 

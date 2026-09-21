@@ -216,9 +216,14 @@ export function analyseScript(script: string): ScriptAnalysis {
   return { kind: "ok", commands };
 }
 
-/** True when the script text at this command already carries a wiring prefix, or calls Kerstel by hand. */
+/** The prefix the script carries at this command, or null. */
+function prefixAt(script: string, command: SimpleCommand, prefixes: readonly string[]): string | null {
+  return prefixes.find((prefix) => script.startsWith(prefix, command.commandStart)) ?? null;
+}
+
+/** True when the command already carries one of `prefixes`, or calls Kerstel by hand. */
 function isWiredAt(script: string, command: SimpleCommand, prefixes: readonly string[]): boolean {
-  return command.commandWord === "kerstel" || prefixes.some((prefix) => script.startsWith(prefix, command.commandStart));
+  return command.commandWord === "kerstel" || prefixAt(script, command, prefixes) !== null;
 }
 
 export type ScriptWiring =
@@ -243,41 +248,68 @@ function wrappedWhole(script: string, prefixes: readonly string[]): string | nul
   return prefixes.find((prefix) => script.startsWith(prefix)) ?? null;
 }
 
-export function wireScript(script: string, prefix: string): ScriptWiring {
+/**
+ * `legacy` names prefixes an older Kerstel wrote, which are replaced by
+ * `prefix` wherever they are found, so a re-run brings a project forward.
+ */
+export function wireScript(script: string, prefix: string, legacy: readonly string[] = []): ScriptWiring {
   const analysed = analyseScript(script);
   if (analysed.kind === "skipped") {
-    if (analysed.at === "shape" && wrappedWhole(script, [prefix])) return { kind: "wired", text: script, changed: false };
+    if (analysed.at === "shape") {
+      if (script.startsWith(prefix)) return { kind: "wired", text: script, changed: false };
+      const old = wrappedWhole(script, legacy);
+      if (old) return { kind: "wired", text: prefix + script.slice(old.length), changed: true };
+    }
     return { kind: "skipped", reason: analysed.reason };
   }
 
   const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.effectiveWord));
   if (wrappable.length === 0) return { kind: "skipped", reason: "nothing-to-wire" };
 
-  const insertAt = wrappable.filter((command) => !isWiredAt(script, command, [prefix])).map((c) => c.commandStart);
-  if (insertAt.length === 0) return { kind: "wired", text: script, changed: false };
+  // Each edit as (offset, bytes to drop, text to insert), applied from the end
+  // so earlier offsets stay valid.
+  const edits: Array<{ at: number; drop: number }> = [];
+  for (const command of wrappable) {
+    if (script.startsWith(prefix, command.commandStart)) continue;
+    const old = prefixAt(script, command, legacy);
+    if (old) {
+      edits.push({ at: command.commandStart, drop: old.length });
+      continue;
+    }
+    if (command.commandWord === "kerstel") continue;
+    edits.push({ at: command.commandStart, drop: 0 });
+  }
+  if (edits.length === 0) return { kind: "wired", text: script, changed: false };
 
   let text = script;
-  for (const offset of insertAt.reverse()) text = text.slice(0, offset) + prefix + text.slice(offset);
+  for (const { at, drop } of edits.reverse()) text = text.slice(0, at) + prefix + text.slice(at + drop);
   return { kind: "wired", text, changed: true };
 }
 
 export type ScriptState =
-  | { state: "wired" | "partly-wired" | "not-wired" }
+  | { state: "wired" | "wired-old-form" | "partly-wired" | "not-wired" }
   | { state: "skipped"; reason: ScriptSkipReason };
 
-/** What `doctor` says about one script. Spec §6, first matching row wins. */
-export function scriptState(script: string, prefix: string): ScriptState {
+/**
+ * What `doctor` says about one script. Spec §6, first matching row wins:
+ * skipped, not wired, partly wired, wired (old form), wired.
+ */
+export function scriptState(script: string, prefix: string, legacy: readonly string[] = []): ScriptState {
   const analysed = analyseScript(script);
   if (analysed.kind === "skipped") {
-    if (analysed.at === "shape" && wrappedWhole(script, [prefix])) return { state: "wired" };
+    if (analysed.at === "shape") {
+      if (script.startsWith(prefix)) return { state: "wired" };
+      if (wrappedWhole(script, legacy)) return { state: "wired-old-form" };
+    }
     return { state: "skipped", reason: analysed.reason };
   }
   const wrappable = analysed.commands.filter((command) => !LEFT_UNWRAPPED.has(command.effectiveWord));
   if (wrappable.length === 0) return { state: "skipped", reason: "nothing-to-wire" };
-  const wired = wrappable.filter((command) => isWiredAt(script, command, [prefix])).length;
+  const wired = wrappable.filter((command) => isWiredAt(script, command, [prefix, ...legacy])).length;
   if (wired === 0) return { state: "not-wired" };
   if (wired < wrappable.length) return { state: "partly-wired" };
-  return { state: "wired" };
+  const old = wrappable.some((command) => prefixAt(script, command, legacy) !== null);
+  return { state: old ? "wired-old-form" : "wired" };
 }
 
 /**

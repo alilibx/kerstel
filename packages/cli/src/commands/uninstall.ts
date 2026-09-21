@@ -1,4 +1,5 @@
-import { accessSync, constants, lstatSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { openExistingVault } from "../context";
@@ -170,12 +171,16 @@ function printPlan(plan: UninstallPlan): void {
   for (const project of plan.restored) {
     const prefix = `${project.name}: `;
     const diffs = plan.files.filter((file) => file.label.startsWith(prefix));
-    if (diffs.length === 0) continue;
     const lines: string[] = [];
     for (const file of diffs) {
       if (lines.length > 0) lines.push("");
       lines.push(...renderDiff(file.label.slice(prefix.length), file.diffBefore, file.diffAfter).split("\n"));
     }
+    for (const launcher of plan.launchers.filter((entry) => entry.project === project.name)) {
+      if (lines.length > 0) lines.push("");
+      lines.push(`${LAUNCHER_RELATIVE_PATH} is deleted (${launcher.path})`);
+    }
+    if (lines.length === 0) continue;
     step(project.name, lines);
   }
 
@@ -319,6 +324,17 @@ export async function uninstallCommand(
   // see the already-restored files as no longer referencing their secrets --
   // tripping the loss gate on secrets that were never actually lost. Failing
   // here instead means either every file is written, or none is.
+  for (const launcher of plan.launchers) {
+    try {
+      accessSync(dirname(launcher.path), constants.W_OK);
+    } catch {
+      fail(
+        `Cannot delete ${launcher.path}: its directory is not writable. Kerstel is still installed and nothing was ` +
+          "written. Fix the permissions and re-run.",
+      );
+      return 1;
+    }
+  }
   for (const file of plan.files) {
     try {
       accessSync(file.path, constants.W_OK);
@@ -344,6 +360,17 @@ export async function uninstallCommand(
       );
       if (written.length > 0) info(`Already restored: ${written.join(", ")}`);
       return 1;
+    }
+  }
+
+  // The launcher goes once every restored file is written: a script no longer
+  // names it, so nothing runs through it any more.
+  for (const launcher of plan.launchers) {
+    rmSync(launcher.path, { force: true });
+    try {
+      rmdirSync(dirname(launcher.path));
+    } catch {
+      // Not empty, or already gone: either way it is the user's directory now.
     }
   }
 
@@ -396,6 +423,9 @@ export async function uninstallCommand(
 
   console.log("");
   for (const project of plan.restored) ok(`Restored ${project.name} (${project.rootPath}).`);
+  for (const launcher of plan.foreignLaunchers) {
+    console.log(yellow(`!  ${launcher.path} is not Kerstel's, so it was left alone.`));
+  }
   if (plan.restored.some((project) => project.envFiles.length > 0)) {
     console.log(
       yellow("!  Those .env files hold plaintext secrets again. Keep them out of git: check your .gitignore."),

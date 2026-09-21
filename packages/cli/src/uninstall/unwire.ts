@@ -1,5 +1,5 @@
 import { unwireScript } from "../init/script-shell";
-import { EXEC_PREFIX, GITIGNORE_NOTE, serializePackageJson } from "../init/wiring";
+import { EXEC_PREFIX, LEGACY_EXEC_PREFIX, GITIGNORE_NOTE, serializePackageJson } from "../init/wiring";
 
 /**
  * The inverse of init's wiring. Only what `init` wrote is undone: a script
@@ -15,7 +15,7 @@ export function unwirePackageJson(source: string): { changed: boolean; contents:
     const table = scripts as Record<string, unknown>;
     for (const [name, value] of Object.entries(table)) {
       if (typeof value !== "string") continue;
-      const after = unwireScript(value, [EXEC_PREFIX]);
+      const after = unwireScript(value, [EXEC_PREFIX, LEGACY_EXEC_PREFIX]);
       if (after === value) continue;
       table[name] = after;
       unwrapped.push(name);

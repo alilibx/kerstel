@@ -40,7 +40,7 @@ Full findings, with citations, are in the research notes. The points that shaped
 
 `init` writes `.kerstel/exec.cjs` at the package root. It is committed, like `package.json`. It is plain CommonJS with no dependencies, no install-time behaviour, and nothing that downloads. The first line is a fixed marker with a format version, `// Kerstel launcher, format 1. Written by kerstel init; edits are overwritten on the next run.`, followed by a short comment saying what it does and linking to `https://kerstel.dev/docs/deploying`. The format version changes only when the file's behaviour changes, so a CLI release does not touch every repo.
 
-`init` writes the file whenever at least one script is wired in any form, and rewrites it whenever the file on disk differs byte for byte from the text this Kerstel generates: an older format, a hand edit, or a tampered copy all come back to the generated text, which is what the marker line promises. A file that already matches is left alone and not shown. The apply step shows a write as `Writing .kerstel/exec.cjs`, and the diff view lists a new file with its full text and a changed one as a normal diff, since it holds no secret.
+`init` writes the file whenever at least one script is wired in any form, and rewrites it whenever the file on disk differs from the text this Kerstel generates, line endings aside (a `core.autocrlf` checkout is still current): an older format, a hand edit, or a tampered copy all come back to the generated text, which is what the marker line promises. A file there with no marker line is named before it is replaced, since the scripts are about to run through that path. A file that already matches is left alone and not shown. The apply step shows a write as `Writing .kerstel/exec.cjs`, and the diff view lists a new file with its full text and a changed one as a normal diff, since it holds no secret.
 
 A `.gitignore` line that would hide `.kerstel/` is reported in the `.gitignore` step, `!  .gitignore hides .kerstel/, so the launcher would not reach your deploy host. Remove that line before committing.`, and left alone; `init` never edits lines other than the env-file lines it owns today.
 
@@ -105,7 +105,7 @@ Each refused script is named on its own line before the overview, whether or not
 
 ### 5.5 The self-check
 
-§8 step 6 of the product spec runs its probe through `node .kerstel/exec.cjs -- <runtime> -e ...` from the package root, so the file just written is the thing being checked. The probe's `PATH` is the wizard's own, so it finds the binary the wizard is running from.
+§8 step 6 of the product spec runs its probe through `<runtime> .kerstel/exec.cjs -- <runtime> -e ...` from the package root, with the directory of the running binary put first on the probe's `PATH`, so the file just written is the thing being checked and it finds the binary the wizard is running from. Running from source there is no `kerstel` binary on any `PATH`, so the probe calls the CLI entry point directly, as before; the launcher's own tests cover the file.
 
 ## 6. `doctor`
 

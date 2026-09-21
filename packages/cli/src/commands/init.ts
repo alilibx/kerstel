@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { openContext } from "../context";
-import { cliCommand } from "../daemon/spawn";
+import { cliCommand, isCompiledBinary } from "../daemon/spawn";
 import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup } from "../init/backup";
@@ -19,6 +19,7 @@ import {
   type Prompter,
 } from "../init/prompts";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
+import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, planLauncher } from "../init/launcher";
 import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
@@ -51,6 +52,24 @@ import type { Vault } from "../vault/store";
  *   3. --dry-run writes nothing at all, not even to ~/.kerstel: it never opens
  *      the vault or the credential store, having printed every diff.
  */
+
+/**
+ * A .gitignore line that would hide the launcher: the directory in any of
+ * its spellings (`.kerstel`, `.kerstel/`, `/.kerstel`, `**\/.kerstel`,
+ * `.kerstel/*`, `.kerstel/**`) or the file itself (`.kerstel/exec.cjs`,
+ * `**\/exec.cjs`). A `!` negation is not a hide.
+ */
+const GITIGNORE_LAUNCHER_LINE = /^\s*(\*\*\/)?\/?(\.kerstel(\/(\*\*|\*|exec\.cjs))?\/?|\*\*\/exec\.cjs)\s*$/;
+
+function gitignoreHidesLauncher(root: string): boolean {
+  const path = join(root, ".gitignore");
+  if (!existsSync(path)) return false;
+  try {
+    return readFileSync(path, "utf8").split(/\r?\n/).some((line) => GITIGNORE_LAUNCHER_LINE.test(line));
+  } catch {
+    return false;
+  }
+}
 
 /** A .gitignore line that hides .env files (a `!` negation is left alone). */
 const GITIGNORE_ENV_LINE = /^\s*\.env(\..*)?\s*$/;
@@ -522,15 +541,29 @@ class SelfCheckProblem extends Error {
 async function selfCheck(
   detected: DetectedProject,
   probe: { key: string; reference: string; expected: string },
+  /** True when this run wrote the launcher or found it current, so it is the thing to probe through. */
+  throughLauncher: boolean,
 ): Promise<SelfCheckResult> {
   const runtime = detected.runtime === "bun" ? "bun" : "node";
   const expression = `process.stdout.write(String(process.env.${probe.key}))`;
-  const command = cliCommand(["exec", "--", runtime, "-e", expression]);
+  // Spec 2026-09-21 §5.5: through the launcher just written, which finds this
+  // binary on PATH. From source there is no `kerstel` on PATH for it to find,
+  // so the probe calls the CLI entry point directly, as it did before.
+  // Only through a launcher this run wrote or verified. A project whose
+  // scripts are all lifecycle or refused has none, and a file that happens to
+  // sit at that path unverified (stale, edited, someone else's) must not
+  // decide whether the migration passed; then the probe calls the CLI as it
+  // always did.
+  const compiled = isCompiledBinary() && throughLauncher;
+  const command = compiled
+    ? [runtime, LAUNCHER_RELATIVE_PATH, "--", runtime, "-e", expression]
+    : cliCommand(["exec", "--", runtime, "-e", expression]);
+  const pathForProbe = compiled ? `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}` : process.env.PATH;
 
   try {
     const child = Bun.spawn(command, {
       cwd: detected.root,
-      env: { ...process.env, [probe.key]: probe.reference },
+      env: { ...process.env, [probe.key]: probe.reference, ...(pathForProbe === undefined ? {} : { PATH: pathForProbe }) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -547,7 +580,7 @@ async function selfCheck(
     return {
       status: "failed",
       message:
-        `Self-check failed: a ${runtime} process wired through \`kerstel exec\` did not receive the ` +
+        `Self-check failed: a ${runtime} process wired through ${compiled ? "the launcher" : "`kerstel exec`"} did not receive the ` +
         `value behind ${probe.reference}. Run \`${cliName()} doctor\` in this directory.`,
       stderr: stderr.trim(),
     };
@@ -734,7 +767,27 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     }
     const wiredClaim = refused.length > 0 ? "the scripts Kerstel can wire are wired" : "your scripts are wired";
 
-    const nothingToDo = envChanges.length === 0 && !packageWiring.changed;
+    // Spec 2026-09-21 §4.1: the launcher is written whenever a script runs
+    // through it, and rewritten whenever the file on disk is not the one this
+    // Kerstel writes. A project with nothing wired gets no launcher.
+    const anyWired = packageWiring.changed || packageWiring.skipped.some((skip) => skip.reason === "already-wired");
+    const launcher = anyWired ? planLauncher(detected.root) : null;
+    if (launcher?.status.kind === "foreign") {
+      console.log(
+        yellow(
+          `!  ${LAUNCHER_RELATIVE_PATH} exists but is not Kerstel's launcher (no marker line). Your scripts are about to run through that path, so it will be replaced.`,
+        ),
+      );
+    }
+    if (launcher && gitignoreHidesLauncher(detected.root)) {
+      console.log(
+        yellow(
+          `!  .gitignore hides ${LAUNCHER_DIR}/, so the launcher would not reach your deploy host. Remove that line before committing.`,
+        ),
+      );
+    }
+
+    const nothingToDo = envChanges.length === 0 && !packageWiring.changed && !launcher;
     if (nothingToDo) {
       // Values a teammate just typed are the whole point of this run, and there
       // is no plan to approve, so the typing was the approval.
@@ -791,6 +844,15 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         ...(packageWiring.changed
           ? [{ label: "package.json", kind: "package" as const, count: packageWiring.rewrites.length }]
           : []),
+        ...(launcher
+          ? [
+              {
+                label: LAUNCHER_RELATIVE_PATH,
+                kind: "launcher" as const,
+                count: launcher.status.kind === "missing" ? 0 : launcher.status.kind === "foreign" ? 2 : 1,
+              },
+            ]
+          : []),
         ...(gitignore ? [{ label: ".gitignore", kind: "gitignore" as const, count: gitignore.count }] : []),
       ]),
     );
@@ -801,6 +863,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         console.log(renderDiff(change.label, change.diffBefore, change.diffAfter));
       }
       if (packageWiring.changed) console.log(renderDiff("package.json", packageSource, packageWiring.contents));
+      // Program text, not a secret: shown in full.
+      if (launcher) console.log(renderDiff(LAUNCHER_RELATIVE_PATH, launcher.before ?? "", launcher.after));
       if (gitignore) console.log(renderDiff(".gitignore", gitignore.before, gitignore.after));
     };
 
@@ -877,11 +941,25 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       );
     }
 
+    if (launcher) {
+      const launcherPlan = launcher;
+      await withSpinner(
+        `Writing ${LAUNCHER_RELATIVE_PATH}`,
+        launcherPlan.before === null
+          ? `Wrote ${LAUNCHER_RELATIVE_PATH}, the launcher your scripts run through. Commit it.`
+          : `Rewrote ${LAUNCHER_RELATIVE_PATH}, the launcher your scripts run through.`,
+        async () => {
+          mkdirSync(dirname(launcherPlan.path), { recursive: true });
+          writeFileSync(launcherPlan.path, launcherPlan.after);
+        },
+      );
+    }
+
     if (packageWiring.changed) {
       const n = packageWiring.rewrites.length;
       await withSpinner(
         "Wiring package.json",
-        `Wired ${n} package.json script${n === 1 ? "" : "s"} through \`kerstel exec\`.`,
+        `Wired ${n} package.json script${n === 1 ? "" : "s"} through the Kerstel launcher.`,
         async () => writeFileSync(detected.packageJsonPath, packageWiring.contents),
       );
     }
@@ -904,11 +982,16 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
             "Checking that a wired process can read the vault",
             "Self-check passed: a wired process resolved a reference.",
             async () => {
-              const outcome = await selfCheck(detected, {
-                key: probeDecision.key.key,
-                reference: formatReference(probeScope, probeDecision.key.key),
-                expected,
-              });
+              const outcome = await selfCheck(
+                detected,
+                {
+                  key: probeDecision.key.key,
+                  reference: formatReference(probeScope, probeDecision.key.key),
+                  expected,
+                },
+                // Written above when it was not current, so wired means current now.
+                anyWired,
+              );
               if (outcome.status !== "passed") throw new SelfCheckProblem(outcome);
               return outcome;
             },

@@ -1,3 +1,4 @@
+import { LAUNCHER_FORMAT, LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
 import { compareVersions } from "../update/versions";
@@ -257,8 +258,9 @@ function scopeCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check | null
  * refuse it too, so there is nothing a re-run could fix.
  */
 function scriptsCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
-  const { wired, wrappable, partlyWired, skipped } = project.scripts;
+  const { wired, wrappable, oldForm, partlyWired, skipped } = project.scripts;
   const notes: string[] = [];
+  if (oldForm.length > 0) notes.push(`old form: ${oldForm.join(", ")}`);
   if (partlyWired.length > 0) notes.push(`partly wired: ${partlyWired.join(", ")}`);
   if (skipped.length > 0) {
     notes.push(`skipped: ${skipped.map((skip) => `${skip.name} (${SKIP_REASON_TEXT[skip.reason]})`).join(", ")}`);
@@ -268,6 +270,37 @@ function scriptsCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
     return { group: "project", status: "pass", label: "Scripts", detail };
   }
   return { group: "project", status: "warn", label: "Scripts", detail, fix: `${cli} init` };
+}
+
+/**
+ * Spec 2026-09-21 §6: the committed launcher, judged against the text this
+ * Kerstel writes. Only shown once something is wired, since until then there
+ * is nothing for it to launch.
+ */
+function launcherCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check | null {
+  const status = project.launcher;
+  if (status === null) return null;
+  const label = "Launcher";
+  const file = LAUNCHER_RELATIVE_PATH;
+  const fix = `${cli} init`;
+  switch (status.kind) {
+    case "current":
+      return { group: "project", status: "pass", label, detail: `${file} is current` };
+    case "missing":
+      return { group: "project", status: "problem", label, detail: `${file} is missing`, fix };
+    case "stale":
+      return {
+        group: "project",
+        status: "warn",
+        label,
+        detail: `${file} is format ${status.format}, current is ${LAUNCHER_FORMAT}`,
+        fix,
+      };
+    case "edited":
+      return { group: "project", status: "warn", label, detail: `${file} differs from what ${cli} init writes`, fix };
+    case "foreign":
+      return { group: "project", status: "warn", label, detail: `${file} is not Kerstel's (no marker line)`, fix };
+  }
 }
 
 function referencesCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
@@ -333,6 +366,8 @@ export function gatherChecks(facts: DoctorFacts): Check[] {
     const scope = scopeCheck(facts.project, facts.cli);
     if (scope) checks.push(scope);
     checks.push(scriptsCheck(facts.project, facts.cli));
+    const launcher = launcherCheck(facts.project, facts.cli);
+    if (launcher) checks.push(launcher);
     const shadow = shadowCheck(facts.project);
     if (shadow) checks.push(shadow);
     checks.push(referencesCheck(facts.project, facts.cli));

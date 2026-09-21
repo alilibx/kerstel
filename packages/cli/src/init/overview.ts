@@ -109,11 +109,17 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
 
 /** Spec §5.1 step 5. */
 export function renderChangeSummary(
-  changes: { label: string; kind: "env" | "package" | "gitignore"; count: number }[],
+  changes: { label: string; kind: "env" | "package" | "gitignore" | "launcher"; count: number }[],
 ): string[] {
   return changes.map(({ label, kind, count }) => {
     if (kind === "env") return `${label}: ${plural(count, "value becomes a reference", "values become references")}`;
     if (kind === "package") return `${label}: ${plural(count, "script goes through Kerstel", "scripts go through Kerstel")}`;
+    if (kind === "launcher") {
+      // 0: a new file, 1: Kerstel's own, brought up to date, 2: someone else's file in the way.
+      if (count === 0) return `${label}: the launcher your scripts run through is written`;
+      if (count === 2) return `${label}: a file that is not Kerstel's is replaced by the launcher`;
+      return `${label}: the launcher is rewritten`;
+    }
     return `${label}: ${plural(count, "line hiding .env files is removed", "lines hiding .env files are removed")}`;
   });
 }

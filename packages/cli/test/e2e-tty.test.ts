@@ -116,7 +116,7 @@ test.if(process.platform === "darwin" || process.platform === "linux")(
     expect(output).not.toContain("correct-horse-battery");
     expect(output).toContain("Look right?");
     expect(readFileSync(join(root, ".env"), "utf8")).toBe("PORT=3000\nDB_PASSWORD=kerstel://tty-app/DB_PASSWORD\n");
-    expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "kerstel exec -- node app.js"');
+    expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "node .kerstel/exec.cjs -- node app.js"');
   },
   60_000,
 );

@@ -1,4 +1,5 @@
 import { bold, dim, green, red } from "../output";
+import { LAUNCHER_RELATIVE_PATH } from "./launcher";
 import { SKIP_REASON_TEXT, type ScriptSkipReason, wireScript } from "./script-shell";
 
 /**
@@ -19,7 +20,15 @@ export const LIFECYCLE_SCRIPTS: readonly string[] = [
   "prepublishOnly",
 ];
 
-export const EXEC_PREFIX = "kerstel exec -- ";
+/**
+ * Spec 2026-09-21 §4 and §5.1: every wired command runs through the committed
+ * launcher, which runs `kerstel exec` where Kerstel is installed and the
+ * command unchanged where it is not.
+ */
+export const EXEC_PREFIX = `node ${LAUNCHER_RELATIVE_PATH} -- `;
+
+/** What Kerstel wrote before 0.1.3. Recognised everywhere; `init` converts it. */
+export const LEGACY_EXEC_PREFIX = "kerstel exec -- ";
 
 /** The line `init` leaves in .gitignore in place of the env-file lines it removes. */
 export const GITIGNORE_NOTE = "# Kerstel: .env files hold references, safe to commit";
@@ -87,7 +96,7 @@ export function wirePackageJson(source: string): PackageJsonWiring {
       // Spec 2026-09-21 §5: each command of the script on its own. A command
       // that already carries the prefix, or calls `kerstel` by hand, is left
       // alone, so a re-run finishes a half-wired script and nests nothing.
-      const wiring = wireScript(value, EXEC_PREFIX);
+      const wiring = wireScript(value, EXEC_PREFIX, [LEGACY_EXEC_PREFIX]);
       if (wiring.kind === "skipped") {
         skipped.push({ name, reason: wiring.reason });
         continue;
