@@ -146,3 +146,27 @@ test("renderDiff leaves an unchanged line between two edits out of the diff", ()
   expect(out).not.toContain("- B=2");
   expect(out).not.toContain("+ B=2");
 });
+
+test("wirePackageJson wires each command of a compound script, after its assignments", () => {
+  const source = `{
+  "scripts": {
+    "dev": "node scripts/copy.mjs && next dev --port 3020",
+    "start": "NODE_ENV=production next start",
+    "half": "kerstel exec -- node a.js && next dev",
+    "postbuild": "cd out && node fix.js",
+    "clean": "rm -rf dist"
+  }
+}
+`;
+  const result = wirePackageJson(source);
+  expect(result.rewrites.map((r) => [r.name, r.after])).toEqual([
+    ["dev", "kerstel exec -- node scripts/copy.mjs && kerstel exec -- next dev --port 3020"],
+    ["start", "NODE_ENV=production kerstel exec -- next start"],
+    ["half", "kerstel exec -- node a.js && kerstel exec -- next dev"],
+  ]);
+  expect(result.skipped).toEqual([
+    { name: "postbuild", reason: "changes-directory" },
+    { name: "clean", reason: "nothing-to-wire" },
+  ]);
+  expect(wirePackageJson(result.contents).changed).toBe(false);
+});

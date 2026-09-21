@@ -1,3 +1,4 @@
+import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
 import { compareVersions } from "../update/versions";
 
@@ -250,9 +251,19 @@ function scopeCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check | null
   };
 }
 
+/**
+ * Spec 2026-09-21 §6. A script the wirer refuses (a `cd`, a redirection, ...)
+ * is named with its reason but does not count against the pass: `init` would
+ * refuse it too, so there is nothing a re-run could fix.
+ */
 function scriptsCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
-  const { wired, wrappable } = project.scripts;
-  const detail = `${wired} of ${wrappable} go through Kerstel`;
+  const { wired, wrappable, partlyWired, skipped } = project.scripts;
+  const notes: string[] = [];
+  if (partlyWired.length > 0) notes.push(`partly wired: ${partlyWired.join(", ")}`);
+  if (skipped.length > 0) {
+    notes.push(`skipped: ${skipped.map((skip) => `${skip.name} (${SKIP_REASON_TEXT[skip.reason]})`).join(", ")}`);
+  }
+  const detail = `${wired} of ${wrappable} go through Kerstel${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`;
   if (wired === wrappable) {
     return { group: "project", status: "pass", label: "Scripts", detail };
   }

@@ -13,7 +13,7 @@ const passingProject: ProjectStatus = {
   runtime: "node",
   packageManager: "npm",
   envFiles: [".env"],
-  scripts: { wrappable: 3, wired: 3 },
+  scripts: { wrappable: 3, wired: 3, partlyWired: [], skipped: [] },
   references: { total: 9, resolvable: 9, unresolved: [] },
   unreadable: [],
   shadowed: [],
@@ -306,7 +306,7 @@ test("Project Scope: warn when it could not be derived", () => {
 });
 
 test("Project Scripts: pass when every wrappable script is wired", () => {
-  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 3 } } }));
+  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 3, partlyWired: [], skipped: [] } } }));
   expect(checkFor(checks, "Scripts")).toEqual({
     group: "project",
     status: "pass",
@@ -317,7 +317,7 @@ test("Project Scripts: pass when every wrappable script is wired", () => {
 
 test("Project Scripts: warn with a count and a fix when some are not wired", () => {
   const checks = gatherChecks(
-    allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 1 } }, cli: "ks" }),
+    allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 1, partlyWired: [], skipped: [] } }, cli: "ks" }),
   );
   expect(checkFor(checks, "Scripts")).toEqual({
     group: "project",
@@ -325,6 +325,37 @@ test("Project Scripts: warn with a count and a fix when some are not wired", () 
     label: "Scripts",
     detail: "1 of 3 go through Kerstel",
     fix: "ks init",
+  });
+});
+
+test("Project Scripts: names half-wired scripts and refused ones, and refused ones do not fail the check", () => {
+  const partly = gatherChecks(
+    allPassFacts({
+      project: { ...passingProject, scripts: { wrappable: 3, wired: 2, partlyWired: ["dev"], skipped: [] } },
+      cli: "ks",
+    }),
+  );
+  expect(checkFor(partly, "Scripts")).toEqual({
+    group: "project",
+    status: "warn",
+    label: "Scripts",
+    detail: "2 of 3 go through Kerstel; partly wired: dev",
+    fix: "ks init",
+  });
+
+  const refused = gatherChecks(
+    allPassFacts({
+      project: {
+        ...passingProject,
+        scripts: { wrappable: 2, wired: 2, partlyWired: [], skipped: [{ name: "postbuild", reason: "changes-directory" }] },
+      },
+    }),
+  );
+  expect(checkFor(refused, "Scripts")).toEqual({
+    group: "project",
+    status: "pass",
+    label: "Scripts",
+    detail: "2 of 2 go through Kerstel; skipped: postbuild (changes directory)",
   });
 });
 
@@ -430,7 +461,7 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(outside).toContain("Run `ks init` inside a project");
 
   const unwired = howItWorksNote({
-    project: { ...passingProject, scripts: { wrappable: 2, wired: 0 }, references: { total: 0, resolvable: 0, unresolved: [] } },
+    project: { ...passingProject, scripts: { wrappable: 2, wired: 0, partlyWired: [], skipped: [] }, references: { total: 0, resolvable: 0, unresolved: [] } },
     cli: "kerstel",
   });
   expect(unwired).toContain("`kerstel init`");
@@ -439,6 +470,6 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(howItWorksNote({ project: passingProject, cli: "ks" })).toBeNull();
   // No scripts to wire, but references already resolve: init has been here.
   expect(
-    howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 0, wired: 0 } }, cli: "ks" }),
+    howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 0, wired: 0, partlyWired: [], skipped: [] } }, cli: "ks" }),
   ).toBeNull();
 });

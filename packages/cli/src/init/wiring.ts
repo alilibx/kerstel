@@ -1,4 +1,5 @@
 import { bold, dim, green, red } from "../output";
+import { SKIP_REASON_TEXT, type ScriptSkipReason, wireScript } from "./script-shell";
 
 /**
  * Spec §6.2's wiring, and nothing more than it.
@@ -47,7 +48,15 @@ export interface ScriptRewrite {
 
 export interface ScriptSkip {
   name: string;
-  reason: "lifecycle" | "already-wired" | "not-a-string";
+  reason: "lifecycle" | "already-wired" | "not-a-string" | ScriptSkipReason;
+}
+
+/** The skip reason as `init` prints it in its wiring summary. */
+export function skipReasonText(reason: ScriptSkip["reason"]): string {
+  if (reason === "lifecycle") return "npm lifecycle script";
+  if (reason === "already-wired") return "already wired";
+  if (reason === "not-a-string") return "not a string";
+  return SKIP_REASON_TEXT[reason];
 }
 
 export interface PackageJsonWiring {
@@ -75,16 +84,20 @@ export function wirePackageJson(source: string): PackageJsonWiring {
         skipped.push({ name, reason: "lifecycle" });
         continue;
       }
-      // Any `kerstel ...` script is already ours (or the user's own deliberate
-      // call) -- wrapping it again would nest shims on every re-run.
-      if (value.trimStart().startsWith("kerstel ")) {
+      // Spec 2026-09-21 §5: each command of the script on its own. A command
+      // that already carries the prefix, or calls `kerstel` by hand, is left
+      // alone, so a re-run finishes a half-wired script and nests nothing.
+      const wiring = wireScript(value, EXEC_PREFIX);
+      if (wiring.kind === "skipped") {
+        skipped.push({ name, reason: wiring.reason });
+        continue;
+      }
+      if (!wiring.changed) {
         skipped.push({ name, reason: "already-wired" });
         continue;
       }
-
-      const after = wrapScript(value);
-      table[name] = after;
-      rewrites.push({ name, before: value, after });
+      table[name] = wiring.text;
+      rewrites.push({ name, before: value, after: wiring.text });
     }
   }
 

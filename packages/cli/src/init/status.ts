@@ -5,7 +5,8 @@ import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } fr
 import { parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
 import { findShadowedBinaries } from "./shadow";
-import { wirePackageJson } from "./wiring";
+import { scriptState, type ScriptSkipReason } from "./script-shell";
+import { EXEC_PREFIX, wirePackageJson } from "./wiring";
 
 export interface ProjectStatus {
   root: string;
@@ -14,8 +15,17 @@ export interface ProjectStatus {
   runtime: Runtime;
   packageManager: PackageManager;
   envFiles: string[];
-  /** `wrappable` counts scripts `init` would wire; `wired` those already wired. */
-  scripts: { wrappable: number; wired: number };
+  /**
+   * `wrappable` counts scripts `init` would wire; `wired` those fully wired
+   * already; `partlyWired` names scripts where only some commands carry the
+   * prefix; `skipped` names the ones the wirer refuses, with the reason.
+   */
+  scripts: {
+    wrappable: number;
+    wired: number;
+    partlyWired: string[];
+    skipped: Array<{ name: string; reason: ScriptSkipReason }>;
+  };
   references: { total: number; resolvable: number; unresolved: string[] };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
@@ -74,6 +84,14 @@ export function projectStatus(
   const packageSource = readFileSync(detected.packageJsonPath, "utf8");
   const wiring = wirePackageJson(packageSource);
   const wired = wiring.skipped.filter((skip) => skip.reason === "already-wired").length;
+  const partlyWired = wiring.rewrites
+    .filter((rewrite) => scriptState(rewrite.before, EXEC_PREFIX).state === "partly-wired")
+    .map((rewrite) => rewrite.name);
+  const skipped = wiring.skipped.flatMap((skip) =>
+    skip.reason === "lifecycle" || skip.reason === "already-wired" || skip.reason === "not-a-string"
+      ? []
+      : [{ name: skip.name, reason: skip.reason }],
+  );
 
   const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
@@ -92,7 +110,7 @@ export function projectStatus(
     runtime: detected.runtime,
     packageManager: detected.packageManager,
     envFiles: detected.envFiles.map((file) => file.name),
-    scripts: { wrappable: wired + wiring.rewrites.length, wired },
+    scripts: { wrappable: wired + wiring.rewrites.length, wired, partlyWired, skipped },
     references: { total, resolvable, unresolved },
     unreadable,
     shadowed: findShadowedBinaries(detected.root),

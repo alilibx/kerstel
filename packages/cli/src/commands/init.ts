@@ -19,7 +19,7 @@ import {
   type Prompter,
 } from "../init/prompts";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
-import { GITIGNORE_NOTE, renderDiff, wirePackageJson } from "../init/wiring";
+import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
 import { vaultPath } from "../paths";
@@ -721,6 +721,18 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
 
     const packageSource = readFileSync(detected.packageJsonPath, "utf8");
     const packageWiring = wirePackageJson(packageSource);
+    // A script the wirer REFUSES is named whether or not anything else
+    // changes: the user may expect it to be hooked, and a run that migrates
+    // the env files and says nothing about it would leave that script reading
+    // literal references. Lifecycle and already-wired scripts are the expected
+    // shape of a package.json and are not worth a line.
+    const refused = packageWiring.skipped.filter(
+      (skip) => skip.reason !== "lifecycle" && skip.reason !== "already-wired" && skip.reason !== "not-a-string",
+    );
+    for (const skip of refused) {
+      console.log(yellow(`!  Script "${skip.name}" is not wired through Kerstel: ${skipReasonText(skip.reason)}.`));
+    }
+    const wiredClaim = refused.length > 0 ? "the scripts Kerstel can wire are wired" : "your scripts are wired";
 
     const nothingToDo = envChanges.length === 0 && !packageWiring.changed;
     if (nothingToDo) {
@@ -754,11 +766,11 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
               `Kerstel cannot rewrite: ${untouched.join(", ")}`,
           );
         }
-        info(`Nothing to change: your scripts are wired; ${clauses.join("; ")}.`);
+        info(`Nothing to change: ${wiredClaim}; ${clauses.join("; ")}.`);
         return 0;
       }
 
-      ok(`Already migrated: every value in ${fileNames.join(", ")} is a reference, and your scripts are wired.`);
+      ok(`Already migrated: every value in ${fileNames.join(", ")} is a reference, and ${wiredClaim}.`);
       return 0;
     }
 

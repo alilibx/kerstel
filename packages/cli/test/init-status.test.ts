@@ -77,7 +77,7 @@ test("projectStatus reports an unwired project", () => {
   const status = projectStatus(root, emptyVault);
   expect(status?.scope).toBe("site");
   expect(status?.runtime).toBe("node");
-  expect(status?.scripts).toEqual({ wrappable: 1, wired: 0 });
+  expect(status?.scripts).toEqual({ wrappable: 1, wired: 0, partlyWired: [], skipped: [] });
   expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [] });
   expect(status?.envFiles).toEqual([".env"]);
 });
@@ -95,7 +95,7 @@ test("projectStatus reports a wired project and which references resolve", async
   const vault = openVault(key);
   try {
     const status = projectStatus(root, vault);
-    expect(status?.scripts).toEqual({ wrappable: 1, wired: 1 });
+    expect(status?.scripts).toEqual({ wrappable: 1, wired: 1, partlyWired: [], skipped: [] });
     expect(status?.references.total).toBe(2);
     expect(status?.references.resolvable).toBe(1);
     expect(status?.references.unresolved).toEqual(["kerstel://site/MISSING"]);
@@ -189,4 +189,22 @@ test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", as
     console.log = realLog;
   }
   expect(captured.join("\n")).toContain(".env.production");
+});
+
+test("projectStatus names half-wired scripts and the ones the wirer refuses", () => {
+  const root = makeProject({
+    "package.json":
+      '{\n  "name": "site",\n  "scripts": {\n    "dev": "kerstel exec -- node a.js && next dev",\n    "build": "kerstel exec -- next build",\n    "postbuild": "cd out && node fix.js",\n    "clean": "rm -rf dist"\n  }\n}\n',
+    ".env": "A=plain\n",
+  });
+  const status = projectStatus(root, emptyVault);
+  expect(status?.scripts).toEqual({
+    wrappable: 2,
+    wired: 1,
+    partlyWired: ["dev"],
+    skipped: [
+      { name: "postbuild", reason: "changes-directory" },
+      { name: "clean", reason: "nothing-to-wire" },
+    ],
+  });
 });

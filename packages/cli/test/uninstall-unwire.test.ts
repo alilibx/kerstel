@@ -48,3 +48,18 @@ test("restoreGitignore swaps init's note for env-file lines", () => {
   );
   expect(restoreGitignore("node_modules\n")).toEqual({ changed: false, contents: "node_modules\n" });
 });
+
+test("unwiring a compound script strips every prefix and keeps the assignments", () => {
+  const source = `{
+  "scripts": {
+    "dev": "node a.js && NODE_ENV=x next dev | cat",
+    "postbuild": "cd out && node fix.js"
+  }
+}
+`;
+  const wired = wirePackageJson(source).contents;
+  expect(wired).toContain('"dev": "kerstel exec -- node a.js && NODE_ENV=x kerstel exec -- next dev | cat"');
+  const result = unwirePackageJson(wired);
+  expect(result.unwrapped).toEqual(["dev"]);
+  expect(result.contents).toBe(source);
+});
