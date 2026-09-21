@@ -13,6 +13,7 @@ const EXPECTED_PAGES = [
   "docs/cli.html",
   "docs/how-it-works.html",
   "docs/teams.html",
+  "docs/deploying.html",
   "changelog.html",
   "roadmap.html",
 ];
@@ -74,8 +75,14 @@ describe("build output", () => {
   });
 
   test("docs pages share the docs navigation in a fixed order", () => {
-    const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams"];
-    for (const file of ["docs/getting-started.html", "docs/cli.html", "docs/how-it-works.html", "docs/teams.html"]) {
+    const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams", "/docs/deploying"];
+    for (const file of [
+      "docs/getting-started.html",
+      "docs/cli.html",
+      "docs/how-it-works.html",
+      "docs/teams.html",
+      "docs/deploying.html",
+    ]) {
       const html = readFileSync(join(out, file), "utf8");
       const hrefs = [...html.matchAll(/<nav class="docs-nav"[\s\S]*?<\/nav>/g)][0]?.[0] ?? "";
       const order = [...hrefs.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);

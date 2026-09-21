@@ -130,7 +130,7 @@ echo '{"DATABASE_URL":"postgres://...","STRIPE_SECRET_KEY":"sk_live_..."}' | ker
 | Used by | your wired `package.json` scripts, through the committed launcher | IDE run configurations, other languages, anything the hook cannot reach |
 | Where Kerstel is absent | the launcher runs the command unchanged, with one stderr line | fails |
 
-`exec` is what the wizard writes into your scripts; `run` is the universal fallback that always works. Both tell you when the command itself is not on `PATH`, and in a project name the install command for your package manager, since in a fresh clone the missing binary is usually a dependency you haven't installed yet. They exit `127` in that case, as a shell does.
+`exec` is what the wizard writes into your scripts, behind the launcher; `run` is the universal fallback that always works. Deploy hosts need neither: the launcher runs the command unchanged where Kerstel is absent, and the values come from the host's own settings. See [Deploying](https://kerstel.dev/docs/deploying). Both tell you when the command itself is not on `PATH`, and in a project name the install command for your package manager, since in a fresh clone the missing binary is usually a dependency you haven't installed yet. They exit `127` in that case, as a shell does.
 
 ## Security model
 

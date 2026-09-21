@@ -24,7 +24,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 - [x] `Bun.env` returns the real value under the hook, not the literal reference ([#60](https://github.com/alilibx/kerstel/issues/60))
 - [x] Wire every command of a compound script, after its leading `NAME=value` assignments, and report half-wired scripts in `doctor` ([#61](https://github.com/alilibx/kerstel/issues/61))
-- [ ] A committed launcher, `.kerstel/exec.cjs`, so wired scripts run unchanged on deploy hosts that have no Kerstel, plus a "Deploying" docs page ([#62](https://github.com/alilibx/kerstel/issues/62))
+- [x] A committed launcher, `.kerstel/exec.cjs`, so wired scripts run unchanged on deploy hosts that have no Kerstel, plus a "Deploying" docs page ([#62](https://github.com/alilibx/kerstel/issues/62))
 
 ## 0.2.0: terminal UI and monorepos
 

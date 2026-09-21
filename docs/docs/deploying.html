@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying · Kerstel</title>
+<meta name="description" content="Deploy hosts do not need Kerstel. What the launcher does there, where the values come from, and the one mistake to avoid.">
+<link rel="canonical" href="https://kerstel.dev/docs/deploying">
+<meta property="og:title" content="Deploying · Kerstel">
+<meta property="og:description" content="Deploy hosts do not need Kerstel. What the launcher does there, where the values come from, and the one mistake to avoid.">
+<meta property="og:url" content="https://kerstel.dev/docs/deploying">
+<meta property="og:image" content="https://kerstel.dev/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Kerstel: local-first secrets for Node and Bun. No account, no cloud, no telemetry.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://kerstel.dev/og.jpg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="/"><img src="/icon-light.png" alt="" width="28" height="28">Kerstel</a>
+<nav class="site-nav" aria-label="Site">
+<a href="/docs">Docs</a>
+<a href="/security">Security</a>
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+</nav>
+</div>
+</header>
+<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/cli">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li><li><a href="/docs/deploying" aria-current="page">Deploying</a></li></ul></nav>
+<main class="wrap">
+<h1>Deploying</h1>
+<p class="lede">Your deploy host never runs Kerstel. The scripts <code>init</code> wired still work there, and the values come from the host's own secret store.</p><h2>What the launcher does on a host</h2>
+<p><code>kerstel init</code> wires each command in your <code>package.json</code> scripts as <code>node .kerstel/exec.cjs -- &lt;command&gt;</code>, and writes that launcher into the repo for you to commit. The launcher looks for <code>kerstel</code> on <code>PATH</code>. On your machine it finds it and runs <code>kerstel exec</code>, so the runtime hook loads and references resolve from your vault. On Vercel, Netlify, Railway, Fly, Heroku, Google Cloud, Azure, DigitalOcean, a GitHub Actions job, or inside a Docker build, there is no <code>kerstel</code>, so it prints one line to stderr and runs the command exactly as written:</p>
+<pre><code>kerstel: not installed here, running without it: next build
+</code></pre>
+<p>That is the whole story. Do not install Kerstel on a host: it would create a vault there for nothing, and the host already has the values.</p>
+<h2>Where the values come from</h2>
+<p>Set every key your app reads in the host&#39;s own environment settings: the project&#39;s environment variables on Vercel or Netlify, service variables on Railway, secrets on Fly, config vars on Heroku, build and runtime env on the others. The app reads <code>process.env</code> as it always did, and nothing on the host knows a vault ever existed.</p>
+<p>Then decide what to do with <code>.env</code>:</p>
+<ul>
+<li><strong>Keep it out of git.</strong> Most hosts read only their own settings, and a gitignored <code>.env</code> never reaches them. This is the safe default.</li>
+<li><strong>Or commit it, and set every key on the host.</strong> Once every value is a reference, <code>.env</code> holds nothing sensitive and doubles as the list of keys the host needs. Check that first: <code>init</code> lets you leave a value in plaintext, and names every plaintext key it leaves behind, so a file with a plaintext secret in it is still a secret. Commit only when <code>init</code> reports no plaintext, or when what is left is meant to be public. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load <code>.env</code>, so a key set on the host wins.</li>
+</ul>
+<p>The mistake to avoid is a committed <code>.env</code> reaching a host where one key is <strong>not</strong> set. The framework loads the file, nothing overrides that line, and the app gets the literal reference:</p>
+<pre><code>Error: Publishable key not valid: kerstel://myapp/CLERK_PUBLISHABLE_KEY
+</code></pre>
+<p>If a value on a host looks like <code>kerstel://…</code>, that key is missing from the host&#39;s settings. Add it there; there is nothing to fix in the repo.</p>
+<h2>What each host runs on its own</h2>
+<p>A host runs some scripts without being asked, which is why they are wired through the launcher rather than left alone. Overriding the build or start command in the host&#39;s settings changes nothing about Kerstel; the launcher steps aside either way.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Runs <code>build</code></th>
+<th>Runs <code>start</code></th>
+<th>Also looks for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Vercel</td>
+<td><code>vercel-build</code>, <code>now-build</code>, then <code>build</code></td>
+<td>never</td>
+<td></td>
+</tr>
+<tr>
+<td>Netlify</td>
+<td><code>build</code>, or any script whose text contains the framework&#39;s build command</td>
+<td>never</td>
+<td></td>
+</tr>
+<tr>
+<td>Cloudflare Pages</td>
+<td>via its framework presets</td>
+<td>never</td>
+<td></td>
+</tr>
+<tr>
+<td>Railway, Coolify</td>
+<td><code>build</code> when present</td>
+<td><code>start</code>, else <code>main</code>, else <code>index.js</code></td>
+<td>a <code>Procfile</code></td>
+</tr>
+<tr>
+<td>Fly.io</td>
+<td><code>build</code> when present</td>
+<td><code>start</code> when present</td>
+<td></td>
+</tr>
+<tr>
+<td>Heroku, Dokku, DigitalOcean</td>
+<td><code>heroku-postbuild</code>, else <code>build</code></td>
+<td><code>start</code> unless a <code>Procfile</code> says otherwise</td>
+<td><code>heroku-prebuild</code>, <code>heroku-cleanup</code></td>
+</tr>
+<tr>
+<td>Google Cloud Run, App Engine</td>
+<td>the first of <code>apphosting:build</code>, the <code>GOOGLE_NODE_RUN_SCRIPTS</code> list, <code>gcp-build</code>, <code>build</code></td>
+<td><code>start</code>, else <code>main</code>, else <code>index.js</code></td>
+<td>a <code>Procfile</code></td>
+</tr>
+<tr>
+<td>Azure App Service, Static Web Apps</td>
+<td><code>build</code>, then <code>build:azure</code></td>
+<td><code>start</code>, else <code>main</code>, else <code>server.js</code> and friends</td>
+<td></td>
+</tr>
+<tr>
+<td>AWS Amplify</td>
+<td><code>build</code> from its generated <code>amplify.yml</code></td>
+<td>never; runs <code>node &lt;entrypoint&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td>AWS Elastic Beanstalk</td>
+<td>none documented</td>
+<td><code>Procfile</code>, else <code>start</code>, else <code>app.js</code></td>
+<td></td>
+</tr>
+<tr>
+<td>Render</td>
+<td>only what you type</td>
+<td>only what you type</td>
+<td></td>
+</tr>
+<tr>
+<td>GitHub Actions</td>
+<td>only what the workflow runs</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Expo EAS Build</td>
+<td>neither</td>
+<td>neither</td>
+<td>the <code>eas-build-*</code> hooks</td>
+</tr>
+</tbody></table>
+</div><p>Amplify reads the text of your <code>build</code> script to tell a static Next app from a server-rendered one. Whether it still recognises <code>next build</code> behind the launcher is unverified; if Amplify classifies your app wrongly after wiring, set the build settings by hand in <code>amplify.yml</code>.</p>
+<p>Official Docker images mostly build through <code>npm run build</code>, where the launcher steps aside, and start with <code>node &lt;file&gt;</code>, which never touches a script:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Framework</th>
+<th>Build</th>
+<th>Start</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Next.js (<code>output: &#39;standalone&#39;</code>)</td>
+<td><code>npm run build</code></td>
+<td><code>node server.js</code></td>
+</tr>
+<tr>
+<td>Nuxt</td>
+<td><code>npm run build</code></td>
+<td><code>node .output/server/index.mjs</code></td>
+</tr>
+<tr>
+<td>SvelteKit (<code>adapter-node</code>)</td>
+<td><code>npm run build</code></td>
+<td><code>node build</code></td>
+</tr>
+<tr>
+<td>Astro (<code>@astrojs/node</code>)</td>
+<td><code>npm run build</code></td>
+<td><code>node ./dist/server/entry.mjs</code></td>
+</tr>
+<tr>
+<td>React Router</td>
+<td><code>npm run build</code></td>
+<td><code>npm run start</code></td>
+</tr>
+<tr>
+<td>NestJS</td>
+<td><code>npm run build</code></td>
+<td><code>node dist/main</code></td>
+</tr>
+<tr>
+<td>Bun</td>
+<td><code>bun run build</code> when present</td>
+<td><code>bun run index.ts</code></td>
+</tr>
+</tbody></table>
+</div><h2>Turborepo</h2>
+<p>Turborepo&#39;s strict environment mode, the default, hands a task only the variables it knows about. <code>NODE_OPTIONS</code> is on its built-in list, so the hook still loads, but the three variables the hook needs to reach the daemon are not. Add them once, at the root:</p>
+<pre><code class="language-json">{
+  &quot;globalPassThroughEnv&quot;: [&quot;KERSTEL_SOCKET&quot;, &quot;KERSTEL_TOKEN_FILE&quot;, &quot;KERSTEL_HOOK_DIR&quot;]
+}
+</code></pre>
+<p>Without this, a task under <code>turbo run dev</code> on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal <code>kerstel://</code> reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host&#39;s settings. Nx does no filtering and needs nothing.</p>
+<h2>Bun</h2>
+<p>On your machine, under Bun, the hook resolves every reference in the environment when the process starts, so <code>Bun.env.KEY</code> and <code>process.env.KEY</code> both hold the value. A reference assigned later, by a dotenv library for example, resolves through <code>process.env</code> but not through <code>Bun.env</code>. Read late-assigned values through <code>process.env</code>. On a host none of this applies: there is no hook, and <code>Bun.env</code> holds whatever the host set.</p>
+<h2>Checklist</h2>
+<ol>
+<li>Commit <code>.kerstel/exec.cjs</code> with your <code>package.json</code>. <code>kerstel init</code> warns if <code>.gitignore</code> hides it.</li>
+<li>Set every key on the host.</li>
+<li>Keep <code>.env</code> out of git, or commit it knowing that a key missing on the host shows up as a literal <code>kerstel://</code> value.</li>
+<li>In a Turborepo, add the three <code>KERSTEL_*</code> variables to <code>globalPassThroughEnv</code>.</li>
+<li>Do not install Kerstel on the host.</li>
+</ol>
+
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<span>Kerstel · MIT License</span>
+<nav aria-label="Footer">
+<a href="https://github.com/alilibx/kerstel">GitHub</a>
+<a href="/security">Security</a>
+<a href="/docs">Docs</a>
+<a href="/changelog">Changelog</a>
+<a href="/roadmap">Roadmap</a>
+<a href="https://github.com/alilibx/kerstel/blob/main/LICENSE">License</a>
+</nav>
+</div>
+</footer>
+<script src="/hero.js" defer></script>
+</body>
+</html>
