@@ -191,7 +191,7 @@
   &quot;globalPassThroughEnv&quot;: [&quot;KERSTEL_SOCKET&quot;, &quot;KERSTEL_TOKEN_FILE&quot;, &quot;KERSTEL_HOOK_DIR&quot;]
 }
 </code></pre>
-<p>Without this, a task under <code>turbo run dev</code> on your machine starts with the hook loaded but no daemon to ask, and the first reference read fails with an error naming <code>kerstel doctor</code>. Nx does no filtering and needs nothing.</p>
+<p>Without this, a task under <code>turbo run dev</code> on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal <code>kerstel://</code> reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host&#39;s settings. Nx does no filtering and needs nothing.</p>
 <h2>Bun</h2>
 <p>On your machine, under Bun, the hook resolves every reference in the environment when the process starts, so <code>Bun.env.KEY</code> and <code>process.env.KEY</code> both hold the value. A reference assigned later, by a dotenv library for example, resolves through <code>process.env</code> but not through <code>Bun.env</code>. Read late-assigned values through <code>process.env</code>. On a host none of this applies: there is no hook, and <code>Bun.env</code> holds whatever the host set.</p>
 <h2>Checklist</h2>

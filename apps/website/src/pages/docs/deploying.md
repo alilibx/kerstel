@@ -79,7 +79,7 @@ Turborepo's strict environment mode, the default, hands a task only the variable
 }
 ```
 
-Without this, a task under `turbo run dev` on your machine starts with the hook loaded but no daemon to ask, and the first reference read fails with an error naming `kerstel doctor`. Nx does no filtering and needs nothing.
+Without this, a task under `turbo run dev` on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal `kerstel://` reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host's settings. Nx does no filtering and needs nothing.
 
 ## Bun
 
