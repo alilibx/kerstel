@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.3 (unreleased)
 
+### Added
+
+- Wired scripts now work on deploy hosts. `kerstel init` writes a small launcher at `.kerstel/exec.cjs`, meant to be committed, and wires each command as `node .kerstel/exec.cjs -- <command>`. On your machine the launcher runs `kerstel exec`; on Vercel, Netlify, Railway, Fly, Heroku, a Docker build, or any other host with no Kerstel, it prints `kerstel: not installed here, running without it: <command>` and runs the command unchanged, so `npm run build` and `npm start` no longer fail with `kerstel: command not found`. It never picks a `kerstel` from `node_modules/.bin`. Re-running `init` converts scripts wired by an older Kerstel, rewrites a launcher that is out of date or edited, and warns when `.gitignore` hides `.kerstel/`. `kerstel doctor` gains a Launcher row and names scripts still in the old form; `kerstel uninstall` deletes the launcher.
+
 ### Changed
 
 - `kerstel update` shows a progress bar while the binary downloads, with the size received over the total, and names each step: downloading, verifying the checksum, installing. Before, it printed one line and then nothing until the swap was done. Piped, it prints plain lines, as the installer does.

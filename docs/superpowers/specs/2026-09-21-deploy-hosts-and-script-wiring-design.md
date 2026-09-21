@@ -105,7 +105,7 @@ Each refused script is named on its own line before the overview, whether or not
 
 ### 5.5 The self-check
 
-§8 step 6 of the product spec runs its probe through `node .kerstel/exec.cjs -- <runtime> -e ...` from the package root, so the file just written is the thing being checked. The probe's `PATH` is the wizard's own, so it finds the binary the wizard is running from.
+§8 step 6 of the product spec runs its probe through `<runtime> .kerstel/exec.cjs -- <runtime> -e ...` from the package root, with the directory of the running binary put first on the probe's `PATH`, so the file just written is the thing being checked and it finds the binary the wizard is running from. Running from source there is no `kerstel` binary on any `PATH`, so the probe calls the CLI entry point directly, as before; the launcher's own tests cover the file.
 
 ## 6. `doctor`
 

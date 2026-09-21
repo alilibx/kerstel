@@ -13,10 +13,11 @@ const passingProject: ProjectStatus = {
   runtime: "node",
   packageManager: "npm",
   envFiles: [".env"],
-  scripts: { wrappable: 3, wired: 3, partlyWired: [], skipped: [] },
+  scripts: { wrappable: 3, wired: 3, oldForm: [], partlyWired: [], skipped: [] },
   references: { total: 9, resolvable: 9, unresolved: [] },
   unreadable: [],
   shadowed: [],
+  launcher: null,
 };
 
 test("Wrapper: a kerstel in node_modules/.bin is a problem, and absent otherwise", () => {
@@ -306,7 +307,7 @@ test("Project Scope: warn when it could not be derived", () => {
 });
 
 test("Project Scripts: pass when every wrappable script is wired", () => {
-  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 3, partlyWired: [], skipped: [] } } }));
+  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 3, oldForm: [], partlyWired: [], skipped: [] } } }));
   expect(checkFor(checks, "Scripts")).toEqual({
     group: "project",
     status: "pass",
@@ -317,7 +318,7 @@ test("Project Scripts: pass when every wrappable script is wired", () => {
 
 test("Project Scripts: warn with a count and a fix when some are not wired", () => {
   const checks = gatherChecks(
-    allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 1, partlyWired: [], skipped: [] } }, cli: "ks" }),
+    allPassFacts({ project: { ...passingProject, scripts: { wrappable: 3, wired: 1, oldForm: [], partlyWired: [], skipped: [] } }, cli: "ks" }),
   );
   expect(checkFor(checks, "Scripts")).toEqual({
     group: "project",
@@ -331,7 +332,7 @@ test("Project Scripts: warn with a count and a fix when some are not wired", () 
 test("Project Scripts: names half-wired scripts and refused ones, and refused ones do not fail the check", () => {
   const partly = gatherChecks(
     allPassFacts({
-      project: { ...passingProject, scripts: { wrappable: 3, wired: 2, partlyWired: ["dev"], skipped: [] } },
+      project: { ...passingProject, scripts: { wrappable: 3, wired: 2, oldForm: [], partlyWired: ["dev"], skipped: [] } },
       cli: "ks",
     }),
   );
@@ -347,7 +348,7 @@ test("Project Scripts: names half-wired scripts and refused ones, and refused on
     allPassFacts({
       project: {
         ...passingProject,
-        scripts: { wrappable: 2, wired: 2, partlyWired: [], skipped: [{ name: "postbuild", reason: "changes-directory" }] },
+        scripts: { wrappable: 2, wired: 2, oldForm: [], partlyWired: [], skipped: [{ name: "postbuild", reason: "changes-directory" }] },
       },
     }),
   );
@@ -461,7 +462,7 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(outside).toContain("Run `ks init` inside a project");
 
   const unwired = howItWorksNote({
-    project: { ...passingProject, scripts: { wrappable: 2, wired: 0, partlyWired: [], skipped: [] }, references: { total: 0, resolvable: 0, unresolved: [] } },
+    project: { ...passingProject, scripts: { wrappable: 2, wired: 0, oldForm: [], partlyWired: [], skipped: [] }, references: { total: 0, resolvable: 0, unresolved: [] } },
     cli: "kerstel",
   });
   expect(unwired).toContain("`kerstel init`");
@@ -470,6 +471,57 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(howItWorksNote({ project: passingProject, cli: "ks" })).toBeNull();
   // No scripts to wire, but references already resolve: init has been here.
   expect(
-    howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 0, wired: 0, partlyWired: [], skipped: [] } }, cli: "ks" }),
+    howItWorksNote({ project: { ...passingProject, scripts: { wrappable: 0, wired: 0, oldForm: [], partlyWired: [], skipped: [] } }, cli: "ks" }),
   ).toBeNull();
+});
+
+test("Project Launcher: absent with nothing wired, then one row per state", () => {
+  expect(checkFor(gatherChecks(allPassFacts({ project: passingProject })), "Launcher")).toBeUndefined();
+
+  const row = (launcher: ProjectStatus["launcher"]) =>
+    checkFor(gatherChecks(allPassFacts({ project: { ...passingProject, launcher }, cli: "ks" })), "Launcher");
+  expect(row({ kind: "current" })).toEqual({
+    group: "project",
+    status: "pass",
+    label: "Launcher",
+    detail: ".kerstel/exec.cjs is current",
+  });
+  expect(row({ kind: "missing" })).toEqual({
+    group: "project",
+    status: "problem",
+    label: "Launcher",
+    detail: ".kerstel/exec.cjs is missing",
+    fix: "ks init",
+  });
+  expect(row({ kind: "stale", format: 0 })).toEqual({
+    group: "project",
+    status: "warn",
+    label: "Launcher",
+    detail: ".kerstel/exec.cjs is format 0, current is 1",
+    fix: "ks init",
+  });
+  expect(row({ kind: "edited" })).toEqual({
+    group: "project",
+    status: "warn",
+    label: "Launcher",
+    detail: ".kerstel/exec.cjs differs from what ks init writes",
+    fix: "ks init",
+  });
+  expect(row({ kind: "foreign" })).toEqual({
+    group: "project",
+    status: "warn",
+    label: "Launcher",
+    detail: ".kerstel/exec.cjs is not Kerstel's (no marker line)",
+    fix: "ks init",
+  });
+});
+
+test("Project Scripts: names old-form scripts", () => {
+  const checks = gatherChecks(
+    allPassFacts({
+      project: { ...passingProject, scripts: { wrappable: 3, wired: 2, oldForm: ["build"], partlyWired: [], skipped: [] } },
+      cli: "ks",
+    }),
+  );
+  expect(checkFor(checks, "Scripts")).toMatchObject({ status: "warn", detail: "2 of 3 go through Kerstel; old form: build" });
 });

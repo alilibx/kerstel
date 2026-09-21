@@ -58,8 +58,22 @@ test("unwiring a compound script strips every prefix and keeps the assignments",
 }
 `;
   const wired = wirePackageJson(source).contents;
-  expect(wired).toContain('"dev": "kerstel exec -- node a.js && NODE_ENV=x kerstel exec -- next dev | cat"');
+  expect(wired).toContain('"dev": "node .kerstel/exec.cjs -- node a.js && NODE_ENV=x node .kerstel/exec.cjs -- next dev | cat"');
   const result = unwirePackageJson(wired);
   expect(result.unwrapped).toEqual(["dev"]);
   expect(result.contents).toBe(source);
+});
+
+test("unwiring strips the old `kerstel exec -- ` form too", () => {
+  const source = `{
+  "scripts": {
+    "dev": "kerstel exec -- next dev",
+    "both": "kerstel exec -- node a.js && node .kerstel/exec.cjs -- next dev"
+  }
+}
+`;
+  const result = unwirePackageJson(source);
+  expect(result.unwrapped).toEqual(["dev", "both"]);
+  expect(result.contents).toContain('"dev": "next dev"');
+  expect(result.contents).toContain('"both": "node a.js && next dev"');
 });

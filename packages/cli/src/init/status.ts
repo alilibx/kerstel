@@ -5,8 +5,9 @@ import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } fr
 import { parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
 import { findShadowedBinaries } from "./shadow";
+import { launcherStatus, type LauncherStatus } from "./launcher";
 import { scriptState, type ScriptSkipReason } from "./script-shell";
-import { EXEC_PREFIX, wirePackageJson } from "./wiring";
+import { EXEC_PREFIX, LEGACY_EXEC_PREFIX, wirePackageJson } from "./wiring";
 
 export interface ProjectStatus {
   root: string;
@@ -23,9 +24,13 @@ export interface ProjectStatus {
   scripts: {
     wrappable: number;
     wired: number;
+    /** Wired in full, but with the `kerstel exec -- ` form an older Kerstel wrote. `init` converts them. */
+    oldForm: string[];
     partlyWired: string[];
     skipped: Array<{ name: string; reason: ScriptSkipReason }>;
   };
+  /** The committed launcher, or null when no script is wired in any form, so there is nothing to check. */
+  launcher: LauncherStatus | null;
   references: { total: number; resolvable: number; unresolved: string[] };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
@@ -84,14 +89,15 @@ export function projectStatus(
   const packageSource = readFileSync(detected.packageJsonPath, "utf8");
   const wiring = wirePackageJson(packageSource);
   const wired = wiring.skipped.filter((skip) => skip.reason === "already-wired").length;
-  const partlyWired = wiring.rewrites
-    .filter((rewrite) => scriptState(rewrite.before, EXEC_PREFIX).state === "partly-wired")
-    .map((rewrite) => rewrite.name);
+  const stateOf = (rewrite: { before: string }) => scriptState(rewrite.before, EXEC_PREFIX, [LEGACY_EXEC_PREFIX]).state;
+  const oldForm = wiring.rewrites.filter((rewrite) => stateOf(rewrite) === "wired-old-form").map((r) => r.name);
+  const partlyWired = wiring.rewrites.filter((rewrite) => stateOf(rewrite) === "partly-wired").map((r) => r.name);
   const skipped = wiring.skipped.flatMap((skip) =>
     skip.reason === "lifecycle" || skip.reason === "already-wired" || skip.reason === "not-a-string"
       ? []
       : [{ name: skip.name, reason: skip.reason }],
   );
+  const anyWired = wired + oldForm.length + partlyWired.length > 0;
 
   const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
@@ -110,7 +116,8 @@ export function projectStatus(
     runtime: detected.runtime,
     packageManager: detected.packageManager,
     envFiles: detected.envFiles.map((file) => file.name),
-    scripts: { wrappable: wired + wiring.rewrites.length, wired, partlyWired, skipped },
+    scripts: { wrappable: wired + wiring.rewrites.length, wired, oldForm, partlyWired, skipped },
+    launcher: anyWired ? launcherStatus(detected.root) : null,
     references: { total, resolvable, unresolved },
     unreadable,
     shadowed: findShadowedBinaries(detected.root),

@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { doctorCommand } from "../src/commands/doctor";
 import { projectStatus } from "../src/init/status";
 import { runCli } from "../src/index";
@@ -21,7 +21,10 @@ afterEach(() => {
 function makeProject(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "kerstel-status-"));
   tempDirs.push(root);
-  for (const [name, contents] of Object.entries(files)) writeFileSync(join(root, name), contents);
+  for (const [name, contents] of Object.entries(files)) {
+    mkdirSync(join(root, dirname(name)), { recursive: true });
+    writeFileSync(join(root, name), contents);
+  }
   return root;
 }
 
@@ -77,7 +80,7 @@ test("projectStatus reports an unwired project", () => {
   const status = projectStatus(root, emptyVault);
   expect(status?.scope).toBe("site");
   expect(status?.runtime).toBe("node");
-  expect(status?.scripts).toEqual({ wrappable: 1, wired: 0, partlyWired: [], skipped: [] });
+  expect(status?.scripts).toEqual({ wrappable: 1, wired: 0, oldForm: [], partlyWired: [], skipped: [] });
   expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [] });
   expect(status?.envFiles).toEqual([".env"]);
 });
@@ -87,7 +90,7 @@ test("projectStatus reports a wired project and which references resolve", async
   await runCli(["set", "site/PRESENT", "--value", "here"]);
 
   const root = makeProject({
-    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "kerstel exec -- next dev"\n  }\n}\n',
+    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
     ".env": "PRESENT=kerstel://site/PRESENT\nMISSING=kerstel://site/MISSING\nPLAIN=still-plain\n",
   });
 
@@ -95,7 +98,7 @@ test("projectStatus reports a wired project and which references resolve", async
   const vault = openVault(key);
   try {
     const status = projectStatus(root, vault);
-    expect(status?.scripts).toEqual({ wrappable: 1, wired: 1, partlyWired: [], skipped: [] });
+    expect(status?.scripts).toEqual({ wrappable: 1, wired: 1, oldForm: [], partlyWired: [], skipped: [] });
     expect(status?.references.total).toBe(2);
     expect(status?.references.resolvable).toBe(1);
     expect(status?.references.unresolved).toEqual(["kerstel://site/MISSING"]);
@@ -107,7 +110,7 @@ test("projectStatus reports a wired project and which references resolve", async
 test("doctor prints the project section when run inside a project", async () => {
   isolateEnv({ prefix: "status-doctor" });
   const root = makeProject({
-    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "kerstel exec -- next dev"\n  }\n}\n',
+    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
     ".env": "PRESENT=kerstel://site/PRESENT\n",
   });
 
@@ -194,17 +197,34 @@ test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", as
 test("projectStatus names half-wired scripts and the ones the wirer refuses", () => {
   const root = makeProject({
     "package.json":
-      '{\n  "name": "site",\n  "scripts": {\n    "dev": "kerstel exec -- node a.js && next dev",\n    "build": "kerstel exec -- next build",\n    "postbuild": "cd out && node fix.js",\n    "clean": "rm -rf dist"\n  }\n}\n',
+      '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- node a.js && next dev",\n    "build": "node .kerstel/exec.cjs -- next build",\n    "postbuild": "cd out && node fix.js",\n    "clean": "rm -rf dist"\n  }\n}\n',
     ".env": "A=plain\n",
   });
   const status = projectStatus(root, emptyVault);
   expect(status?.scripts).toEqual({
     wrappable: 2,
     wired: 1,
-    partlyWired: ["dev"],
+    oldForm: [], partlyWired: ["dev"],
     skipped: [
       { name: "postbuild", reason: "changes-directory" },
       { name: "clean", reason: "nothing-to-wire" },
     ],
   });
+});
+
+test("projectStatus names old-form scripts and reports the launcher", () => {
+  const root = makeProject({
+    "package.json":
+      '{\n  "name": "site",\n  "scripts": {\n    "dev": "kerstel exec -- next dev",\n    "build": "node .kerstel/exec.cjs -- next build"\n  }\n}\n',
+    ".env": "A=plain\n",
+  });
+  const status = projectStatus(root, emptyVault);
+  expect(status?.scripts).toEqual({ wrappable: 2, wired: 1, oldForm: ["dev"], partlyWired: [], skipped: [] });
+  expect(status?.launcher).toEqual({ kind: "missing" });
+
+  const unwired = makeProject({
+    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "next dev"\n  }\n}\n',
+    ".env": "A=plain\n",
+  });
+  expect(projectStatus(unwired, emptyVault)?.launcher).toBeNull();
 });

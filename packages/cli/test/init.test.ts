@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
+import { launcherSource } from "../src/init/launcher";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   initCommand,
   parseInitArgs,
@@ -29,7 +30,7 @@ let handle: DaemonHandle | null = null;
 let daemonVault: Vault | null = null;
 
 /**
- * `init`'s self-check spawns `kerstel exec -- node -e ...`, which needs a
+ * `init`'s self-check spawns `node .kerstel/exec.cjs -- node -e ...`, which needs a
  * daemon serving THIS test's KERSTEL_HOME on the real socketPath().
  * test/helpers/boot-daemon.ts deliberately boots a different thing -- its own
  * throwaway vault on its own socket -- which that child could never find.
@@ -63,7 +64,10 @@ const createdDirs: string[] = [];
 function makeProject(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "kerstel-init-"));
   createdDirs.push(root);
-  for (const [name, contents] of Object.entries(files)) writeFileSync(join(root, name), contents);
+  for (const [name, contents] of Object.entries(files)) {
+    mkdirSync(join(root, dirname(name)), { recursive: true });
+    writeFileSync(join(root, name), contents);
+  }
   return root;
 }
 
@@ -239,7 +243,7 @@ test("init migrates an npm project end to end", async () => {
   expect(readFileSync(join(root, "package.json"), "utf8")).toBe(`{
   "name": "@acme/demo-app",
   "scripts": {
-    "dev": "kerstel exec -- next dev",
+    "dev": "node .kerstel/exec.cjs -- next dev",
     "postinstall": "patch-package"
   }
 }
@@ -312,7 +316,7 @@ test("a bun project is wired through package scripts alone", async () => {
   expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
   expect(readFileSync(join(root, "package.json"), "utf8")).toContain(
-    '"dev": "kerstel exec -- bun run index.ts"',
+    '"dev": "node .kerstel/exec.cjs -- bun run index.ts"',
   );
   // `kerstel exec` passes --preload to bun itself, so init leaves no per-machine
   // absolute path behind in a committed config file.
@@ -722,7 +726,7 @@ async function captureLog(body: () => Promise<unknown>): Promise<string> {
 const WIRED_PACKAGE = `{
   "name": "@acme/demo-app",
   "scripts": {
-    "dev": "kerstel exec -- next dev"
+    "dev": "node .kerstel/exec.cjs -- next dev"
   }
 }
 `;
@@ -753,6 +757,7 @@ test("--dry-run lists only the references the vault really lacks", async () => {
 
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
+    ".kerstel/exec.cjs": launcherSource(),
     ".env": "HAVE_IT=kerstel://demo-app/HAVE_IT\nNEED_IT=kerstel://demo-app/NEED_IT\n",
   });
 
@@ -781,6 +786,7 @@ test("the teammate flow stores values when nothing else needs changing", async (
 
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
+    ".kerstel/exec.cjs": launcherSource(),
     ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
   });
 
@@ -828,6 +834,7 @@ test("--keep naming a key that is already a reference is reported", async () => 
   isolateEnv({ prefix: "init-keep-ref" });
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
+    ".kerstel/exec.cjs": launcherSource(),
     ".env": "ALREADY=kerstel://demo-app/ALREADY\nPLAIN=value\n",
   });
 
@@ -983,4 +990,54 @@ test("under --yes the overview shows config values but never a credential-shaped
   expect(out).toMatch(/^\s+NODE_ENV\s+development\s/m);
   expect(out).not.toContain(harmless);
   expect(out).toContain(`${"a".repeat(39)}…`);
+});
+
+// ---------------------------------------------------------------------------
+// The launcher. Spec 2026-09-21 §4.1.
+
+test("init writes the launcher, rewrites a stale or edited one, and leaves a current one alone", async () => {
+  isolateEnv({ prefix: "init-launcher" });
+  await bootLocalDaemon();
+
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "API_KEY=sk-launcher\n" });
+  expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  const path = join(root, ".kerstel", "exec.cjs");
+  expect(readFileSync(path, "utf8")).toBe(launcherSource());
+
+  // Current: nothing to change, nothing asked.
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter([]))).toBe(0);
+  } finally {
+    console.log = original;
+  }
+  expect(captured.join("\n")).toContain("Already migrated");
+
+  // Edited: rewritten on the next run.
+  writeFileSync(path, `${launcherSource()}// edited\n`);
+  expect(await runInit(options(root), new ScriptedPrompter(["apply"]))).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(launcherSource());
+
+  // Stale: rewritten too.
+  writeFileSync(path, launcherSource().replace("format 1.", "format 0."));
+  expect(await runInit(options(root), new ScriptedPrompter(["apply"]))).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(launcherSource());
+});
+
+test("init warns when .gitignore hides the launcher's directory", async () => {
+  isolateEnv({ prefix: "init-launcher-gitignore" });
+  await bootLocalDaemon();
+
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "API_KEY=sk-launcher\n", ".gitignore": ".kerstel/\n" });
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  } finally {
+    console.log = original;
+  }
+  expect(captured.join("\n")).toContain(".gitignore hides .kerstel/, so the launcher would not reach your deploy host");
 });

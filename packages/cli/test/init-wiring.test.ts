@@ -10,7 +10,7 @@ const NPM_PACKAGE = `{
     "dev": "next dev",
     "build": "next build",
     "postinstall": "patch-package",
-    "lint": "kerstel exec -- eslint ."
+    "lint": "node .kerstel/exec.cjs -- eslint ."
   },
   "dependencies": {
     "next": "^15.0.0"
@@ -22,10 +22,10 @@ const NPM_PACKAGE_WIRED = `{
   "name": "demo",
   "version": "1.0.0",
   "scripts": {
-    "dev": "kerstel exec -- next dev",
-    "build": "kerstel exec -- next build",
+    "dev": "node .kerstel/exec.cjs -- next dev",
+    "build": "node .kerstel/exec.cjs -- next build",
     "postinstall": "patch-package",
-    "lint": "kerstel exec -- eslint ."
+    "lint": "node .kerstel/exec.cjs -- eslint ."
   },
   "dependencies": {
     "next": "^15.0.0"
@@ -34,7 +34,7 @@ const NPM_PACKAGE_WIRED = `{
 `;
 
 test("wrapScript builds the shim invocation", () => {
-  expect(wrapScript("next dev")).toBe("kerstel exec -- next dev");
+  expect(wrapScript("next dev")).toBe("node .kerstel/exec.cjs -- next dev");
 });
 
 test("wirePackageJson rewrites scripts and preserves key order and formatting", () => {
@@ -64,7 +64,7 @@ test("wirePackageJson never wraps an npm lifecycle hook", () => {
   expect(result.rewrites.map((r) => r.name)).toEqual(["start"]);
   expect(result.contents).toContain('"preinstall": "node check.js"');
   expect(result.contents).toContain('"prepublishOnly": "npm test"');
-  expect(result.contents).toContain('"start": "kerstel exec -- node server.js"');
+  expect(result.contents).toContain('"start": "node .kerstel/exec.cjs -- node server.js"');
 });
 
 test("wirePackageJson is idempotent and leaves an already-wired file byte-identical", () => {
@@ -78,14 +78,14 @@ test("wirePackageJson is idempotent and leaves an already-wired file byte-identi
 test("wirePackageJson preserves a tab indent", () => {
   const source = '{\n\t"scripts": {\n\t\t"dev": "vite"\n\t}\n}\n';
   expect(wirePackageJson(source).contents).toBe(
-    '{\n\t"scripts": {\n\t\t"dev": "kerstel exec -- vite"\n\t}\n}\n',
+    '{\n\t"scripts": {\n\t\t"dev": "node .kerstel/exec.cjs -- vite"\n\t}\n}\n',
   );
 });
 
 test("wirePackageJson preserves a four-space indent", () => {
   const source = '{\n    "scripts": {\n        "dev": "vite"\n    }\n}\n';
   expect(wirePackageJson(source).contents).toBe(
-    '{\n    "scripts": {\n        "dev": "kerstel exec -- vite"\n    }\n}\n',
+    '{\n    "scripts": {\n        "dev": "node .kerstel/exec.cjs -- vite"\n    }\n}\n',
   );
 });
 
@@ -152,7 +152,7 @@ test("wirePackageJson wires each command of a compound script, after its assignm
   "scripts": {
     "dev": "node scripts/copy.mjs && next dev --port 3020",
     "start": "NODE_ENV=production next start",
-    "half": "kerstel exec -- node a.js && next dev",
+    "half": "node .kerstel/exec.cjs -- node a.js && next dev",
     "postbuild": "cd out && node fix.js",
     "clean": "rm -rf dist"
   }
@@ -160,13 +160,33 @@ test("wirePackageJson wires each command of a compound script, after its assignm
 `;
   const result = wirePackageJson(source);
   expect(result.rewrites.map((r) => [r.name, r.after])).toEqual([
-    ["dev", "kerstel exec -- node scripts/copy.mjs && kerstel exec -- next dev --port 3020"],
-    ["start", "NODE_ENV=production kerstel exec -- next start"],
-    ["half", "kerstel exec -- node a.js && kerstel exec -- next dev"],
+    ["dev", "node .kerstel/exec.cjs -- node scripts/copy.mjs && node .kerstel/exec.cjs -- next dev --port 3020"],
+    ["start", "NODE_ENV=production node .kerstel/exec.cjs -- next start"],
+    ["half", "node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev"],
   ]);
   expect(result.skipped).toEqual([
     { name: "postbuild", reason: "changes-directory" },
     { name: "clean", reason: "nothing-to-wire" },
   ]);
+  expect(wirePackageJson(result.contents).changed).toBe(false);
+});
+
+test("wirePackageJson converts the old `kerstel exec -- ` form to the launcher, per command", () => {
+  const source = `{
+  "scripts": {
+    "dev": "kerstel exec -- next dev",
+    "half": "kerstel exec -- node a.js && next dev",
+    "old-shape": "kerstel exec -- node build.js > out.log",
+    "mine": "kerstel run -- node x.js"
+  }
+}
+`;
+  const result = wirePackageJson(source);
+  expect(result.rewrites.map((r) => [r.name, r.after])).toEqual([
+    ["dev", "node .kerstel/exec.cjs -- next dev"],
+    ["half", "node .kerstel/exec.cjs -- node a.js && node .kerstel/exec.cjs -- next dev"],
+    ["old-shape", "node .kerstel/exec.cjs -- node build.js > out.log"],
+  ]);
+  expect(result.skipped).toEqual([{ name: "mine", reason: "already-wired" }]);
   expect(wirePackageJson(result.contents).changed).toBe(false);
 });

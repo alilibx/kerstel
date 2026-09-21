@@ -109,11 +109,12 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
 
 /** Spec §5.1 step 5. */
 export function renderChangeSummary(
-  changes: { label: string; kind: "env" | "package" | "gitignore"; count: number }[],
+  changes: { label: string; kind: "env" | "package" | "gitignore" | "launcher"; count: number }[],
 ): string[] {
   return changes.map(({ label, kind, count }) => {
     if (kind === "env") return `${label}: ${plural(count, "value becomes a reference", "values become references")}`;
     if (kind === "package") return `${label}: ${plural(count, "script goes through Kerstel", "scripts go through Kerstel")}`;
+    if (kind === "launcher") return `${label}: ${count === 0 ? "the launcher your scripts run through is written" : "the launcher is rewritten"}`;
     return `${label}: ${plural(count, "line hiding .env files is removed", "lines hiding .env files are removed")}`;
   });
 }
