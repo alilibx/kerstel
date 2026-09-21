@@ -19,7 +19,7 @@ import {
   type Prompter,
 } from "../init/prompts";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
-import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, launcherPath, planLauncher } from "../init/launcher";
+import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, planLauncher } from "../init/launcher";
 import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
@@ -541,16 +541,20 @@ class SelfCheckProblem extends Error {
 async function selfCheck(
   detected: DetectedProject,
   probe: { key: string; reference: string; expected: string },
+  /** True when this run wrote the launcher or found it current, so it is the thing to probe through. */
+  throughLauncher: boolean,
 ): Promise<SelfCheckResult> {
   const runtime = detected.runtime === "bun" ? "bun" : "node";
   const expression = `process.stdout.write(String(process.env.${probe.key}))`;
   // Spec 2026-09-21 §5.5: through the launcher just written, which finds this
   // binary on PATH. From source there is no `kerstel` on PATH for it to find,
   // so the probe calls the CLI entry point directly, as it did before.
-  // Only when the launcher is there to probe through: a project whose scripts
-  // are all lifecycle or refused has none, and then the probe calls the CLI
-  // as it always did.
-  const compiled = isCompiledBinary() && existsSync(launcherPath(detected.root));
+  // Only through a launcher this run wrote or verified. A project whose
+  // scripts are all lifecycle or refused has none, and a file that happens to
+  // sit at that path unverified (stale, edited, someone else's) must not
+  // decide whether the migration passed; then the probe calls the CLI as it
+  // always did.
+  const compiled = isCompiledBinary() && throughLauncher;
   const command = compiled
     ? [runtime, LAUNCHER_RELATIVE_PATH, "--", runtime, "-e", expression]
     : cliCommand(["exec", "--", runtime, "-e", expression]);
@@ -978,11 +982,16 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
             "Checking that a wired process can read the vault",
             "Self-check passed: a wired process resolved a reference.",
             async () => {
-              const outcome = await selfCheck(detected, {
-                key: probeDecision.key.key,
-                reference: formatReference(probeScope, probeDecision.key.key),
-                expected,
-              });
+              const outcome = await selfCheck(
+                detected,
+                {
+                  key: probeDecision.key.key,
+                  reference: formatReference(probeScope, probeDecision.key.key),
+                  expected,
+                },
+                // Written above when it was not current, so wired means current now.
+                anyWired,
+              );
               if (outcome.status !== "passed") throw new SelfCheckProblem(outcome);
               return outcome;
             },
