@@ -17,11 +17,16 @@ const NOT_FOUND = 127;
 const NOT_EXECUTABLE = 126;
 
 
-/** Directories on PATH, minus every node_modules/.bin: a dependency's `kerstel` there must never be picked. */
-function pathDirs() {
+/**
+ * Directories on PATH. With `skipBin`, minus every node_modules/.bin: that is
+ * where a dependency could plant a `kerstel`, so the binary is never looked
+ * for there. The command itself is looked for everywhere, since `next` and
+ * `vite` live exactly there.
+ */
+function pathDirs(skipBin) {
   return (process.env.PATH || "")
     .split(path.delimiter)
-    .filter((dir) => dir !== "" && !/[\\/]node_modules[\\/]\.bin(?:[\\/]|$)/.test(dir));
+    .filter((dir) => dir !== "" && !(skipBin && /[\\/]node_modules[\\/]\.bin(?:[\\/]|$)/.test(dir)));
 }
 
 function isExecutableFile(file) {
@@ -36,7 +41,7 @@ function isExecutableFile(file) {
 /** The Kerstel binary on PATH, or null. */
 function findKerstel() {
   const name = WINDOWS ? "kerstel.exe" : "kerstel";
-  for (const dir of pathDirs()) {
+  for (const dir of pathDirs(true)) {
     const file = path.join(dir, name);
     if (isExecutableFile(file)) return file;
   }
@@ -47,7 +52,7 @@ function findKerstel() {
 function resolveCommand(name) {
   if (/[\\/]/.test(name)) return name;
   const extensions = WINDOWS ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";") : [""];
-  for (const dir of pathDirs()) {
+  for (const dir of pathDirs(false)) {
     for (const extension of extensions) {
       const file = path.join(dir, name + extension);
       if (isExecutableFile(file)) return file;
@@ -133,7 +138,7 @@ function run() {
   });
 }
 
-module.exports = { quoteForCmd, windowsCommandLine };
+module.exports = { findKerstel, quoteForCmd, resolveCommand, windowsCommandLine };
 
 /**
  * True when this file is the script (`node .kerstel/exec.cjs -- ...`), not a

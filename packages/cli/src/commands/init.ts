@@ -53,8 +53,13 @@ import type { Vault } from "../vault/store";
  *      the vault or the credential store, having printed every diff.
  */
 
-/** A .gitignore line that would hide the launcher's directory: `.kerstel`, `.kerstel/`, `/.kerstel`, `.kerstel/*`. */
-const GITIGNORE_LAUNCHER_LINE = /^\s*\/?\.kerstel(\/\*?)?\s*$/;
+/**
+ * A .gitignore line that would hide the launcher: the directory in any of
+ * its spellings (`.kerstel`, `.kerstel/`, `/.kerstel`, `**\/.kerstel`,
+ * `.kerstel/*`, `.kerstel/**`) or the file itself (`.kerstel/exec.cjs`,
+ * `**\/exec.cjs`). A `!` negation is not a hide.
+ */
+const GITIGNORE_LAUNCHER_LINE = /^\s*(\*\*\/)?\/?(\.kerstel(\/(\*\*|\*|exec\.cjs))?\/?|\*\*\/exec\.cjs)\s*$/;
 
 function gitignoreHidesLauncher(root: string): boolean {
   const path = join(root, ".gitignore");

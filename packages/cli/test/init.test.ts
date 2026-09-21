@@ -1076,3 +1076,36 @@ test("init with nothing to wire writes no launcher and still passes its self-che
   expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
   expect(existsSync(join(root, ".kerstel"))).toBe(false);
 });
+
+test.each([".kerstel", ".kerstel/", "/.kerstel", "**/.kerstel/", ".kerstel/*", ".kerstel/**", ".kerstel/exec.cjs", "**/exec.cjs"])(
+  "init warns when .gitignore hides the launcher with %j",
+  async (pattern) => {
+    isolateEnv({ prefix: "init-launcher-ignore" });
+    await bootLocalDaemon();
+    const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "API_KEY=sk-x\n", ".gitignore": `node_modules\n${pattern}\n` });
+    const captured: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+    try {
+      expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+    } finally {
+      console.log = original;
+    }
+    expect(captured.join("\n")).toContain(".gitignore hides .kerstel/");
+  },
+);
+
+test("init does not warn for a .gitignore that only negates or names something else", async () => {
+  isolateEnv({ prefix: "init-launcher-noignore" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "API_KEY=sk-x\n", ".gitignore": "!.kerstel/\n.kerstel-cache\n" });
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  } finally {
+    console.log = original;
+  }
+  expect(captured.join("\n")).not.toContain(".gitignore hides");
+});

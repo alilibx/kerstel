@@ -226,3 +226,26 @@ test("the launcher runs when invoked through a symlinked absolute path", async (
 test("a CRLF checkout of the launcher still counts as current", () => {
   expect(classifyLauncher(launcherSource().replace(/\n/g, "\r\n"))).toEqual({ kind: "current" });
 });
+
+test("the command is looked for in node_modules/.bin, only kerstel is not", () => {
+  const copy = join(temp("resolve"), "exec.cjs");
+  writeFileSync(copy, launcherSource());
+  const require = createRequire(import.meta.url);
+  const { findKerstel, resolveCommand } = require(copy) as {
+    findKerstel: () => string | null;
+    resolveCommand: (name: string) => string | null;
+  };
+  const bin = join(temp("bin"), "node_modules", ".bin");
+  mkdirSync(bin, { recursive: true });
+  fakeKerstel(bin);
+  writeFileSync(join(bin, "next"), "#!/bin/sh\n");
+  chmodSync(join(bin, "next"), 0o755);
+  const previous = process.env.PATH;
+  process.env.PATH = bin;
+  try {
+    expect(resolveCommand("next")).toBe(join(bin, "next"));
+    expect(findKerstel()).toBeNull();
+  } finally {
+    process.env.PATH = previous;
+  }
+});
