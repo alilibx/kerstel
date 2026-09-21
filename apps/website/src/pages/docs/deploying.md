@@ -25,7 +25,7 @@ Set every key your app reads in the host's own environment settings: the project
 Then decide what to do with `.env`:
 
 - **Keep it out of git.** Most hosts read only their own settings, and a gitignored `.env` never reaches them. This is the safe default.
-- **Or commit it, and set every key on the host.** A committed `.env` holds only `kerstel://` references, so it is safe to publish, and it doubles as the list of keys the host needs. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load `.env`, so a key set on the host wins.
+- **Or commit it, and set every key on the host.** Once every value is a reference, `.env` holds nothing sensitive and doubles as the list of keys the host needs. Check that first: `init` lets you leave a value in plaintext, and names every plaintext key it leaves behind, so a file with a plaintext secret in it is still a secret. Commit only when `init` reports no plaintext, or when what is left is meant to be public. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load `.env`, so a key set on the host wins.
 
 The mistake to avoid is a committed `.env` reaching a host where one key is **not** set. The framework loads the file, nothing overrides that line, and the app gets the literal reference:
 
@@ -47,7 +47,7 @@ A host runs some scripts without being asked, which is why they are wired throug
 | Railway, Coolify | `build` when present | `start`, else `main`, else `index.js` | a `Procfile` |
 | Fly.io | `build` when present | `start` when present | |
 | Heroku, Dokku, DigitalOcean | `heroku-postbuild`, else `build` | `start` unless a `Procfile` says otherwise | `heroku-prebuild`, `heroku-cleanup` |
-| Google Cloud Run, App Engine | `gcp-build`, else `build`, or the list in `GOOGLE_NODE_RUN_SCRIPTS` | `start`, else `main`, else `index.js` | a `Procfile`, `apphosting:build` |
+| Google Cloud Run, App Engine | the first of `apphosting:build`, the `GOOGLE_NODE_RUN_SCRIPTS` list, `gcp-build`, `build` | `start`, else `main`, else `index.js` | a `Procfile` |
 | Azure App Service, Static Web Apps | `build`, then `build:azure` | `start`, else `main`, else `server.js` and friends | |
 | AWS Amplify | `build` from its generated `amplify.yml` | never; runs `node <entrypoint>` | |
 | AWS Elastic Beanstalk | none documented | `Procfile`, else `start`, else `app.js` | |

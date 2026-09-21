@@ -43,7 +43,7 @@
 <p>Then decide what to do with <code>.env</code>:</p>
 <ul>
 <li><strong>Keep it out of git.</strong> Most hosts read only their own settings, and a gitignored <code>.env</code> never reaches them. This is the safe default.</li>
-<li><strong>Or commit it, and set every key on the host.</strong> A committed <code>.env</code> holds only <code>kerstel://</code> references, so it is safe to publish, and it doubles as the list of keys the host needs. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load <code>.env</code>, so a key set on the host wins.</li>
+<li><strong>Or commit it, and set every key on the host.</strong> Once every value is a reference, <code>.env</code> holds nothing sensitive and doubles as the list of keys the host needs. Check that first: <code>init</code> lets you leave a value in plaintext, and names every plaintext key it leaves behind, so a file with a plaintext secret in it is still a secret. Commit only when <code>init</code> reports no plaintext, or when what is left is meant to be public. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load <code>.env</code>, so a key set on the host wins.</li>
 </ul>
 <p>The mistake to avoid is a committed <code>.env</code> reaching a host where one key is <strong>not</strong> set. The framework loads the file, nothing overrides that line, and the app gets the literal reference:</p>
 <pre><code>Error: Publishable key not valid: kerstel://myapp/CLERK_PUBLISHABLE_KEY
@@ -98,9 +98,9 @@
 </tr>
 <tr>
 <td>Google Cloud Run, App Engine</td>
-<td><code>gcp-build</code>, else <code>build</code>, or the list in <code>GOOGLE_NODE_RUN_SCRIPTS</code></td>
+<td>the first of <code>apphosting:build</code>, the <code>GOOGLE_NODE_RUN_SCRIPTS</code> list, <code>gcp-build</code>, <code>build</code></td>
 <td><code>start</code>, else <code>main</code>, else <code>index.js</code></td>
-<td>a <code>Procfile</code>, <code>apphosting:build</code></td>
+<td>a <code>Procfile</code></td>
 </tr>
 <tr>
 <td>Azure App Service, Static Web Apps</td>
