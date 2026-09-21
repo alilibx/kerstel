@@ -10,5 +10,6 @@ description: Guides and reference for Kerstel, the local-first secrets manager f
 - [CLI reference](/docs/cli). Every command with its flags.
 - [How resolution works](/docs/how-it-works). References, scopes, the daemon, and the runtime hook.
 - [Working with a team](/docs/teams). Commit references, fill each teammate's local vault.
+- [Deploying](/docs/deploying). Hosts do not need Kerstel: what the launcher does there, and where the values come from.
 
 Looking for the threat model? See the [security model](/security).

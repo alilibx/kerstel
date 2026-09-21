@@ -30,7 +30,7 @@
 </nav>
 </div>
 </header>
-<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started" aria-current="page">Getting started</a></li><li><a href="/docs/cli">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li></ul></nav>
+<nav class="docs-nav" aria-label="Docs"><ul><li><a href="/docs/getting-started" aria-current="page">Getting started</a></li><li><a href="/docs/cli">CLI reference</a></li><li><a href="/docs/how-it-works">How resolution works</a></li><li><a href="/docs/teams">Working with a team</a></li><li><a href="/docs/deploying">Deploying</a></li></ul></nav>
 <main class="wrap">
 <h1>Getting started</h1>
 <p class="lede">Five minutes from a plaintext <code>.env</code> to one that is safe to commit.</p><h2>1. Install</h2>
@@ -84,7 +84,7 @@ ks init
 </code></pre>
 <p><code>init</code> is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed. A line with no readable key is named by file and line instead, never by its text. That includes a private key pasted unquoted across several lines (<code>-----BEGIN … -----END</code>), which <code>init</code> leaves as it is: store it with <code>ks set</code> and reference it, or put it on one line in double quotes with <code>\n</code>.</p>
 <p>If the same key appears in more than one file with different values, the highest-precedence file wins: <code>.env.&lt;x&gt;.local</code>, then <code>.env.local</code>, then <code>.env.&lt;x&gt;</code>, then <code>.env</code>. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.</p>
-<p>Afterwards, <code>npm run dev</code> is still <code>npm run dev</code>. Run <code>ks doctor</code> in the project to confirm the wiring.</p>
+<p>Afterwards, <code>npm run dev</code> is still <code>npm run dev</code>. Run <code>ks doctor</code> in the project to confirm the wiring. Commit <code>.kerstel/exec.cjs</code> along with <code>package.json</code>: it is what lets the same scripts run on a deploy host that has no Kerstel. See <a href="/docs/deploying">Deploying</a>.</p>
 
 </main>
 <footer class="site-footer">
