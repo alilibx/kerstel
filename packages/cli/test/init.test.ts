@@ -1041,3 +1041,38 @@ test("init warns when .gitignore hides the launcher's directory", async () => {
   }
   expect(captured.join("\n")).toContain(".gitignore hides .kerstel/, so the launcher would not reach your deploy host");
 });
+
+test("init names a foreign .kerstel/exec.cjs before replacing it", async () => {
+  isolateEnv({ prefix: "init-launcher-foreign" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    ".env": "API_KEY=sk-launcher\n",
+    ".kerstel/exec.cjs": "#!/bin/sh\necho mine\n",
+  });
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  } finally {
+    console.log = original;
+  }
+  const out = captured.join("\n");
+  expect(out).toContain("exists but is not Kerstel's launcher");
+  expect(out).toContain("a file that is not Kerstel's is replaced by the launcher");
+  expect(readFileSync(join(root, ".kerstel", "exec.cjs"), "utf8")).toBe(launcherSource());
+});
+
+test("init with nothing to wire writes no launcher and still passes its self-check", async () => {
+  isolateEnv({ prefix: "init-no-launcher" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": '{\n  "name": "lifecycle-only",\n  "scripts": {\n    "postinstall": "patch-package"\n  }\n}\n',
+    ".env": "API_KEY=sk-no-launcher\n",
+  });
+  expect(await runInit(options(root), new ScriptedPrompter(["accept", "apply"]))).toBe(0);
+  expect(existsSync(join(root, ".kerstel"))).toBe(false);
+});

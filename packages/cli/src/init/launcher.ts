@@ -54,8 +54,16 @@ export function launcherStatus(root: string): LauncherStatus {
   return classifyLauncher(contents);
 }
 
+/**
+ * A checkout with `core.autocrlf` rewrites the file's line endings; the
+ * launcher runs the same either way, so line endings do not count as an edit.
+ */
+function normalised(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
 export function classifyLauncher(contents: string): LauncherStatus {
-  if (contents === launcherSource()) return { kind: "current" };
+  if (normalised(contents) === launcherSource()) return { kind: "current" };
   const match = MARKER.exec(contents);
   if (!match) return { kind: "foreign" };
   const format = Number(match[1]);

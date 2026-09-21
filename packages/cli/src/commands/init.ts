@@ -19,7 +19,7 @@ import {
   type Prompter,
 } from "../init/prompts";
 import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
-import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, planLauncher } from "../init/launcher";
+import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, launcherPath, planLauncher } from "../init/launcher";
 import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
@@ -542,7 +542,10 @@ async function selfCheck(
   // Spec 2026-09-21 §5.5: through the launcher just written, which finds this
   // binary on PATH. From source there is no `kerstel` on PATH for it to find,
   // so the probe calls the CLI entry point directly, as it did before.
-  const compiled = isCompiledBinary();
+  // Only when the launcher is there to probe through: a project whose scripts
+  // are all lifecycle or refused has none, and then the probe calls the CLI
+  // as it always did.
+  const compiled = isCompiledBinary() && existsSync(launcherPath(detected.root));
   const command = compiled
     ? [runtime, LAUNCHER_RELATIVE_PATH, "--", runtime, "-e", expression]
     : cliCommand(["exec", "--", runtime, "-e", expression]);
@@ -760,6 +763,13 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     // Kerstel writes. A project with nothing wired gets no launcher.
     const anyWired = packageWiring.changed || packageWiring.skipped.some((skip) => skip.reason === "already-wired");
     const launcher = anyWired ? planLauncher(detected.root) : null;
+    if (launcher?.status.kind === "foreign") {
+      console.log(
+        yellow(
+          `!  ${LAUNCHER_RELATIVE_PATH} exists but is not Kerstel's launcher (no marker line). Your scripts are about to run through that path, so it will be replaced.`,
+        ),
+      );
+    }
     if (launcher && gitignoreHidesLauncher(detected.root)) {
       console.log(
         yellow(
@@ -826,7 +836,13 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
           ? [{ label: "package.json", kind: "package" as const, count: packageWiring.rewrites.length }]
           : []),
         ...(launcher
-          ? [{ label: LAUNCHER_RELATIVE_PATH, kind: "launcher" as const, count: launcher.before === null ? 0 : 1 }]
+          ? [
+              {
+                label: LAUNCHER_RELATIVE_PATH,
+                kind: "launcher" as const,
+                count: launcher.status.kind === "missing" ? 0 : launcher.status.kind === "foreign" ? 2 : 1,
+              },
+            ]
           : []),
         ...(gitignore ? [{ label: ".gitignore", kind: "gitignore" as const, count: gitignore.count }] : []),
       ]),

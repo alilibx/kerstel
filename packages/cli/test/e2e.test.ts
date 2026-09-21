@@ -489,3 +489,25 @@ test("a wired compound script runs every command hooked, with its leading assign
   expect(code).toBe(0);
   expect(stdout).toBe("one:sk-compound\nundefined:sk-compound\n");
 });
+
+test("the binary's init passes its self-check in a project with nothing to wire", async () => {
+  home = mkdtempSync(join(tmpdir(), "kerstel-e2e-nolauncher-"));
+  const project = mkdtempSync(join(tmpdir(), "kerstel-nolauncher-"));
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "lifecycle-only", scripts: { postinstall: "true" } }));
+  writeFileSync(join(project, ".env"), "API_KEY=sk-e2e-nolauncher\n");
+  const proc = Bun.spawn([BINARY, "init", "--yes", "--non-interactive"], {
+    cwd: project,
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) console.error(stdout + stderr);
+  expect(code).toBe(0);
+  expect(stdout).toContain("Self-check passed");
+  expect(existsSync(join(project, ".kerstel"))).toBe(false);
+});

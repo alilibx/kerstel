@@ -171,7 +171,6 @@ function printPlan(plan: UninstallPlan): void {
   for (const project of plan.restored) {
     const prefix = `${project.name}: `;
     const diffs = plan.files.filter((file) => file.label.startsWith(prefix));
-    if (diffs.length === 0) continue;
     const lines: string[] = [];
     for (const file of diffs) {
       if (lines.length > 0) lines.push("");
@@ -181,6 +180,7 @@ function printPlan(plan: UninstallPlan): void {
       if (lines.length > 0) lines.push("");
       lines.push(`${LAUNCHER_RELATIVE_PATH} is deleted (${launcher.path})`);
     }
+    if (lines.length === 0) continue;
     step(project.name, lines);
   }
 

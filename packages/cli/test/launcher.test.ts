@@ -207,3 +207,22 @@ test("launcherStatus and planLauncher read the file at the package root", () => 
   writeFileSync(join(root, ".kerstel", "exec.cjs"), `${launcherSource()}// tampered\n`);
   expect(planLauncher(root)).toMatchObject({ status: { kind: "edited" } });
 });
+
+test("the launcher runs when invoked through a symlinked absolute path", async () => {
+  const root = project();
+  const link = join(temp("link"), "proj");
+  symlinkSync(root, link);
+  const echo = dirname(Bun.which("echo") ?? "/bin/echo");
+  const proc = Bun.spawn(["node", join(link, ".kerstel", "exec.cjs"), "--", "echo", "via-symlink"], {
+    env: { PATH: `${NODE_DIR}:${echo}`, HOME: process.env.HOME ?? "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  expect(code).toBe(0);
+  expect(stdout).toBe("via-symlink\n");
+});
+
+test("a CRLF checkout of the launcher still counts as current", () => {
+  expect(classifyLauncher(launcherSource().replace(/\n/g, "\r\n"))).toEqual({ kind: "current" });
+});

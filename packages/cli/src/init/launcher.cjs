@@ -135,6 +135,20 @@ function run() {
 
 module.exports = { quoteForCmd, windowsCommandLine };
 
-// Run only when this file is the script (`node .kerstel/exec.cjs -- ...`), not
-// when a test requires it for the helpers above.
-if (process.argv[1] && path.resolve(process.argv[1]) === __filename) run();
+/**
+ * True when this file is the script (`node .kerstel/exec.cjs -- ...`), not a
+ * module a test required for the helpers above. `require.main` is the usual
+ * test; the realpath comparison covers a runtime that leaves it unset, and
+ * resolves the symlinks Node resolves in __filename but not in argv[1].
+ */
+function isMain() {
+  if (require.main === module) return true;
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1])) === __filename;
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) run();
