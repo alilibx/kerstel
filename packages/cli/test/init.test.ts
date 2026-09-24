@@ -681,6 +681,7 @@ test("a rerun names the keys still in plaintext instead of claiming migration", 
   expect(out).toContain("Nothing to change");
   expect(out).toContain("KEEP_ME");
   expect(out).not.toContain("Already migrated");
+  expect(out).toContain("To move a key between the vault and plain text later, run");
   // Rule 1 holds even here: the key is named, the value never is.
   expect(out).not.toContain("keep-this-value");
   expect(readFileSync(join(root, ".env"), "utf8")).toContain("KEEP_ME=keep-this-value");
@@ -708,6 +709,41 @@ test("a rerun of a fully migrated project still reports it as migrated", async (
 
   expect(code).toBe(0);
   expect(captured.join("\n")).toContain("Already migrated");
+  expect(captured.join("\n")).toContain("To move a key between the vault and plain text later, run");
+});
+
+test("a first run that leaves keys in plain text points at move", async () => {
+  isolateEnv({ prefix: "init-pointer" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "PORT=3000\nMOVE_ME=move-this-value\n" });
+  const out = await captureLog(() =>
+    runInit(options(root, ["--keep", "PORT"]), new ScriptedPrompter(["each", "project", "accept", "apply"])),
+  );
+  expect(out).toContain("To move a key between the vault and plain text later, run");
+});
+
+test("a first run whose only remaining plain text is a parser-refused line does not point at move", async () => {
+  isolateEnv({ prefix: "init-pointer-unsupported" });
+  await bootLocalDaemon();
+  const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7PEMBODY";
+  const tail = "kL0tuEJ6abcdEFGH1234567890abcdefghijklmnopqrstuvwxyz==";
+  const source = [
+    "API_KEY=sk-pem-test-value",
+    "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----",
+    body,
+    tail,
+    "-----END PRIVATE KEY-----",
+    "",
+  ].join("\n");
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": source });
+
+  const out = await captureLog(() => runInit(options(root, ["--yes", "--non-interactive"]), new DefaultsPrompter()));
+
+  // API_KEY is moved to the vault, leaving PRIVATE_KEY as the only plain-text
+  // value -- and PRIVATE_KEY is a line the parser refused to read at all, so
+  // `ks move` has nothing there to act on either.
+  expect(out).toContain("PRIVATE_KEY left untouched");
+  expect(out).not.toContain("To move a key between the vault and plain text later, run");
 });
 
 /** Runs `body` with console.log captured, and returns everything it printed. */

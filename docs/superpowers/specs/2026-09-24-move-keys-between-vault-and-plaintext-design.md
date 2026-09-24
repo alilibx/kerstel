@@ -87,7 +87,7 @@ Whenever `init` finishes with keys still in plain text, or reports "Already migr
 
 ## 3. What a move does
 
-`<project>` is the project's scope name, as `init` registered it.
+`<project>` is the project's scope name, as `init` registered it: the vault's project record whose root is this checkout (compared after resolving symlinks); without one, the single non-global scope the files reference; otherwise the name derived from `package.json`.
 
 | From → To | Env files | Vault |
 |---|---|---|
@@ -174,10 +174,13 @@ Interactive: the warning stays above Apply, and the default stays No. Direct: th
 - **A reference the vault does not hold** (a teammate's clone before `init` filled it in): named, not offered. `Run ks init to store it first.`
 - **A value the parser refused** (`init`'s unsupported lines): never listed.
 - **A key in plain text with different values in different files**, moving into the vault: the same rule and wording as `init` (the value from the first file wins; the others survive in the backup).
+- **A value with no plain-text spelling in one of its covered lines' own quoting**, moving out of the vault: e.g. a double-quoted line whose value holds both `'` and `"`, or a single-quoted line whose value holds `'` and `\`. `restoreLineValue` would fall back to an escaped form that the parser reads back as a different value, so the row is not moved at all — no file edit, no deletion, no git warning — and stays in the vault: `STRIPE_KEY: its value cannot be written as plain text in .env without changing it, so it stays in the vault.`
 
 ## 5. Apply
 
-In order:
+First, every env file to be rewritten is read again. The plan was made from what the scan read, and Apply? may have waited a while; a file that differs now would be overwritten with a rewrite of its old contents. If one differs, nothing is written, no backup is taken, and the command exits 1: `.env changed since ks move read it; nothing was changed. Run ks move again.`
+
+Then, in order:
 
 1. **Backup** (§5.1). Printed as `✓ Backed up .env, .env.local`.
 2. **Vault writes:** `setSecret` for every destination value.
@@ -190,11 +193,11 @@ In order:
 
 ### 5.1 The backup
 
-`createBackup` saves the env files to be rewritten, as `init` does. For a key already in the vault those files hold only `kerstel://` references, so the backup gains a `vault` section: every vault entry the move will delete (§3.1) or overwrite (§3.2), with its value, encrypted with the data key like the files, one `vault.enc` alongside the `.enc` files and its entries (`scope`, `key`, `bytes`, `sha256`, no value) listed in the manifest. `readBackup` returns it; `restoreBackup` ignores it, so restoring files never writes to the vault. The manifest stays `version: 1`, since the section is optional and older readers skip unknown fields.
+`createBackup` saves the env files to be rewritten, as `init` does. For a key already in the vault those files hold only `kerstel://` references, so the backup gains a `vault` section: every vault entry the move will delete (§3.1) or overwrite (§3.2), and every incoming plain-text value that loses to a destination kept under §3.2 (a Keep answer, or a second row of the same key merging into a destination an earlier row decided), saved under that destination's reference, since its files are rewritten to the reference and it survives nowhere else; each with its value, encrypted with the data key like the files, one `vault.enc` alongside the `.enc` files and its entries (`scope`, `key`, `bytes`, `sha256`, no value) listed in the manifest. `readBackupVault` returns it; `readBackup` and `restoreBackup` ignore it, so restoring files never writes to the vault. The manifest stays `version: 1`, since the section is optional and older readers skip unknown fields.
 
 ## 6. Other commands
 
-- **`uninstall`:** no change to what it restores; it reads backups through `readBackup`, which now also returns the `vault` section, and ignores it. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
+- **`uninstall`:** no change to what it restores: it restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more. It does read each backup's `vault` section (`readBackupVault`), in memory, for its loss check: a saved value is backup-only when the vault no longer holds that value at that reference and no restored env file has that key with that value. Such values are named by key, with `vault.enc` as where they live, like the other backup-only values, and refuse uninstall until `--force`. A `vault` section it cannot read makes the backup unreadable, which also refuses.
 - **`doctor`:** no change.
 - **`init`:** only the pointer line (§2.3).
 
@@ -206,7 +209,7 @@ In order:
 - `packages/cli/src/move/git.ts`: the tracked/ignored checks, via `Bun.spawnSync`, returning `null` outside a repository.
 - `packages/cli/src/commands/move.ts`: argument parsing, the prompts, the preview, apply.
 - `index.ts`: `move` in the dispatcher and the help text.
-- `packages/cli/src/init/backup.ts`: the optional `vault` section (§5.1).
+- `packages/cli/src/init/backup.ts`: the optional `vault` section (§5.1) and `readBackupVault`.
 - Reuses from `init`: env discovery and parsing, `explain`/`isSafeToDisplay`, `DESTINATION_CHOICES`, `formatReference`, `createBackup`, `restoreLineValue`, `setLineValue`.
 
 ## 8. Docs

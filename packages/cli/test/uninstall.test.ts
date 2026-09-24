@@ -347,9 +347,30 @@ test("a value init kept only in its backup trips the gate until --force", async 
   expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
   expect(existsSync(home)).toBe(true);
   const text = output.join("\n");
-  expect(text).toContain("Values init kept only in its encrypted backup");
+  expect(text).toContain("Values kept only in an encrypted backup of init or");
   expect(text).toContain("demo-app: API_KEY in .env");
   expect(text).not.toContain("first-backup-only");
+
+  expect(await uninstallCommand(["--yes", "--force"], undefined, NO_BINARY)).toBe(0);
+  expect(existsSync(home)).toBe(false);
+});
+
+test("a value only a move backup's vault section holds trips the gate until --force, named by key", async () => {
+  const { home } = await setup();
+  const { key } = await loadOrCreateDataKey();
+  createBackup({
+    scope: "demo-app",
+    dataKey: key,
+    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    vault: [{ scope: "global", key: "OLD_TOKEN", value: "move-backup-only" }],
+  });
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
+  expect(existsSync(home)).toBe(true);
+  const text = output.join("\n");
+  expect(text).toContain("Values kept only in an encrypted backup of init or");
+  expect(text).toContain("demo-app: OLD_TOKEN in vault.enc");
+  expect(text).not.toContain("move-backup-only");
 
   expect(await uninstallCommand(["--yes", "--force"], undefined, NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(false);

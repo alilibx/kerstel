@@ -85,6 +85,8 @@ ks init
 <p><code>init</code> is safe to run again. A second run migrates only what is new, and when there is nothing left to change it says so — naming any key that is still plaintext, whether you chose that or the line could not be parsed. A line with no readable key is named by file and line instead, never by its text. That includes a private key pasted unquoted across several lines (<code>-----BEGIN … -----END</code>), which <code>init</code> leaves as it is: store it with <code>ks set</code> and reference it, or put it on one line in double quotes with <code>\n</code>.</p>
 <p>If the same key appears in more than one file with different values, the highest-precedence file wins: <code>.env.&lt;x&gt;.local</code>, then <code>.env.local</code>, then <code>.env.&lt;x&gt;</code>, then <code>.env</code>. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.</p>
 <p>Afterwards, <code>npm run dev</code> is still <code>npm run dev</code>. Run <code>ks doctor</code> in the project to confirm the wiring. Commit <code>.kerstel/exec.cjs</code> along with <code>package.json</code>: it is what lets the same scripts run on a deploy host that has no Kerstel. See <a href="/docs/deploying">Deploying</a>.</p>
+<h3>Changing your mind</h3>
+<p><code>init</code> asks once where each key goes. To change that later, run <code>ks move</code>: pick keys, pick where each goes (this project&#39;s vault, the shared vault, or plain text), check the preview, and apply. <code>ks move STRIPE_KEY --to global --yes</code> does the same without menus. The files are backed up first, and a value that leaves the vault is saved in that backup.</p>
 
 </main>
 <footer class="site-footer">

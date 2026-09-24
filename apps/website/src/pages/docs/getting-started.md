@@ -102,3 +102,7 @@ ks init --dry-run
 If the same key appears in more than one file with different values, the highest-precedence file wins: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.
 
 Afterwards, `npm run dev` is still `npm run dev`. Run `ks doctor` in the project to confirm the wiring. Commit `.kerstel/exec.cjs` along with `package.json`: it is what lets the same scripts run on a deploy host that has no Kerstel. See [Deploying](/docs/deploying).
+
+### Changing your mind
+
+`init` asks once where each key goes. To change that later, run `ks move`: pick keys, pick where each goes (this project's vault, the shared vault, or plain text), check the preview, and apply. `ks move STRIPE_KEY --to global --yes` does the same without menus. The files are backed up first, and a value that leaves the vault is saved in that backup.

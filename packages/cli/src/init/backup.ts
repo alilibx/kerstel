@@ -22,10 +22,14 @@ import { decrypt, encrypt } from "../vault/crypto";
  * On-disk layout:
  *   ~/.kerstel/backups/<scope>/<timestamp>/<original name>.enc
  *   ~/.kerstel/backups/<scope>/<timestamp>/manifest.json
+ *   ~/.kerstel/backups/<scope>/<timestamp>/vault.enc
  *
  * The manifest is plaintext ON PURPOSE and carries no file contents: names,
  * byte counts and sha256 digests only, so `doctor` and a future `uninstall`
  * can list and verify backups without unlocking the vault.
+ *
+ * Vault values (when present) are one encrypted JSON array; the manifest lists
+ * their scope, key, byte count and digest, never the value.
  *
  * Blob format: the 12-byte nonce, then the ciphertext with its GCM tag. One
  * file, one encryption, no framing to get wrong.
@@ -51,12 +55,35 @@ export interface BackupFileEntry {
   sha256: string;
 }
 
+/** A vault entry `ks move` is about to delete or overwrite, with its value. */
+export interface BackupVaultValue {
+  scope: string;
+  key: string;
+  value: string;
+}
+
+/** The manifest's record of one saved vault value. No value, like BackupFileEntry. */
+export interface BackupVaultEntry {
+  scope: string;
+  key: string;
+  bytes: number;
+  sha256: string;
+}
+
+const VAULT_FILE = "vault.enc";
+
+function digest(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 export interface BackupManifest {
   version: 1;
   scope: string;
   timestamp: string;
   createdAt: number;
   files: BackupFileEntry[];
+  /** Optional, so a version-1 reader that predates it still reads the files. */
+  vault?: BackupVaultEntry[];
 }
 
 export interface BackupResult {
@@ -87,6 +114,7 @@ export function createBackup(options: {
   dataKey: Buffer;
   files: { name: string; contents: string }[];
   timestamp?: string;
+  vault?: BackupVaultValue[];
 }): BackupResult {
   const timestamp = options.timestamp ?? backupTimestamp();
   const scopeDir = join(backupsDir(), options.scope);
@@ -106,12 +134,25 @@ export function createBackup(options: {
       });
     }
 
+    let vaultEntries: BackupVaultEntry[] | undefined;
+    if (options.vault && options.vault.length > 0) {
+      const { ciphertext, nonce } = encrypt(JSON.stringify(options.vault), options.dataKey);
+      writePrivate(join(tempDir, VAULT_FILE), Buffer.concat([nonce, ciphertext]));
+      vaultEntries = options.vault.map((entry) => ({
+        scope: entry.scope,
+        key: entry.key,
+        bytes: Buffer.byteLength(entry.value),
+        sha256: digest(entry.value),
+      }));
+    }
+
     const manifest: BackupManifest = {
       version: 1,
       scope: options.scope,
       timestamp,
       createdAt: Date.now(),
       files: entries,
+      ...(vaultEntries ? { vault: vaultEntries } : {}),
     };
     writePrivate(join(tempDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -182,6 +223,36 @@ export function readBackup(
     files.push({ name: entry.name, contents });
   }
   return files;
+}
+
+/**
+ * The vault values a `ks move` saved before deleting or overwriting them, or
+ * `[]` for a backup that has none. Separate from `readBackup` so `uninstall`,
+ * which restores files only, keeps reading exactly what it always read.
+ */
+export function readBackupVault(scope: string, timestamp: string, dataKey: Buffer): BackupVaultValue[] {
+  const dir = join(backupsDir(), scope, timestamp);
+  const manifestPath = join(dir, "manifest.json");
+  if (!existsSync(manifestPath)) {
+    throw new Error(`No Kerstel backup at ${dir}. Run \`${cliName()} doctor\` to see what is there.`);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
+  if (!manifest.vault || manifest.vault.length === 0) return [];
+
+  const blob = readFileSync(join(dir, VAULT_FILE));
+  const values = JSON.parse(
+    decrypt({ nonce: blob.subarray(0, NONCE_BYTES), ciphertext: blob.subarray(NONCE_BYTES) }, dataKey),
+  ) as BackupVaultValue[];
+  const matches =
+    values.length === manifest.vault.length &&
+    values.every((value, i) => {
+      const entry = manifest.vault![i]!;
+      return entry.scope === value.scope && entry.key === value.key && entry.sha256 === digest(value.value);
+    });
+  if (!matches) {
+    throw new Error(`Kerstel backup ${timestamp} is corrupt: its saved vault values do not match the manifest.`);
+  }
+  return values;
 }
 
 /**

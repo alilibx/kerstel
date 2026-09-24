@@ -38,19 +38,21 @@ A reference names exactly one scope — `global`, or a project name — with no 
 ## Usage
 
 ```bash
-ks init [--yes] [--dry-run]                 # Migrate this project's .env files
-ks set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
-ks get <scope>/<KEY> [--reveal]             # Read a secret
-ks ls [--scope <scope>]                     # List stored references
-ks rm <scope>/<KEY> --yes                   # Remove a secret
-ks run -- <command>                         # Run a command with references resolved
-ks exec -- <command>                        # Run a command with the hook wired in
-ks resolve kerstel://<scope>/<KEY>          # Print one resolved value
-ks daemon <serve|start|stop|status>         # Manage the resolver daemon
-ks doctor [--verbose]                       # Diagnose this machine's setup
-ks update [--check]                         # Install the latest release
-ks uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
-ks --version                                # Print the version, and whether it's current
+ks init [--yes] [--dry-run]                       # Migrate this project's .env files
+ks move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tracked]
+                                                  # Move keys between the vault and plain text
+ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
+ks get <scope>/<KEY> [--reveal]                   # Read a secret
+ks ls [--scope <scope>]                           # List stored references
+ks rm <scope>/<KEY> --yes                         # Remove a secret
+ks run -- <command>                               # Run a command with references resolved
+ks exec -- <command>                              # Run a command with the hook wired in
+ks resolve kerstel://<scope>/<KEY>                # Print one resolved value
+ks daemon <serve|start|stop|status>               # Manage the resolver daemon
+ks doctor [--verbose]                             # Diagnose this machine's setup
+ks update [--check]                               # Install the latest release
+ks uninstall [--dry-run] [--yes] [--force]        # Restore every project, then remove Kerstel
+ks --version                                      # Print the version, and whether it's current
 ```
 
 `ks run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
@@ -65,7 +67,7 @@ macOS and Linux, x64 and arm64. The installer verifies the release checksum and 
 
 The installer also adds `ks`, a shortcut for `kerstel`. If something else on your `PATH` is already called `ks`, it leaves that alone and tells you to use `kerstel` instead. Everything below works the same either way — `ks` and `kerstel` are the same binary.
 
-To remove Kerstel, run `ks uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, the binary, and every `kerstel` or `ks` link that points at it, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
+To remove Kerstel, run `ks uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, the binary, and every `kerstel` or `ks` link that points at it, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files, and a value `ks move` saved in its backup that is now nowhere else. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 

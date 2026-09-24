@@ -28,7 +28,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## 0.1.4: change your mind
 
-- [ ] `kerstel move`: move a key between the vault and plain text, or between this project and the shared scope, after `init` ([#71](https://github.com/alilibx/kerstel/issues/71))
+- [x] `kerstel move`: move a key between the vault and plain text, or between this project and the shared scope, after `init` ([#71](https://github.com/alilibx/kerstel/issues/71))
 
 ## 0.2.0: terminal UI and monorepos
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isKerstelLauncher, launcherPath } from "../init/launcher";
-import { listBackups, readBackup } from "../init/backup";
+import { listBackups, readBackup, readBackupVault, type BackupVaultValue } from "../init/backup";
 import { collectKeys, loadEnvFiles, type LoadedEnvFile } from "../init/collect";
 import { detectProject, envFileRank } from "../init/detect";
 import { maskForDisplay } from "../init/display";
@@ -33,14 +33,20 @@ export interface UnresolvableReference {
 }
 
 /**
- * A key whose values differed when `init` ran -- across files, or twice inside
- * one file. `init` kept one value in the vault; the others exist only in the
- * encrypted backup, which uninstall deletes along with the key that opens it.
+ * A value that exists only in an encrypted backup, which uninstall deletes
+ * along with the key that opens it. Either a key whose values differed when
+ * `init` ran (across files, or twice inside one file: `init` kept one value in
+ * the vault), or a vault value `ks move` saved before deleting or overwriting
+ * it, or an incoming plain value that lost to a kept destination.
  */
 export interface BackupOnlyValue {
   project: string;
   key: string;
-  /** The backed-up env files holding a value for this key that uninstall will not restore. */
+  /**
+   * Where in the backup the value is: the backed-up env files holding a value
+   * for this key that uninstall will not restore, or `vault.enc` for the
+   * saved vault section of a `ks move` backup.
+   */
   files: string[];
   /** The backup directory those values live in. */
   backupDir: string;
@@ -103,9 +109,13 @@ export function emptyPlan(): UninstallPlan {
  * still holds every value in the live files, so it loses nothing. `restored`
  * maps each env file name to its contents after the restore. Backups are
  * decrypted in memory only; no value leaves this function.
+ *
+ * A `ks move` backup's vault section is read too (see `movedValues`); a
+ * section that cannot be read makes the whole backup unreadable.
  */
 function scanBackups(
   project: string,
+  vault: Vault,
   dataKey: Buffer,
   restored: Map<string, string>,
 ): { backupOnly: BackupOnlyValue[]; unreadable: UnreadableBackup[] } {
@@ -114,7 +124,10 @@ function scanBackups(
   for (const timestamp of listBackups(project)) {
     const backupDir = join(backupsDir(), project, timestamp);
     try {
-      backupOnly.push(...collapsedValues(project, readBackup(project, timestamp, dataKey), backupDir, restored));
+      const files = readBackup(project, timestamp, dataKey);
+      const saved = readBackupVault(project, timestamp, dataKey);
+      backupOnly.push(...collapsedValues(project, files, backupDir, restored));
+      backupOnly.push(...movedValues(project, saved, backupDir, vault, restored));
     } catch (error) {
       // A backup that cannot be read may hold the only copy of a value, so it
       // counts as a possible loss -- and, like every other one, --force passes it.
@@ -122,6 +135,36 @@ function scanBackups(
     }
   }
   return { backupOnly, unreadable };
+}
+
+/** The file name `BackupOnlyValue.files` uses for a backup's saved vault section. */
+export const BACKUP_VAULT_FILE = "vault.enc";
+
+/**
+ * Vault values a `ks move` saved in its backup that are now nowhere uninstall
+ * restores from: the vault no longer holds that value at that reference, and
+ * no restored env file has that key with that value. A value the vault still
+ * holds is either restored into a file or named as unused, so it is not a
+ * backup-only loss.
+ */
+function movedValues(
+  project: string,
+  saved: BackupVaultValue[],
+  backupDir: string,
+  vault: Vault,
+  restored: Map<string, string>,
+): BackupOnlyValue[] {
+  const restoredPairs = new Set<string>();
+  for (const contents of restored.values()) {
+    for (const pair of entries(parseDotenv(contents))) restoredPairs.add(`${pair.key}\n${pair.value}`);
+  }
+  const keys = new Set<string>();
+  for (const entry of saved) {
+    if (vault.getSecret({ scope: entry.scope, key: entry.key }) === entry.value) continue;
+    if (restoredPairs.has(`${entry.key}\n${entry.value}`)) continue;
+    keys.add(entry.key);
+  }
+  return [...keys].map((key) => ({ project, key, files: [BACKUP_VAULT_FILE], backupDir }));
 }
 
 function collapsedValues(
@@ -182,8 +225,9 @@ function collapsedValues(
  * Values come from the vault, not from the encrypted backups: a backup holds
  * what the files said when `init` ran, and restoring it would silently undo
  * every rotation since. The backups are still READ (in memory, with
- * `dataKey`), because they can hold the one thing the vault never did: the
- * losing values of a key `init` collapsed. See `scanBackups`.
+ * `dataKey`), because they can hold what the vault no longer does: the
+ * losing values of a key `init` collapsed, and the vault values a `ks move`
+ * deleted, overwrote or discarded. See `scanBackups`.
  */
 export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   const plan = emptyPlan();
@@ -282,7 +326,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       }
     }
 
-    const backups = scanBackups(project.name, dataKey, restoredContents);
+    const backups = scanBackups(project.name, vault, dataKey, restoredContents);
     plan.backupOnly.push(...backups.backupOnly);
     plan.unreadableBackups.push(...backups.unreadable);
     plan.restored.push({ name: project.name, rootPath: root, envFiles: restoredEnvFiles });
