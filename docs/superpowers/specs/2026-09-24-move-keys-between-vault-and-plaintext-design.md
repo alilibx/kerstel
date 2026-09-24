@@ -42,7 +42,7 @@ $ ks move
 ✓ STRIPE_KEY now reads kerstel://global/STRIPE_KEY
 ```
 
-1. **Scan.** The same env-file discovery and parser `init` uses (`collect.ts`, `dotenv-file.ts`): templates and backup copies skipped, unsupported lines never offered. Each key is listed once with its current place: `Vault, this project`, `Vault, shared`, `Plain text`.
+1. **Scan.** The same env-file discovery and loading `init` uses (`discoverEnvFiles`, `loadEnvFiles`, `dotenv-file.ts`): templates and backup copies skipped, unsupported lines never offered. `collectKeys` is not used: it keeps one winning value per key and only the names of files that disagree, which would hide a second reference. `move/scan.ts` groups instead by key and current place: one row per distinct reference (`whasal/KEY`, `global/KEY`), plus one row for the key's plain-text lines if it has any, each row carrying the files it covers. Each row shows its current place: `Vault, this project`, `Vault, shared`, `Plain text`.
 2. **Values.** A plain-text value is printed only when `isSafeToDisplay` allows it (the #46 rules); otherwise it shows as its length. A vault value is never printed.
 3. **Pick keys**, then **pick a destination per key** from `DESTINATION_CHOICES`, minus the key's current place. When several keys are picked, one question per key; a key whose answer would leave it where it is is dropped.
 4. **Preview** every change (§4), then **Apply? Yes / No**, default No.
@@ -181,7 +181,7 @@ In order:
 
 1. **Backup** (§5.1). Printed as `✓ Backed up .env, .env.local`.
 2. **Vault writes:** `setSecret` for every destination value.
-3. **Env file rewrites,** each through the existing atomic write.
+3. **Env file rewrites,** each atomic: write the new bytes to a temp file in the same directory (`.<name>.kerstel-tmp`, mode copied from the original), `fsync`, then `renameSync` over the original. `init` writes env files with a plain `writeFileSync`, so this is a new helper, `writeFileAtomic` in `move/apply.ts`; a crash mid-write leaves either the old file or the new one, never half of each. A leftover temp file from a crash is removed on the next run.
 4. **Vault deletions:** `removeSecret` for each project copy §3.1 allows.
 5. **Project record:** `registerProject(scope, root)` only when the vault has no record for the scope. A record with a different root is left alone: overwriting it would make the next move in this checkout believe it is the only one, and §3.1 would delete copies the recorded checkout still reads.
 6. One `✓` line per key.
@@ -200,8 +200,9 @@ In order:
 
 ## 7. Code
 
+- `packages/cli/src/move/scan.ts`: the per-reference grouping from §2.1 step 1, over `loadEnvFiles` output.
 - `packages/cli/src/move/plan.ts`: pure planner. Input: the scanned keys (key, files, current reference or value), the vault lookups it needs, the destinations, the registered root, the git status of each file. Output: the rewrites, vault writes, deletions, kept copies with reasons, conflicts, and warnings. No I/O.
-- `packages/cli/src/move/apply.ts`: steps 1-6 of §5 and the rollback, against the real vault and files.
+- `packages/cli/src/move/apply.ts`: steps 1-6 of §5, the rollback, and `writeFileAtomic`, against the real vault and files.
 - `packages/cli/src/move/git.ts`: the tracked/ignored checks, via `Bun.spawnSync`, returning `null` outside a repository.
 - `packages/cli/src/commands/move.ts`: argument parsing, the prompts, the preview, apply.
 - `index.ts`: `move` in the dispatcher and the help text.
@@ -218,8 +219,8 @@ In order:
 
 ## 9. Testing
 
-- **Planner** (`move-plan.test.ts`): every row of the §3 table; an existing destination entry, shared and project, same and different value, with and without `--replace`; project copy deleted when unused, kept when another file still references it, kept when the recorded root differs, deleted when there is no record; a key with different references in different files; a missing reference; nothing left to move.
-- **Apply and backup** (`move-apply.test.ts`): the backup's `vault` section holds every deleted and overwritten value and `restoreBackup` leaves the vault alone; a failure injected at step 2 and at step 3 leaves the vault and files as they were; a differing project record is never overwritten.
+- **Planner** (`move-plan.test.ts`): every row of the §3 table; an existing destination entry, shared and project, same and different value, with and without `--replace`; project copy deleted when unused, kept when another file still references it, kept when the recorded root differs, deleted when there is no record; a key with different references in different files (two rows, each naming its files); a key with a reference in one file and a plain value in another; a missing reference; nothing left to move.
+- **Apply and backup** (`move-apply.test.ts`): the backup's `vault` section holds every deleted and overwritten value and `restoreBackup` leaves the vault alone; a failure injected at step 2 and at step 3 leaves the vault and files as they were; `writeFileAtomic` leaves no temp file behind and keeps the original's mode; a differing project record is never overwritten.
 - **No terminal:** every row of the §2.4 table.
 - **Git checks** (`move-git.test.ts`): a temp repository with a tracked file, an ignored file, and an untracked unignored file; no repository.
 - **Command** (`move.test.ts`): the direct form end to end on a temp project and vault, including refusals, `--yes`, and exit codes; a scripted interactive run through the test prompter; the backup exists before the files change; no value appears in stdout or stderr.
