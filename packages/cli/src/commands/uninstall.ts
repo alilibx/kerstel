@@ -201,7 +201,7 @@ function printPlan(plan: UninstallPlan): void {
   );
   section("Secrets no reachable project uses, which would be deleted with the vault:", plan.unused);
   section(
-    "Values init kept only in its encrypted backup, which would be deleted with it:",
+    `Values kept only in an encrypted backup of init or ${cliName()} move, which would be deleted with it:`,
     plan.backupOnly.map((b) => `${b.project}: ${b.key} in ${b.files.join(", ")} (backup ${b.backupDir})`),
   );
   section(

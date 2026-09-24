@@ -274,6 +274,72 @@ test("a backup with no conflicting values, or no backup at all, contributes noth
   expect(hasLoss(plan)).toBe(false);
 });
 
+test("a value only a move backup's vault section holds is flagged, by key, never by value", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "global", key: "API_KEY" }, "kept-shared");
+  const root = project({ "package.json": WIRED, ".env": "API_KEY=kerstel://global/API_KEY\n" });
+  v.registerProject("demo-app", root);
+  // ks move kept the shared value; the project's own copy was deleted and saved here.
+  const backup = createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    vault: [{ scope: "demo-app", key: "API_KEY", value: "moved-away-value" }],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([
+    { project: "demo-app", key: "API_KEY", files: ["vault.enc"], backupDir: backup.dir },
+  ]);
+  expect(hasLoss(plan)).toBe(true);
+  expect(JSON.stringify(plan)).not.toContain("moved-away-value");
+});
+
+test("a move backup's vault value that a restored file or the vault still holds is not flagged", async () => {
+  const v = await freshVault();
+  // Moved project → global: the project copy was deleted, and global holds the same value.
+  v.setSecret({ scope: "global", key: "API_KEY" }, "same-value");
+  // Overwritten by a replace, then set back by hand: the vault holds it again.
+  v.setSecret({ scope: "global", key: "TOKEN" }, "token-value");
+  const root = project({
+    "package.json": WIRED,
+    ".env": "API_KEY=kerstel://global/API_KEY\nTOKEN=kerstel://global/TOKEN\n",
+  });
+  v.registerProject("demo-app", root);
+  createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\nTOKEN=kerstel://demo-app/TOKEN\n" }],
+    vault: [
+      { scope: "demo-app", key: "API_KEY", value: "same-value" },
+      { scope: "global", key: "TOKEN", value: "token-value" },
+    ],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([]);
+  expect(hasLoss(plan)).toBe(false);
+});
+
+test("a move backup whose vault section cannot be read is an unreadable backup", async () => {
+  const v = await freshVault();
+  const root = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  v.registerProject("demo-app", root);
+  const backup = createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [{ name: ".env", contents: "PORT=3000\n" }],
+    vault: [{ scope: "demo-app", key: "API_KEY", value: "saved" }],
+  });
+  writeFileSync(join(backup.dir, "vault.enc"), "not a ciphertext");
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.unreadableBackups).toEqual([
+    { project: "demo-app", backupDir: backup.dir, reason: expect.any(String) as unknown as string },
+  ]);
+  expect(plan.backupOnly).toEqual([]);
+});
+
 // Each line as a developer wrote it. init rewrites it to a reference with
 // setValue; uninstall must put back these exact bytes, not a re-quoted copy.
 const QUOTING_CASES = [

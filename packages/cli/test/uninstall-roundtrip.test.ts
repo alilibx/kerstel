@@ -116,7 +116,7 @@ test("init then uninstall restores every file byte for byte and gates the collap
   output = [];
   expect(await uninstallCommand(["--yes"], undefined, { path: "/nonexistent/bun", compiled: false })).toBe(1);
   const refusal = output.join("\n");
-  expect(refusal).toContain("Values init kept only in its encrypted backup");
+  expect(refusal).toContain("Values kept only in an encrypted backup of init or");
   // .env.local gets its value back from the vault; only .env.development loses one.
   expect(refusal).toContain("gnarly-app: SHARED_SECRET in .env.development (backup");
   expect(refusal).not.toContain("dev-loses");
