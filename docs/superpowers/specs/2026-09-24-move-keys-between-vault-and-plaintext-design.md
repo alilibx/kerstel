@@ -190,11 +190,11 @@ In order:
 
 ### 5.1 The backup
 
-`createBackup` saves the env files to be rewritten, as `init` does. For a key already in the vault those files hold only `kerstel://` references, so the backup gains a `vault` section: every vault entry the move will delete (§3.1) or overwrite (§3.2), with its value, encrypted with the data key like the files, one `vault.enc` alongside the `.enc` files and its entries (`scope`, `key`, `bytes`, `sha256`, no value) listed in the manifest. `readBackup` returns it; `restoreBackup` ignores it, so restoring files never writes to the vault. The manifest stays `version: 1`, since the section is optional and older readers skip unknown fields.
+`createBackup` saves the env files to be rewritten, as `init` does. For a key already in the vault those files hold only `kerstel://` references, so the backup gains a `vault` section: every vault entry the move will delete (§3.1) or overwrite (§3.2), with its value, encrypted with the data key like the files, one `vault.enc` alongside the `.enc` files and its entries (`scope`, `key`, `bytes`, `sha256`, no value) listed in the manifest. `readBackupVault` returns it; `readBackup` and `restoreBackup` ignore it, so restoring files never writes to the vault. The manifest stays `version: 1`, since the section is optional and older readers skip unknown fields.
 
 ## 6. Other commands
 
-- **`uninstall`:** no change to what it restores; it reads backups through `readBackup`, which now also returns the `vault` section, and ignores it. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
+- **`uninstall`:** no change to what it restores; it reads backups through `readBackup`, which does not return the `vault` section. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
 - **`doctor`:** no change.
 - **`init`:** only the pointer line (§2.3).
 
@@ -206,7 +206,7 @@ In order:
 - `packages/cli/src/move/git.ts`: the tracked/ignored checks, via `Bun.spawnSync`, returning `null` outside a repository.
 - `packages/cli/src/commands/move.ts`: argument parsing, the prompts, the preview, apply.
 - `index.ts`: `move` in the dispatcher and the help text.
-- `packages/cli/src/init/backup.ts`: the optional `vault` section (§5.1).
+- `packages/cli/src/init/backup.ts`: the optional `vault` section (§5.1) and `readBackupVault`.
 - Reuses from `init`: env discovery and parsing, `explain`/`isSafeToDisplay`, `DESTINATION_CHOICES`, `formatReference`, `createBackup`, `restoreLineValue`, `setLineValue`.
 
 ## 8. Docs

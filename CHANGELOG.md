@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.4 (unreleased)
 
+### Added
+
+- `kerstel move` changes where a key lives after `init`: between this project's vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or `ks move KEY --to global|project|plaintext --yes` from a script. The env files are backed up first, and a vault value it removes or replaces is saved in the backup. `init` now points you to it after it finishes, so changing your mind about a key later doesn't mean re-running `init`.
+
 ### Security
 
 - `kerstel init` no longer prints a credential in full because its name starts with `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_`. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (`VITE_SUPABASE_KEY`, `NEXT_PUBLIC_API_KEY`), a value with a known token prefix (`sk_`, `AIza`, `ghp_`, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. `PORT=3000` and other configuration values still show as they are.

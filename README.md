@@ -38,19 +38,20 @@ A reference names exactly one scope — `global`, or a project name — with no 
 ## Usage
 
 ```bash
-ks init [--yes] [--dry-run]                 # Migrate this project's .env files
-ks set <scope>/<KEY> [--value <value>]      # Store a secret (or pipe it on stdin)
-ks get <scope>/<KEY> [--reveal]             # Read a secret
-ks ls [--scope <scope>]                     # List stored references
-ks rm <scope>/<KEY> --yes                   # Remove a secret
-ks run -- <command>                         # Run a command with references resolved
-ks exec -- <command>                        # Run a command with the hook wired in
-ks resolve kerstel://<scope>/<KEY>          # Print one resolved value
-ks daemon <serve|start|stop|status>         # Manage the resolver daemon
-ks doctor [--verbose]                       # Diagnose this machine's setup
-ks update [--check]                         # Install the latest release
-ks uninstall [--dry-run] [--yes] [--force]  # Restore every project, then remove Kerstel
-ks --version                                # Print the version, and whether it's current
+ks init [--yes] [--dry-run]                       # Migrate this project's .env files
+ks move [KEY...] [--to global|project|plaintext]  # Move keys between the vault and plain text
+ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
+ks get <scope>/<KEY> [--reveal]                   # Read a secret
+ks ls [--scope <scope>]                           # List stored references
+ks rm <scope>/<KEY> --yes                         # Remove a secret
+ks run -- <command>                               # Run a command with references resolved
+ks exec -- <command>                              # Run a command with the hook wired in
+ks resolve kerstel://<scope>/<KEY>                # Print one resolved value
+ks daemon <serve|start|stop|status>               # Manage the resolver daemon
+ks doctor [--verbose]                             # Diagnose this machine's setup
+ks update [--check]                               # Install the latest release
+ks uninstall [--dry-run] [--yes] [--force]        # Restore every project, then remove Kerstel
+ks --version                                      # Print the version, and whether it's current
 ```
 
 `ks run -- <command>` is the universal fallback: it resolves every reference in the current environment up front and execs the command with plaintext values injected. It works for anything that can't load the runtime hook, such as IDE run configurations. Projects wired up with the runtime hook resolve references lazily instead, straight out of `process.env`. Those projects still go through a wrapper — `kerstel exec` — but `kerstel init` writes it into your `package.json` scripts once, so you never type it: `npm run dev` is still `npm run dev`.
