@@ -1,5 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listBackups, readBackup, readBackupVault } from "../src/init/backup";
@@ -107,9 +117,15 @@ test("a failure writing the vault leaves the vault and files as they were", () =
     },
   };
 
-  expect(() => applyMove(plan, { vault: failing, dataKey, scope: "app", root, recordedRoot: root })).toThrow(
-    MoveApplyError,
-  );
+  let caught: unknown;
+  try {
+    applyMove(plan, { vault: failing, dataKey, scope: "app", root, recordedRoot: root });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(MoveApplyError);
+  expect((caught as MoveApplyError).message).toContain("kerstel://global/B");
+  expect((caught as MoveApplyError).backupDir).toContain(join("app"));
   expect(vault.getSecret({ scope: "global", key: "A" })).toBeNull();
   expect(vault.getSecret({ scope: "global", key: "B" })).toBe("old-shared-b");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=plain-a\nB=plain-b\n");
@@ -129,13 +145,60 @@ test("a failure writing a file restores the vault and the files already written"
     writeFileAtomic(path, contents);
   };
 
-  expect(() => applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root, writeFile })).toThrow(
-    /read-only file system/,
-  );
+  let caughtFile: unknown;
+  try {
+    applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root, writeFile });
+  } catch (error) {
+    caughtFile = error;
+  }
+  expect(caughtFile).toBeInstanceOf(MoveApplyError);
+  expect((caughtFile as MoveApplyError).message).toContain("read-only file system");
+  expect((caughtFile as MoveApplyError).message).toContain(".env");
   expect(vault.getSecret({ scope: "global", key: "K" })).toBe("old-shared");
   expect(vault.getSecret({ scope: "app", key: "K" })).toBe("v");
   expect(readFileSync(join(root, ".env.local"), "utf8")).toBe("K=kerstel://app/K\n");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://app/K\n");
+});
+
+test("a failure that also fails to roll back still throws MoveApplyError naming what could not be restored", () => {
+  const { root, vault, dataKey } = setup(
+    { ".env": "A=plain-a\nB=plain-b\n" },
+    { "global/B": "old-shared-b" },
+  );
+  const plan = makePlan(root, vault, [["A:plaintext", "global"], ["B:plaintext", "global"]], {
+    "kerstel://global/B": "replace",
+  });
+  let setCalls = 0;
+  const failing: Vault = {
+    ...vault,
+    setSecret(ref, value) {
+      setCalls += 1;
+      // 1st call: A's write, succeeds, so rollback will try to remove it.
+      // 2nd call: B's write, fails, triggering rollback.
+      if (setCalls === 2) throw new Error("disk full");
+      vault.setSecret(ref, value);
+    },
+    removeSecret(ref) {
+      // Rollback removing A's write also fails, so it stays unrestored.
+      throw new Error("keychain locked");
+    },
+  };
+
+  let caught: unknown;
+  try {
+    applyMove(plan, { vault: failing, dataKey, scope: "app", root, recordedRoot: root });
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(MoveApplyError);
+  const err = caught as MoveApplyError;
+  expect(err.message).toContain("disk full");
+  expect(err.message).toContain("kerstel://global/B");
+  expect(err.message).toContain("kerstel://global/A");
+  expect(err.backupDir).toContain(join("backups", "app"));
+  expect(listBackups("app")).toHaveLength(1);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=plain-a\nB=plain-b\n");
 });
 
 test("the project is registered only when the vault has no record", () => {
@@ -168,6 +231,22 @@ test("writeFileAtomic keeps the mode and leaves no temp file", () => {
   expect(readFileSync(path, "utf8")).toBe("A=2\n");
   expect(statSync(path).mode & 0o777).toBe(0o600);
   expect(readdirSync(root)).toEqual([".env"]);
+});
+
+test("writeFileAtomic writes through a symlink instead of replacing it", () => {
+  isolateEnv({ prefix: "move-symlink" });
+  const root = mkdtempSync(join(tmpdir(), "kerstel-move-symlink-"));
+  createdDirs.push(root);
+  const targetPath = join(root, "shared.env");
+  const linkPath = join(root, ".env");
+  writeFileSync(targetPath, "A=1\n");
+  symlinkSync(targetPath, linkPath);
+
+  writeFileAtomic(linkPath, "A=2\n");
+
+  expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+  expect(readFileSync(targetPath, "utf8")).toBe("A=2\n");
+  expect(readFileSync(linkPath, "utf8")).toBe("A=2\n");
 });
 
 test("removeStaleTemps removes only Kerstel's leftover temp files", () => {

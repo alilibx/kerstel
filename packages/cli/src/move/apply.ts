@@ -5,6 +5,7 @@ import {
   fsyncSync,
   openSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -33,12 +34,21 @@ function tempPathFor(path: string): string {
  * Writes `contents` so a crash leaves the old file or the new one, never half
  * of each: a temp file in the same directory, flushed, then renamed over the
  * original. The original's permission bits carry over.
+ *
+ * `path` may be a symlink (`init` writes through them): resolving to the real
+ * target first, and putting the temp file and the rename beside that target,
+ * means the rename replaces the target's contents rather than replacing the
+ * link itself with a plain file.
  */
 export function writeFileAtomic(path: string, contents: string): void {
-  const temp = tempPathFor(path);
-  const mode = existsSync(path) ? statSync(path).mode & 0o777 : 0o644;
+  const target = existsSync(path) ? realpathSync(path) : path;
+  const temp = tempPathFor(target);
+  const mode = existsSync(target) ? statSync(target).mode & 0o777 : 0o644;
   try {
-    const fd = openSync(temp, "w", mode);
+    // A leftover temp (possibly itself a symlink, from a prior crash) must
+    // never be opened -- only ever a fresh file this call created.
+    rmSync(temp, { force: true });
+    const fd = openSync(temp, "wx", mode);
     try {
       writeSync(fd, contents);
       fsyncSync(fd);
@@ -48,7 +58,7 @@ export function writeFileAtomic(path: string, contents: string): void {
     // openSync's mode is masked by the umask; the rename must not widen or
     // narrow what the developer had.
     if (process.platform !== "win32") chmodSync(temp, mode);
-    renameSync(temp, path);
+    renameSync(temp, target);
   } catch (error) {
     rmSync(temp, { force: true });
     throw error;
@@ -91,6 +101,16 @@ export class MoveApplyError extends Error {
   }
 }
 
+/** Internal: names the vault ref or file whose write threw, for the rollback message. */
+class StepFailure extends Error {
+  constructor(
+    readonly entryName: string,
+    readonly original: Error,
+  ) {
+    super(original.message);
+  }
+}
+
 /** Spec §5.1: every value the move will delete or overwrite. */
 export function backupVaultValues(plan: MovePlan): BackupVaultValue[] {
   return [
@@ -119,24 +139,49 @@ export function applyMove(plan: MovePlan, options: ApplyOptions): ApplyResult {
   const rewritten: FileRewrite[] = [];
   try {
     for (const w of plan.vaultWrites) {
-      vault.setSecret(w.ref, w.value);
+      try {
+        vault.setSecret(w.ref, w.value);
+      } catch (error) {
+        throw new StepFailure(refId(w.ref), error as Error);
+      }
       written.push(w);
     }
     for (const f of plan.files) {
-      write(f.path, f.after);
+      try {
+        write(f.path, f.after);
+      } catch (error) {
+        throw new StepFailure(f.name, error as Error);
+      }
       rewritten.push(f);
     }
   } catch (error) {
+    // Every rollback step runs even if an earlier one throws: a Keychain or
+    // disk failure mid-rollback must not abandon the rest of the undo, and
+    // must never surface as a bare Error without `backupDir` -- the backup
+    // is the only way back once that happens.
+    const unrestored: string[] = [];
     for (const w of written.reverse()) {
-      if (w.previous === null) vault.removeSecret(w.ref);
-      else vault.setSecret(w.ref, w.previous);
+      try {
+        if (w.previous === null) vault.removeSecret(w.ref);
+        else vault.setSecret(w.ref, w.previous);
+      } catch {
+        unrestored.push(refId(w.ref));
+      }
     }
     // `before` is byte-for-byte what the backup holds, already in memory.
-    for (const f of rewritten.reverse()) writeFileAtomic(f.path, f.before);
-    throw new MoveApplyError(
-      `${(error as Error).message}. Nothing was changed; the backup is in ${backup.dir}.`,
-      backup.dir,
-    );
+    for (const f of rewritten.reverse()) {
+      try {
+        writeFileAtomic(f.path, f.before);
+      } catch {
+        unrestored.push(f.name);
+      }
+    }
+    const cause = error instanceof StepFailure ? `${error.original.message} (${error.entryName})` : (error as Error).message;
+    const restoreNote =
+      unrestored.length > 0
+        ? `Some changes could not be undone (${unrestored.join(", ")}); the backup is in ${backup.dir}.`
+        : `Nothing was changed; the backup is in ${backup.dir}.`;
+    throw new MoveApplyError(`${cause}. ${restoreNote}`, backup.dir);
   }
 
   const problems: string[] = [];
