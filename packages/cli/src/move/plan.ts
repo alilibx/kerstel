@@ -1,5 +1,13 @@
 import type { LoadedEnvFile } from "../init/collect";
-import { entries, parseDotenv, restoreLineValue, serializeDotenv, setLineValue } from "../init/dotenv-file";
+import {
+  entries,
+  lookup,
+  parseDotenv,
+  restoreLineValue,
+  serializeDotenv,
+  setLineValue,
+  type DotenvPair,
+} from "../init/dotenv-file";
 import { GLOBAL_SCOPE, formatReference, parseReference, type SecretRef } from "../reference";
 import type { GitFileStatus } from "./git";
 import type { Place, ScannedRow } from "./scan";
@@ -96,6 +104,20 @@ export interface Skipped {
 }
 
 /**
+ * A to-plaintext move whose value has no dotenv spelling in one of its
+ * lines' quoting: `restoreLineValue` falls back to `renderValue`'s escaped
+ * form, which the parser reads back as a DIFFERENT value (e.g. a value
+ * holding both `'` and `"`, or a single-quoted line's value holding `'` and
+ * `\`). Writing it would silently change the value and delete the only
+ * other copy, so the row is not moved at all; it stays in the vault.
+ */
+export interface Unwritable {
+  key: string;
+  ref: SecretRef;
+  files: string[];
+}
+
+/**
  * An incoming plain-text value that lost to a kept destination. Its files are
  * rewritten to the destination's reference, so without this the backup would
  * hold it only as a file line uninstall does not look for. Spec §5.1.
@@ -117,11 +139,31 @@ export interface MovePlan {
   gitWarnings: GitWarning[];
   mergeWarnings: MergeWarning[];
   skipped: Skipped[];
+  unwritable: Unwritable[];
   noReferencesLeft: boolean;
 }
 
 export function refId(ref: SecretRef): string {
   return formatReference(ref.scope, ref.key);
+}
+
+/**
+ * Whether `restoreLineValue` would put `value` back on `line` such that
+ * reading the file again yields `value` byte-identical. Checked on a
+ * throwaway single-line parse so the real working copy is never touched
+ * until every covered line is known to round-trip. `restoreLineValue`
+ * itself verifies its first (verbatim-quoting) attempt this way, but its
+ * fallback to `renderValue`'s escaped form is not read back by
+ * `decodeDoubleQuoted` (which only undoes `\n`, not `\\`, `\"`, `\r`), so
+ * that fallback can silently change the value; this catches that case
+ * before anything is written.
+ */
+function wouldRestorePlainly(line: DotenvPair, value: string): boolean {
+  const throwaway = parseDotenv(line.text + line.eol);
+  if (throwaway.lines.length !== 1 || throwaway.unsupported.length !== 0) return false;
+  restoreLineValue(throwaway, 0, value);
+  const reparsed = parseDotenv(serializeDotenv(throwaway));
+  return reparsed.unsupported.length === 0 && lookup(reparsed, line.key) === value;
 }
 
 export function planMove(input: PlanInput): MovePlan {
@@ -136,6 +178,7 @@ export function planMove(input: PlanInput): MovePlan {
     gitWarnings: [],
     mergeWarnings: [],
     skipped: [],
+    unwritable: [],
     noReferencesLeft: false,
   };
 
@@ -208,6 +251,28 @@ export function planMove(input: PlanInput): MovePlan {
       }
       if (row.place === "plaintext" && row.conflicts.length > 0) {
         plan.mergeWarnings.push({ key: row.key, used: row.files[0]!, others: row.conflicts });
+      }
+    }
+
+    if (!toRef) {
+      // To plaintext: refuse the whole row if `value` has no dotenv
+      // spelling in even one covered line's own quoting. Nothing about this
+      // row has been recorded above (outcome/vaultWrites only run for
+      // `to !== "plaintext"`), so bailing here leaves no trace to undo.
+      let writable = true;
+      outer: for (const name of row.files) {
+        const file = byName.get(name)!;
+        for (const line of file.lines) {
+          if (line.kind !== "pair" || line.key !== row.key) continue;
+          if (!wouldRestorePlainly(line, value)) {
+            writable = false;
+            break outer;
+          }
+        }
+      }
+      if (!writable) {
+        plan.unwritable.push({ key: row.key, ref: row.ref!, files: row.files });
+        continue;
       }
     }
 

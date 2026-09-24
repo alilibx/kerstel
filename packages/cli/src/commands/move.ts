@@ -268,6 +268,11 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     for (const s of plan.skipped) {
       fail(`${s.key}: ${refId(s.ref)} is not in the vault. Run ${cliName()} init to store it first.`);
     }
+    for (const u of plan.unwritable) {
+      fail(
+        `${u.key}: its value cannot be written as plain text in ${u.files.join(", ")} without changing it, so it stays in the vault.`,
+      );
+    }
     if (plan.conflicts.length > 0) {
       for (const conflict of plan.conflicts) {
         const id = refId(conflict.ref);

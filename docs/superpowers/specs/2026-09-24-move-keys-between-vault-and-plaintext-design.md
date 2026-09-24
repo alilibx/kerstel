@@ -174,6 +174,7 @@ Interactive: the warning stays above Apply, and the default stays No. Direct: th
 - **A reference the vault does not hold** (a teammate's clone before `init` filled it in): named, not offered. `Run ks init to store it first.`
 - **A value the parser refused** (`init`'s unsupported lines): never listed.
 - **A key in plain text with different values in different files**, moving into the vault: the same rule and wording as `init` (the value from the first file wins; the others survive in the backup).
+- **A value with no plain-text spelling in one of its covered lines' own quoting**, moving out of the vault: e.g. a double-quoted line whose value holds both `'` and `"`, or a single-quoted line whose value holds `'` and `\`. `restoreLineValue` would fall back to an escaped form that the parser reads back as a different value, so the row is not moved at all — no file edit, no deletion, no git warning — and stays in the vault: `STRIPE_KEY: its value cannot be written as plain text in .env without changing it, so it stays in the vault.`
 
 ## 5. Apply
 

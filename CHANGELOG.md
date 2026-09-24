@@ -12,6 +12,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 - `kerstel init` no longer prints a credential in full because its name starts with `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_`. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (`VITE_SUPABASE_KEY`, `NEXT_PUBLIC_API_KEY`), a value with a known token prefix (`sk_`, `AIza`, `ghp_`, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. `PORT=3000` and other configuration values still show as they are.
 
+### Fixed
+
+- `kerstel move` moving a value to plain text no longer writes it wrong when it has no spelling that fits a line's own quoting (for example a value holding both `'` and `"` in a double-quoted line). It used to fall back to an escaped form that read back as a different value and then delete the vault's copy, silently changing the value. Such a key now stays in the vault and is named: `KEY: its value cannot be written as plain text in .env without changing it, so it stays in the vault.`
+
 ## 0.1.3 (2026-09-21)
 
 ### Added

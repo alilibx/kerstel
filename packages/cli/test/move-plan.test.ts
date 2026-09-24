@@ -361,6 +361,41 @@ test("noReferencesLeft is set when the last reference moves out", () => {
   expect(notLast.noReferencesLeft).toBe(false);
 });
 
+test("a double-quoted value with both quote characters stays in the vault rather than being rewritten wrong", () => {
+  const result = plan({
+    files: { ".env": 'K="kerstel://app/K"\n' },
+    vault: { "app/K": `{"a":"O'B"}` },
+    moves: [["K:kerstel://app/K", "plaintext"]],
+  });
+  expect(result.files).toEqual([]);
+  expect(result.deletions).toEqual([]);
+  expect(result.moves).toEqual([]);
+  expect(result.unwritable).toEqual([{ key: "K", ref: { scope: "app", key: "K" }, files: [".env"] }]);
+});
+
+test("a single-quoted value with a quote and a backslash stays in the vault rather than being rewritten wrong", () => {
+  const result = plan({
+    files: { ".env": "K='kerstel://app/K'\n" },
+    vault: { "app/K": "it's a\\b" },
+    moves: [["K:kerstel://app/K", "plaintext"]],
+  });
+  expect(result.files).toEqual([]);
+  expect(result.deletions).toEqual([]);
+  expect(result.moves).toEqual([]);
+  expect(result.unwritable).toEqual([{ key: "K", ref: { scope: "app", key: "K" }, files: [".env"] }]);
+});
+
+test("a double-quoted value with only a double quote still moves, by switching to single quotes", () => {
+  const result = plan({
+    files: { ".env": 'K="kerstel://app/K"\n' },
+    vault: { "app/K": 'she said "hi"' },
+    moves: [["K:kerstel://app/K", "plaintext"]],
+  });
+  expect(after(result, ".env")).toBe(`K='she said "hi"'\n`);
+  expect(result.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: 'she said "hi"' }]);
+  expect(result.unwritable).toEqual([]);
+});
+
 test("a request to where the key already is does nothing", () => {
   const result = plan({ files: { ".env": "K=v\n" }, moves: [["K:plaintext", "plaintext"]] });
   expect(result.moves).toEqual([]);

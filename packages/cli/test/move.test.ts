@@ -103,6 +103,23 @@ test("direct form: project → plain deletes the unused project copy", async () 
   expect(out).not.toContain(SECRET);
 });
 
+test("direct form: a value with no plain-text spelling for its line stays in the vault", async () => {
+  const root = makeProject({ ".env": 'K="kerstel://app/K"\n' });
+  const unwritable = `{"a":"O'B"}`;
+  await withVault((v) => {
+    v.setSecret({ scope: "app", key: "K" }, unwritable);
+    v.registerProject("app", root);
+  });
+  const { code, out } = await run(root, ["K", "--to", "plaintext", "--yes"], null);
+
+  expect(code).toBe(1);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe('K="kerstel://app/K"\n');
+  expect(await withVault((v) => v.getSecret({ scope: "app", key: "K" }))).toBe(unwritable);
+  expect(out).toContain("K");
+  expect(out).toContain("cannot be written as plain text");
+  expect(out).not.toContain(unwritable);
+});
+
 test("the last reference moving out points at uninstall", async () => {
   const root = makeProject({ ".env": "K=kerstel://app/K\n" });
   await withVault((v) => v.setSecret({ scope: "app", key: "K" }, "v"));
