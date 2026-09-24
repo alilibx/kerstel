@@ -53,6 +53,18 @@ test("a new key is announced, with where it went", () => {
   expect(lines[1]?.level).toBe("warn");
 });
 
+test("doctor's opt-out drops the key-file warning but still announces a new key", () => {
+  isolateEnv({ prefix: "notices-doctor" });
+  const lines = keyStoreNotices({
+    backend: "file",
+    created: true,
+    forced: undefined,
+    cli: "ks",
+    suppressFileWarning: true,
+  });
+  expect(lines).toEqual([{ level: "info", text: `Created a new vault key in ${keyFilePath()}.` }]);
+});
+
 test("openContext writes its notices to stderr, and can be told not to", async () => {
   isolateEnv({ prefix: "notices-open" });
   const first = await stderrOf(async () => (await openContext()).vault.close());
@@ -63,6 +75,6 @@ test("openContext writes its notices to stderr, and can be told not to", async (
   const again = await stderrOf(async () => (await openContext()).vault.close());
   expect(again).toBe("");
 
-  const quiet = await stderrOf(async () => (await openContext({ keyNotices: false })).vault.close());
+  const quiet = await stderrOf(async () => (await openContext({ warnFileKey: false })).vault.close());
   expect(quiet).toBe("");
 });

@@ -70,10 +70,11 @@ export function keyStoreNotices(options: {
   created: boolean;
   forced: string | undefined;
   cli: string;
+  suppressFileWarning?: boolean;
 }): KeyStoreNotice[] {
   const lines: KeyStoreNotice[] = [];
   if (options.created) lines.push({ level: "info", text: `Created a new vault key in ${keyStoreName(options.backend)}.` });
-  if (options.backend === "file" && options.forced !== "file") {
+  if (options.backend === "file" && options.forced !== "file" && !options.suppressFileWarning) {
     lines.push({
       level: "warn",
       text:
@@ -87,10 +88,11 @@ export function keyStoreNotices(options: {
 
 export interface OpenContextOptions {
   /**
-   * Print `keyStoreNotices` to stderr. Default true; `doctor` turns it off
-   * because it reports the key store in its own check.
+   * Warn about an implicit key file. Default true; `doctor` turns it off
+   * because its own check reports the key store. A newly created key is
+   * announced either way: nothing else would say so.
    */
-  keyNotices?: boolean;
+  warnFileKey?: boolean;
 }
 
 /** Opens the vault for a one-shot CLI command. Callers must close it. */
@@ -156,20 +158,19 @@ export async function openContext(options: OpenContextOptions = {}): Promise<Cli
       vault.setMeta(META_KEY_CHECK, sealKeyCheck(key));
     }
 
-    if (options.keyNotices !== false) {
-      // stderr, and not console.error, which Bun paints red on a terminal:
-      // stdout belongs to the command (`resolve` prints a value there).
-      const notices = keyStoreNotices({
-        backend: backend.name,
-        created,
-        forced: process.env.KERSTEL_KEYCHAIN_BACKEND,
-        cli: cliName(),
-      });
-      const paint = makeTheme(detectTheme(process.stderr));
-      for (const notice of notices) {
-        const symbol = notice.level === "warn" ? paint.yellow(SYMBOLS.warn) : paint.dim(SYMBOLS.info);
-        process.stderr.write(`${symbol}  ${notice.text}\n`);
-      }
+    // stderr, and not console.error, which Bun paints red on a terminal:
+    // stdout belongs to the command (`resolve` prints a value there).
+    const notices = keyStoreNotices({
+      backend: backend.name,
+      created,
+      forced: process.env.KERSTEL_KEYCHAIN_BACKEND,
+      cli: cliName(),
+      suppressFileWarning: options.warnFileKey === false,
+    });
+    const paint = makeTheme(detectTheme(process.stderr));
+    for (const notice of notices) {
+      const symbol = notice.level === "warn" ? paint.yellow(SYMBOLS.warn) : paint.dim(SYMBOLS.info);
+      process.stderr.write(`${symbol}  ${notice.text}\n`);
     }
 
     return {
