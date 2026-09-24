@@ -54,12 +54,13 @@
 <span class="release-date release-unreleased">In development</span>
 </div>
 <details class="release-details">
-<summary><span class="release-count">4 changes</span></summary>
+<summary><span class="release-count">5 changes</span></summary>
 <div class="release-body">
 <section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
 <li><code>kerstel move</code> changes where a key lives after <code>init</code>: between this project&#39;s vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or <code>ks move KEY --to global|project|plaintext --yes</code> from a script. The env files are backed up first, and a vault value it removes or replaces, or a plain value that loses to the vault&#39;s, is saved in the backup; <code>uninstall</code> names any such value that exists nowhere else before it deletes the backups. <code>init</code> now points you to it after it finishes, so changing your mind about a key later doesn&#39;t mean re-running <code>init</code>.</li>
 </ul></section>
 <section class="change-group change-security"><h3 class="change-type">Security</h3><ul>
+<li>When no OS credential store answers and Kerstel falls back to keeping the vault key in <code>~/.kerstel/vault.key</code>, every command that opens the vault now warns about it on stderr, not only <code>kerstel doctor</code>. Setting <code>KERSTEL_KEYCHAIN_BACKEND=file</code> yourself says the file is intended and turns the warning off. The command that creates a vault key also says so, and where it put it.</li>
 <li><code>kerstel update</code>, <code>--version</code>, <code>doctor</code> and <code>install.sh</code> refuse a <code>KERSTEL_RELEASES_URL</code> or <code>KERSTEL_DOWNLOAD_BASE</code> that is not <code>https://</code>, naming the variable, and a download that redirects away from <code>https://</code>. Over plain HTTP a mirror&#39;s binary and checksum could both be swapped in transit. <code>http://</code> to <code>127.0.0.1</code> or <code>localhost</code> still works for local mirrors. <code>update</code> now says which mirror it uses, and <code>install.sh</code> rejects a <code>KERSTEL_VERSION</code> that is not a version like <code>0.1.0</code>.</li>
 <li><code>kerstel init</code> no longer prints a credential in full because its name starts with <code>PUBLIC_</code>, <code>VITE_</code> or <code>NEXT_PUBLIC_</code>. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (<code>VITE_SUPABASE_KEY</code>, <code>NEXT_PUBLIC_API_KEY</code>), a value with a known token prefix (<code>sk_</code>, <code>AIza</code>, <code>ghp_</code>, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. <code>PORT=3000</code> and other configuration values still show as they are.</li>
 </ul></section>

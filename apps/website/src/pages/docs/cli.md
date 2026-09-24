@@ -68,7 +68,7 @@ When the same key appears in several files, the highest-precedence one is stored
 | Variable | Effect |
 | --- | --- |
 | `KERSTEL_HOME` | Directory for the vault, socket, and hook assets. Defaults to `~/.kerstel`. |
-| `KERSTEL_KEYCHAIN_BACKEND` | Force a credential store backend. Set to `file` for a `0600` key file instead of the OS store. Kerstel warns whenever this fallback is in use. |
+| `KERSTEL_KEYCHAIN_BACKEND` | Force a credential store backend. Set to `file` for a `0600` key file instead of the OS store. When Kerstel falls back to the file on its own, because no credential store answered, every command that opens the vault warns on stderr; setting this to `file` says you meant it, and turns the warning off. |
 | `KERSTEL_RELEASES_URL` | Where `update`, `doctor`, and `--version` look for releases, instead of `https://github.com/alilibx/kerstel`. For mirrors and tests; it must serve the same `/releases/latest` redirect and `/releases/download/v<version>/` files as GitHub. It must be `https://` (or `http://` to `127.0.0.1` or `localhost`); anything else is refused, and `doctor` names it. `update` prints the mirror it uses. |
 
 Set these in your shell or your shell profile, never in a project's env file. Kerstel is a Bun binary, so it loads the `.env` of the directory you run it in — and in Kerstel's model that file is committed, which would let a repository you cloned choose your vault's location or your credential store. So if an env file here **names** a `KERSTEL_*` variable, Kerstel ignores that variable and says so on stderr.

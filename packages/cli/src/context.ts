@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { installHookAssets, type HookInstallResult } from "./hook-assets";
 import { ensureHome, vaultPath } from "./paths";
 import { cliName } from "./ui/cli-name";
+import { SYMBOLS, detectTheme, makeTheme } from "./ui/theme";
 import { loadOrCreateDataKey, selectBackend, type KeychainBackend } from "./vault/keychain";
+import { keyFilePath } from "./vault/keychain/file";
 import {
   META_KEYCHAIN_BACKEND,
   META_KEY_CHECK,
@@ -33,8 +35,66 @@ export interface CliContext {
   hookInstall: HookInstallResult;
 }
 
+/** Where a backend keeps the key, in words for a sentence. */
+function keyStoreName(backend: string): string {
+  switch (backend) {
+    case "macos":
+      return "the macOS Keychain";
+    case "linux":
+      return "the Secret Service";
+    case "windows":
+      return "the Windows Credential Manager";
+    case "file":
+      return keyFilePath();
+    default:
+      return backend;
+  }
+}
+
+export interface KeyStoreNotice {
+  level: "info" | "warn";
+  text: string;
+}
+
+/**
+ * What a command says about the vault key before it does anything else, one
+ * line each. The file backend is chosen silently when no OS credential store
+ * answers (macOS over SSH with a locked Keychain, Linux without secret-tool),
+ * and `vault_meta` then pins it, so the user hears about it on every command,
+ * not only from `doctor`. Asking for it with KERSTEL_KEYCHAIN_BACKEND=file is
+ * the acknowledgement that silences it. Pure, so it is tested without a real
+ * credential store.
+ */
+export function keyStoreNotices(options: {
+  backend: string;
+  created: boolean;
+  forced: string | undefined;
+  cli: string;
+}): KeyStoreNotice[] {
+  const lines: KeyStoreNotice[] = [];
+  if (options.created) lines.push({ level: "info", text: `Created a new vault key in ${keyStoreName(options.backend)}.` });
+  if (options.backend === "file" && options.forced !== "file") {
+    lines.push({
+      level: "warn",
+      text:
+        `Kerstel's vault key is in a file, ${keyFilePath()}, because no OS credential store was reachable. ` +
+        `Anything that can read that file can open your vault. Run \`${options.cli} doctor\` for details, ` +
+        "or set KERSTEL_KEYCHAIN_BACKEND=file to say this is intended.",
+    });
+  }
+  return lines;
+}
+
+export interface OpenContextOptions {
+  /**
+   * Print `keyStoreNotices` to stderr. Default true; `doctor` turns it off
+   * because it reports the key store in its own check.
+   */
+  keyNotices?: boolean;
+}
+
 /** Opens the vault for a one-shot CLI command. Callers must close it. */
-export async function openContext(): Promise<CliContext> {
+export async function openContext(options: OpenContextOptions = {}): Promise<CliContext> {
   ensureHome();
   // Every vault-opening command refreshes the hook, so a fresh install or a
   // binary upgrade puts the right preload on disk without a separate step.
@@ -94,6 +154,22 @@ export async function openContext(): Promise<CliContext> {
       // existed, on its first open after upgrading. Record the baseline so every later open is checked.
       vault.setMeta(META_KEYCHAIN_BACKEND, backend.name);
       vault.setMeta(META_KEY_CHECK, sealKeyCheck(key));
+    }
+
+    if (options.keyNotices !== false) {
+      // stderr, and not console.error, which Bun paints red on a terminal:
+      // stdout belongs to the command (`resolve` prints a value there).
+      const notices = keyStoreNotices({
+        backend: backend.name,
+        created,
+        forced: process.env.KERSTEL_KEYCHAIN_BACKEND,
+        cli: cliName(),
+      });
+      const paint = makeTheme(detectTheme(process.stderr));
+      for (const notice of notices) {
+        const symbol = notice.level === "warn" ? paint.yellow(SYMBOLS.warn) : paint.dim(SYMBOLS.info);
+        process.stderr.write(`${symbol}  ${notice.text}\n`);
+      }
     }
 
     return {

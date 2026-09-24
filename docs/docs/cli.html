@@ -198,7 +198,7 @@
 </tr>
 <tr>
 <td><code>KERSTEL_KEYCHAIN_BACKEND</code></td>
-<td>Force a credential store backend. Set to <code>file</code> for a <code>0600</code> key file instead of the OS store. Kerstel warns whenever this fallback is in use.</td>
+<td>Force a credential store backend. Set to <code>file</code> for a <code>0600</code> key file instead of the OS store. When Kerstel falls back to the file on its own, because no credential store answered, every command that opens the vault warns on stderr; setting this to <code>file</code> says you meant it, and turns the warning off.</td>
 </tr>
 <tr>
 <td><code>KERSTEL_RELEASES_URL</code></td>
