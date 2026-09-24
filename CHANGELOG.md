@@ -6,7 +6,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Added
 
-- `kerstel move` changes where a key lives after `init`: between this project's vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or `ks move KEY --to global|project|plaintext --yes` from a script. The env files are backed up first, and a vault value it removes or replaces is saved in the backup. `init` now points you to it after it finishes, so changing your mind about a key later doesn't mean re-running `init`.
+- `kerstel move` changes where a key lives after `init`: between this project's vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or `ks move KEY --to global|project|plaintext --yes` from a script. The env files are backed up first, and a vault value it removes or replaces, or a plain value that loses to the vault's, is saved in the backup; `uninstall` names any such value that exists nowhere else before it deletes the backups. `init` now points you to it after it finishes, so changing your mind about a key later doesn't mean re-running `init`.
 
 ### Security
 
