@@ -159,16 +159,18 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     return 0;
   }
   const loaded = loadEnvFiles(detected.envFiles);
-  const scope = resolveProjectScope(
-    loaded,
-    deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope,
-  );
   const fileNames = detected.envFiles.map((f) => f.name).join(", ");
-  const { rows, foreign } = scanRows(loaded, scope);
 
   const ctx = await openContext();
   try {
     const vault = ctx.vault;
+    // The scope `init` registered for this root is the best witness: with
+    // only plain values in the files, the files cannot say it was `--scope
+    // custom`. Without a record, the files' own references, then the name.
+    const scope =
+      vault.listProjects().find((p) => safeRealpath(p.rootPath) === detected.root)?.name ??
+      resolveProjectScope(loaded, deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope);
+    const { rows, foreign } = scanRows(loaded, scope);
     for (const f of foreign) {
       info(`${f.key} in ${f.files.join(", ")} reads ${f.reference}, another project's scope; it is not offered.`);
     }

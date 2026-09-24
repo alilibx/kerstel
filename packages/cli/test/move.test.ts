@@ -216,6 +216,16 @@ test("a file edited while Apply? waits is refused with exit 1 and left alone", a
   expect(listBackups("app")).toHaveLength(0);
 });
 
+test("the scope is the vault's project record for this root, even when the files hold only plain values", async () => {
+  const root = makeProject({ ".env": "K=v\n" });
+  await withVault((v) => v.registerProject("custom", root));
+  const { code } = await run(root, ["K", "--to", "project", "--yes"], null);
+  expect(code).toBe(0);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://custom/K\n");
+  expect(await withVault((v) => v.getSecret({ scope: "custom", key: "K" }))).toBe("v");
+  expect(await withVault((v) => v.getSecret({ scope: "app", key: "K" }))).toBeNull();
+});
+
 test("interactive: answering No changes nothing", async () => {
   const root = makeProject({ ".env": "K=v\n" });
   const { code } = await run(root, ["K"], new ScriptedPrompter(["global", "no"]));
