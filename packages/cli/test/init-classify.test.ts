@@ -193,7 +193,14 @@ test.each([
   ["VITE_GITHUB", "ghp_abcdefghijklmnop", false],
   ["VITE_API_URL", "https://user:pass@api.example.com", false],
   ["NEXT_PUBLIC_FEED", "https://example.com/feed?token=abc", false],
+  ["VITE_SLACK_WEBHOOK", "https://hooks.slack.com/services/T0/B0/abcDEF123456ghiJKL789", false],
+  ["NEXT_PUBLIC_WEATHER_URL", "https://api.example.com/v1?apikey=abc123live", false],
+  ["NEXT_PUBLIC_WEATHER_URL", "https://api.example.com/v1?apiKey=abc123live", false],
+  ["VITE_FEED", "https://example.com/feed?auth=abc123", false],
+  ["VITE_SUPABASE_SERVICE_ROLE", "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZSJ9.sig", false],
   ["VITE_API_URL", "https://api.example.com", true],
+  ["VITE_DOCS_URL", "https://example.com/docs/getting-started/installation", true],
+  ["NEXT_PUBLIC_FEED", "https://example.com/feed?monkey=1", true],
   ["NEXT_PUBLIC_ANALYTICS_ID", "G-ABCDEFGHIJ", true],
 ] as const)("isSafeToDisplay(%p, …) is %p", (key, value, expected) => {
   expect(isSafeToDisplay(key, value)).toBe(expected);
