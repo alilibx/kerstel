@@ -132,12 +132,19 @@ function summaryLine(checks: Check[]): string {
 /** Where `doctor` looks for the newest release. Injectable so tests never call GitHub. */
 export interface DoctorDeps {
   latestVersion: () => Promise<string | null>;
+  /** Why the release source refuses to be used, if it does. */
+  releaseProblem?: string | null;
+}
+
+function defaultDoctorDeps(): DoctorDeps {
+  const source = githubReleases();
+  return { latestVersion: () => source.latestVersion(), releaseProblem: source.problem ?? null };
 }
 
 export async function doctorCommand(
   args: string[] = [],
   cwd: string = process.cwd(),
-  deps: DoctorDeps = { latestVersion: () => githubReleases().latestVersion() },
+  deps: DoctorDeps = defaultDoctorDeps(),
 ): Promise<number> {
   let verbose = false;
   for (const arg of args) {
@@ -179,6 +186,7 @@ export async function doctorCommand(
       home: homeForDisplay(),
       version: VERSION,
       latestVersion: await latestVersion,
+      releaseProblem: deps.releaseProblem ?? null,
       // Set-but-empty injects nothing, so it is not worth a warning.
       bunOptions: process.env.BUN_OPTIONS?.trim() ? process.env.BUN_OPTIONS : null,
     };

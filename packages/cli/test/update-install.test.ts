@@ -260,3 +260,23 @@ test("a download that does not report the expected version is discarded", async 
   expect(readFileSync(target, "utf8")).toBe(script("0.1.0"));
   expect(readdirSync(join(target, ".."))).toEqual(["kerstel"]);
 });
+
+test("a download that redirects to plain http is refused, and nothing is installed", async () => {
+  const target = installedBinary("0.1.0");
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(null, { status: 302, headers: { location: "http://mirror.example.invalid/kerstel" } }),
+  });
+  servers.push(server);
+  const base = `http://127.0.0.1:${server.port}`;
+  const source: ReleaseSource = {
+    latestVersion: async () => "0.2.0",
+    assetUrl: (version, asset) => `${base}/v${version}/${asset}`,
+    checksumsUrl: (version) => `${base}/v${version}/SHA256SUMS`,
+  };
+  await expect(
+    performUpdate({ source, currentVersion: "0.1.0", targetPath: target, asset: ASSET }),
+  ).rejects.toThrow(/https/);
+  expect(readFileSync(target, "utf8")).toContain("0.1.0");
+});

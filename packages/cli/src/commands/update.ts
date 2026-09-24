@@ -62,6 +62,10 @@ export interface VersionDeps {
 export async function versionCommand(deps: VersionDeps): Promise<number> {
   console.log(deps.currentVersion);
   if (!deps.isTTY) return 0;
+  if (deps.source.problem) {
+    deps.stderr(deps.source.problem);
+    return 0;
+  }
   const latest = await deps.source.latestVersion();
   deps.stderr(versionStatusLine(deps.currentVersion, latest, deps.cli));
   return 0;
@@ -105,6 +109,13 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
     return 1;
   }
 
+  // Before any request: a refused override would otherwise read as "offline".
+  if (deps.source.problem) {
+    fail(deps.source.problem);
+    return 1;
+  }
+  if (deps.source.mirror) info(`Using releases from ${deps.source.mirror}`);
+
   // The bar redraws one line with `\r`, which only reads well on a terminal;
   // piped, the stage lines alone are the record, as with install.sh.
   const tty = deps.isTTY ?? interactive();
@@ -132,7 +143,9 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
 
   switch (outcome.kind) {
     case "unreachable":
-      fail("Could not reach github.com to check for updates. Try again when you're online.");
+      fail(
+        `Could not reach ${deps.source.mirror ?? "github.com"} to check for updates. Try again when you're online.`,
+      );
       return 1;
     case "up-to-date":
       ok(`kerstel ${outcome.version} is up to date.`);

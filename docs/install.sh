@@ -6,7 +6,7 @@
 # Environment:
 #   KERSTEL_VERSION        install this version (e.g. 0.1.0) instead of the latest
 #   KERSTEL_INSTALL_DIR    install here instead of ~/.local/bin
-#   KERSTEL_DOWNLOAD_BASE  download from here instead of GitHub Releases
+#   KERSTEL_DOWNLOAD_BASE  download from here instead of GitHub Releases (https:// only)
 #   NO_COLOR               print without colour
 #
 # Everything is inside main(), called on the last line, so a download cut off
@@ -18,6 +18,8 @@ REPO_URL="https://github.com/alilibx/kerstel"
 DOCS_URL="https://kerstel.dev/docs/getting-started"
 TMP_DIR=""
 STAGED=""
+# The one scheme every curl below may use, redirects included. Set in main().
+CURL_PROTO="=https"
 DOWNLOAD_PID=""
 
 # Colour and the progress bar need a terminal on stdout. Piped into a log
@@ -96,6 +98,30 @@ platform_name() {
   esac
 }
 
+# The scheme curl may use for this base, or nothing when it is refused.
+# Over plain HTTP the same origin serves the binary and SHA256SUMS, so anyone
+# on the path could swap both and the checksum would still match. http:// to
+# this machine and file:// never cross a network, so they stay allowed.
+proto_for() {
+  case "$1" in
+    https://*) printf '=https' ;;
+    file://*) printf '=file' ;;
+    http://127.0.0.1 | http://127.0.0.1[:/]* | http://localhost | http://localhost[:/]*) printf '=http' ;;
+    "http://[::1]" | "http://[::1]"[:/]*) printf '=http' ;;
+    *) printf '' ;;
+  esac
+}
+
+check_settings() {
+  if [ -n "${KERSTEL_VERSION:-}" ] &&
+    ! printf '%s' "$KERSTEL_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+    die "KERSTEL_VERSION must be a version like 0.1.0; nothing was installed"
+  fi
+  if [ -n "${KERSTEL_DOWNLOAD_BASE:-}" ] && [ -z "$(proto_for "$KERSTEL_DOWNLOAD_BASE")" ]; then
+    die "KERSTEL_DOWNLOAD_BASE must be an https:// URL; plain HTTP would let anyone on the network path replace the binary and its checksum together. Nothing was installed"
+  fi
+}
+
 download_base() {
   if [ -n "${KERSTEL_DOWNLOAD_BASE:-}" ]; then
     printf '%s' "${KERSTEL_DOWNLOAD_BASE%/}"
@@ -127,10 +153,10 @@ human_size() {
 download_with_progress() {
   local url="$1" dest="$2" total="$3" width=30 got filled pct
   if [ "$TTY" != 1 ] || [ -z "$total" ] || [ "$total" -le 0 ]; then
-    curl -fsSL "$url" -o "$dest" || return 1
+    curl --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" -fsSL "$url" -o "$dest" || return 1
     return 0
   fi
-  curl -fsSL "$url" -o "$dest" &
+  curl --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" -fsSL "$url" -o "$dest" &
   local pid=$!
   DOWNLOAD_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
@@ -165,7 +191,7 @@ bar_of() {
 # works, just without a bar or a version in the line above it.
 probe_asset() { # sets ASSET_SIZE and ASSET_VERSION
   local headers
-  headers="$(curl -sIL "$1" 2>/dev/null | tr -d '\r' || true)"
+  headers="$(curl --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" -sIL "$1" 2>/dev/null | tr -d '\r' || true)"
   ASSET_SIZE="$(printf '%s\n' "$headers" | awk 'tolower($1) == "content-length:" { size = $2 } END { print size }')"
   local found
   found="$(printf '%s\n' "$headers" | grep -o '/releases/download/v[^/]*' | head -1 | sed 's|.*/v||' || true)"
@@ -231,10 +257,12 @@ tilde() {
 
 main() {
   command -v curl >/dev/null 2>&1 || die "needs curl"
+  check_settings
 
   local asset base dir expected actual version label cmd
   asset="$(detect_asset)"
   base="$(download_base)"
+  CURL_PROTO="$(proto_for "$base")"
   dir="${KERSTEL_INSTALL_DIR:-$HOME/.local/bin}"
 
   say ""
@@ -253,7 +281,7 @@ main() {
   say "  Downloading ${label} for $(platform_name "$asset")"
   download_with_progress "${base}/${asset}" "${TMP_DIR}/kerstel" "$ASSET_SIZE" ||
     die "could not download ${base}/${asset}"
-  curl -fsSL "${base}/SHA256SUMS" -o "${TMP_DIR}/SHA256SUMS" || die "could not download ${base}/SHA256SUMS"
+  curl --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" -fsSL "${base}/SHA256SUMS" -o "${TMP_DIR}/SHA256SUMS" || die "could not download ${base}/SHA256SUMS"
 
   expected="$(awk -v name="$asset" '$2 == name {print $1}' "${TMP_DIR}/SHA256SUMS")"
   [ -n "$expected" ] || die "SHA256SUMS has no entry for ${asset}; nothing was installed"

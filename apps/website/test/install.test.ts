@@ -261,3 +261,52 @@ test("a pinned KERSTEL_VERSION is named in the download line", async () => {
   const result = await install({ KERSTEL_VERSION: "0.1.0", KERSTEL_DOWNLOAD_BASE: `file://${release}` });
   expect(result.stdout).toContain("Downloading kerstel 0.1.0 for macOS (Apple Silicon)");
 });
+
+test("an http:// KERSTEL_DOWNLOAD_BASE is refused before anything is downloaded", async () => {
+  writeRelease();
+  const result = await install({ KERSTEL_DOWNLOAD_BASE: "http://mirror.example.com/kerstel" });
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("KERSTEL_DOWNLOAD_BASE must be an https:// URL");
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});
+
+test("a loopback http:// KERSTEL_DOWNLOAD_BASE is allowed, for local mirrors and tests", async () => {
+  writeRelease();
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: (req) => new Response(Bun.file(join(release, new URL(req.url).pathname.split("/").pop()!))),
+  });
+  try {
+    const result = await install({ KERSTEL_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}` });
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(existsSync(join(installDir, "kerstel"))).toBe(true);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a KERSTEL_VERSION that is not a version is refused before it reaches a URL", async () => {
+  writeRelease();
+  const result = await install({ KERSTEL_VERSION: "0.1.0/../../evil", KERSTEL_DOWNLOAD_BASE: "" });
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("KERSTEL_VERSION must be a version like 0.1.0");
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});
+
+test("a pre-release KERSTEL_VERSION, as the release rehearsal uses, is accepted", async () => {
+  writeRelease();
+  const result = await install({ KERSTEL_VERSION: "v0.1.0-rc.1" });
+  expect(result.code).toBe(0);
+});
+
+test("every curl call is pinned to the base URL's scheme, redirects included", () => {
+  const script = readFileSync(SCRIPT, "utf8");
+  const calls = script.split("\n").filter((line) => /^\s*[^#]*\bcurl -/.test(line));
+  expect(calls.length).toBeGreaterThan(0);
+  for (const line of calls) {
+    expect(line).toContain('--proto "$CURL_PROTO"');
+    expect(line).toContain('--proto-redir "$CURL_PROTO"');
+  }
+});

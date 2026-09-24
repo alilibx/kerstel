@@ -43,6 +43,8 @@ export interface DoctorFacts {
   version: string;
   /** The newest release on GitHub, or null when the check could not reach it. */
   latestVersion: string | null;
+  /** Why the release source was refused (an unsafe KERSTEL_RELEASES_URL), if it was. */
+  releaseProblem?: string | null;
   /** `BUN_OPTIONS` as this process saw it, or null when unset. */
   bunOptions: string | null;
 }
@@ -84,6 +86,15 @@ function nativeStore(platform: NodeJS.Platform): string | null {
  * page has not propagated yet) counts as up to date.
  */
 function versionCheck(facts: DoctorFacts): Check {
+  // A refused override is a setting to fix, not an offline machine.
+  if (facts.releaseProblem) {
+    return {
+      group: "machine",
+      status: "warn",
+      label: "Version",
+      detail: `${facts.version} (could not check for updates: ${facts.releaseProblem})`,
+    };
+  }
   if (facts.latestVersion === null) {
     return {
       group: "machine",
