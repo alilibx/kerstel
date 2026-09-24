@@ -525,3 +525,16 @@ test("Project Scripts: names old-form scripts", () => {
   );
   expect(checkFor(checks, "Scripts")).toMatchObject({ status: "warn", detail: "2 of 3 go through Kerstel; old form: build" });
 });
+
+test("Version warn: a refused KERSTEL_RELEASES_URL is named, not reported as offline", () => {
+  const checks = gatherChecks(
+    allPassFacts({ version: "0.1.0", latestVersion: null, releaseProblem: "KERSTEL_RELEASES_URL must be an https:// URL." }),
+  );
+  expect(checkFor(checks, "Version")).toEqual({
+    group: "machine",
+    status: "warn",
+    label: "Version",
+    detail: "0.1.0 (could not check for updates: KERSTEL_RELEASES_URL must be an https:// URL.)",
+  });
+  expect(exitCode(checks)).toBe(0);
+});

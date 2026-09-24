@@ -241,3 +241,61 @@ test("version on a terminal adds the update status on stderr, keeping stdout bar
   // detection never leaks escape codes into a redirected stderr.
   expect(errors).toEqual(["0.1.1 is available. Run ks update."]);
 });
+
+test("update refuses a source with a problem, names the variable, and changes nothing", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  const target = fakeBinary("0.1.0");
+  const source: ReleaseSource = {
+    ...release("0.1.1"),
+    problem: "KERSTEL_RELEASES_URL must be an https:// URL.",
+  };
+  capture();
+  const code = await updateCommand([], { ...deps("0.1.1", target), source });
+  expect(code).toBe(1);
+  expect(captured.join("\n")).toContain("KERSTEL_RELEASES_URL must be an https:// URL.");
+  expect(readFileSync(target, "utf8")).toContain("echo 0.1.0");
+});
+
+test("update --check refuses a source with a problem too", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  const source: ReleaseSource = { ...release("0.1.1"), problem: "KERSTEL_RELEASES_URL must be an https:// URL." };
+  capture();
+  expect(await updateCommand(["--check"], { ...deps("0.1.1", fakeBinary("0.1.0")), source })).toBe(1);
+});
+
+test("update names the mirror it uses, and blames the mirror when it cannot be reached", async () => {
+  isolateEnv({ prefix: "update-cmd" });
+  const target = fakeBinary("0.1.0");
+  capture();
+  const up = await updateCommand([], {
+    ...deps("0.1.1", target),
+    source: { ...release("0.1.1"), mirror: "https://mirror.example.com/kerstel" },
+  });
+  expect(up).toBe(0);
+  expect(captured.join("\n")).toContain("Using releases from https://mirror.example.com/kerstel");
+
+  capture();
+  const down = await updateCommand([], {
+    ...deps(null, target),
+    source: { ...release(null), mirror: "https://mirror.example.com/kerstel" },
+  });
+  expect(down).toBe(1);
+  expect(captured.join("\n")).toContain("Could not reach https://mirror.example.com/kerstel");
+  expect(captured.join("\n")).not.toContain("github.com");
+});
+
+test("version on a terminal names a refused override instead of saying it could not check", async () => {
+  const source: ReleaseSource = {
+    latestVersion: async () => null,
+    assetUrl: () => "",
+    checksumsUrl: () => "",
+    problem: "KERSTEL_RELEASES_URL must be an https:// URL.",
+  };
+  capture();
+  const errors: string[] = [];
+  expect(
+    await versionCommand({ isTTY: true, source, currentVersion: "0.1.0", cli: "ks", stderr: (t) => errors.push(t) }),
+  ).toBe(0);
+  expect(captured).toEqual(["0.1.0"]);
+  expect(errors).toEqual(["KERSTEL_RELEASES_URL must be an https:// URL."]);
+});

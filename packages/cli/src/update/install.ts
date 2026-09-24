@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ReleaseSource } from "./release-source";
+import { displayUrl, isSafeReleaseUrl, type ReleaseSource } from "./release-source";
 import { compareVersions } from "./versions";
 
 export interface UpdateOptions {
@@ -95,6 +95,33 @@ export async function performUpdate(options: UpdateOptions): Promise<UpdateOutco
   return { kind: "updated", from, to: latest };
 }
 
+const MAX_REDIRECTS = 10;
+
+class UnsafeRedirectError extends Error {}
+
+/**
+ * `fetch`, with redirects followed here instead of by `fetch`, so every hop is
+ * checked before it is requested. GitHub sends each download through a
+ * redirect to its CDN; a mirror can send it anywhere, and one hop down to
+ * plain HTTP would undo the https:// check on the base URL.
+ */
+async function fetchFollowingSafeRedirects(url: string, signal: AbortSignal): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const response = await fetch(current, { signal, redirect: "manual" });
+    const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
+    if (location === null) return response;
+    await response.body?.cancel();
+    current = new URL(location, current).toString();
+    if (!isSafeReleaseUrl(current)) {
+      throw new UnsafeRedirectError(
+        `could not download ${displayUrl(url)}: it redirected away from https://, so the download was refused`,
+      );
+    }
+  }
+  throw new Error(`could not download ${displayUrl(url)}: too many redirects`);
+}
+
 /**
  * The timeout covers the wait for headers only. Once the body is flowing it
  * may take as long as the link needs: a 60 MB binary over a slow connection
@@ -109,13 +136,14 @@ async function download(
   const timer = setTimeout(() => controller.abort(), headerTimeoutMs);
   let response: Response;
   try {
-    response = await fetch(url, { signal: controller.signal });
+    response = await fetchFollowingSafeRedirects(url, controller.signal);
   } catch (error) {
-    throw new Error(`could not download ${url}: ${(error as Error).message}`);
+    if (error instanceof UnsafeRedirectError) throw error;
+    throw new Error(`could not download ${displayUrl(url)}: ${(error as Error).message}`);
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) throw new Error(`could not download ${url} (HTTP ${response.status})`);
+  if (!response.ok) throw new Error(`could not download ${displayUrl(url)} (HTTP ${response.status})`);
   if (!response.body) return new Uint8Array(await response.arrayBuffer());
 
   // Read the body chunk by chunk so the caller can draw progress; buffering
@@ -135,7 +163,7 @@ async function download(
       onProgress?.(received, total);
     }
   } catch (error) {
-    throw new Error(`could not download ${url}: ${(error as Error).message}`);
+    throw new Error(`could not download ${displayUrl(url)}: ${(error as Error).message}`);
   }
   return Buffer.concat(chunks, received);
 }

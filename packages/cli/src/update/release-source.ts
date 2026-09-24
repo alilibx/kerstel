@@ -9,9 +9,62 @@ export interface ReleaseSource {
   latestVersion(): Promise<string | null>;
   assetUrl(version: string, asset: string): string;
   checksumsUrl(version: string): string;
+  /** Why this source refuses to be used, naming the variable to fix; null when it is fine. */
+  readonly problem?: string | null;
+  /** The override's base when releases come from somewhere other than GitHub; null for the default. */
+  readonly mirror?: string | null;
 }
 
 export const KERSTEL_REPO_URL = "https://github.com/alilibx/kerstel";
+
+/** Loopback hosts: no one sits on the path between a process and its own machine. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Whether a URL is safe to fetch a release from: `https://`, or `http://` to
+ * this machine (the test suite serves releases on 127.0.0.1). Over plain HTTP
+ * anywhere else, the same origin serves the binary and its SHA256SUMS, so
+ * anyone on the path can swap both and the checksum still matches.
+ */
+export function isSafeReleaseUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === "https:") return true;
+  return parsed.protocol === "http:" && LOOPBACK_HOSTS.has(parsed.hostname);
+}
+
+/**
+ * `url` as it may be printed: any user name and password removed, since a
+ * mirror's URL can carry its credentials. Unparseable input is not printed.
+ */
+export function displayUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "(not a URL)";
+  }
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.toString().replace(/\/$/, "");
+}
+
+/**
+ * Why `base`, read from `variable`, cannot be used, or null when it can. The
+ * message names the variable but never echoes the URL, which may carry a
+ * mirror's credentials.
+ */
+export function releaseBaseProblem(base: string, variable: string): string | null {
+  if (isSafeReleaseUrl(base)) return null;
+  return (
+    `${variable} must be an https:// URL. Kerstel will not download releases over plain HTTP or another ` +
+    "scheme, where anyone on the network path could replace the binary and its checksum together."
+  );
+}
 
 export interface GitHubReleasesOptions {
   /** The repository page. Defaults to KERSTEL_RELEASES_URL when set, else the Kerstel repository. */
@@ -30,10 +83,16 @@ export function githubReleases(options: GitHubReleasesOptions = {}): ReleaseSour
   // KERSTEL_RELEASES_URL exists for the test suite and for anyone mirroring
   // the releases: it is the only way `doctor` and `--version` are kept off
   // github.com, since neither has a flag for it.
-  const base = (options.baseUrl ?? process.env.KERSTEL_RELEASES_URL ?? KERSTEL_REPO_URL).replace(/\/$/, "");
+  const override = options.baseUrl ?? process.env.KERSTEL_RELEASES_URL;
+  const base = (override ?? KERSTEL_REPO_URL).replace(/\/$/, "");
+  const problem = releaseBaseProblem(base, options.baseUrl !== undefined ? "The release URL" : "KERSTEL_RELEASES_URL");
   const timeoutMs = options.timeoutMs ?? 3000;
   return {
+    problem,
+    mirror: override === undefined || base === KERSTEL_REPO_URL ? null : displayUrl(base),
     async latestVersion() {
+      // Refused, not attempted: the request itself would go over plain HTTP.
+      if (problem) return null;
       try {
         const response = await fetch(`${base}/releases/latest`, {
           method: "HEAD",
