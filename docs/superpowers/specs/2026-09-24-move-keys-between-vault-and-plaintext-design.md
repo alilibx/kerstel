@@ -1,0 +1,200 @@
+# `ks move`: change where a key lives after init
+
+- **Status:** approved design, 2026-09-24
+- **Release:** 0.1.4
+- **Issue:** [#71](https://github.com/alilibx/kerstel/issues/71)
+- **Builds on:** the product spec (`2026-09-17-kerstel-secrets-manager-design.md`, §5 the wizard, §7 uninstall)
+
+## 1. Problem
+
+`kerstel init` asks, once per key, where each value should live: in the vault for this project, in the vault shared by every project (`global`), or in plain text in the env file. After that the choice is hard to change:
+
+- **Plain text → vault** works by re-running `init`, which offers every key still in plain text again. Nothing tells the user this.
+- **Vault → plain text** has no path except `kerstel uninstall`, which undoes everything.
+- **Project ↔ shared** has no path at all. A user who stored `OPENAI_API_KEY` per project and later wants one shared copy has to `ks set` by hand and edit every file.
+
+## 2. Command
+
+### 2.1 Interactive (default)
+
+`kerstel move` with no key names, in a project `init` has seen:
+
+```
+$ ks move
+  whasal: 6 variables in .env, .env.local
+
+? Which keys?  (space to pick, enter to confirm)
+  [ ] DATABASE_URL    Vault, this project
+  [x] STRIPE_KEY      Vault, this project
+  [ ] OPENAI_API_KEY  Vault, shared
+  [ ] PORT            Plain text   3000
+  ...
+
+? Move STRIPE_KEY to:
+  > Vault, shared by all your projects
+    Keep as plain text
+
+  .env, .env.local:  STRIPE_KEY = kerstel://whasal/STRIPE_KEY  →  kerstel://global/STRIPE_KEY
+  kerstel://whasal/STRIPE_KEY is removed from the vault (nothing else here uses it)
+? Apply?  Yes / No
+
+✓ Backed up .env, .env.local
+✓ STRIPE_KEY now reads kerstel://global/STRIPE_KEY
+```
+
+1. **Scan.** The same env-file discovery and parser `init` uses (`collect.ts`, `dotenv-file.ts`): templates and backup copies skipped, unsupported lines never offered. Each key is listed once with its current place: `Vault, this project`, `Vault, shared`, `Plain text`.
+2. **Values.** A plain-text value is printed only when `isSafeToDisplay` allows it (the #46 rules); otherwise it shows as its length. A vault value is never printed.
+3. **Pick keys**, then **pick a destination per key** from `DESTINATION_CHOICES`, minus the key's current place. When several keys are picked, one question per key; a key whose answer would leave it where it is is dropped.
+4. **Preview** every change (§4), then **Apply? Yes / No**, default No.
+5. **Apply** (§5).
+
+The menus use `init`'s prompter. Without a terminal and without key names and `--to`, the command exits 2 with the same shape of message `init` gives: `ks move asks questions, and this is not a terminal. Name the keys and --to, for example: ks move STRIPE_KEY --to global --yes`. Exit codes follow `init`: 0 done or nothing to do, 1 refused (§3.2, §4.2) or nothing left to move, 2 usage, 130 cancelled.
+
+### 2.2 Direct
+
+```
+ks move STRIPE_KEY PORT --to global|project|plaintext [--yes] [--replace-shared] [--allow-tracked]
+```
+
+No menus. The preview still prints; `--yes` answers Apply. `--to` applies to every named key. A named key the scan does not find, or that is already at the destination, is reported and skipped; if no key is left, exit 1. The flags:
+
+- `--replace-shared`: see §3.2.
+- `--allow-tracked`: see §4.2.
+
+### 2.3 Pointer from `init`
+
+Whenever `init` finishes with keys still in plain text, or reports "Already migrated", it prints one more line:
+
+```
+ℹ To move a key between the vault and plain text later, run ks move.
+```
+
+## 3. What a move does
+
+`<project>` is the project's scope name, as `init` registered it.
+
+| From → To | Env files | Vault |
+|---|---|---|
+| plain → project | value → `kerstel://<project>/KEY` | value stored in `<project>` |
+| plain → shared | value → `kerstel://global/KEY` | value stored in `global` (§3.2 if one exists) |
+| project → shared | `<project>/KEY` → `global/KEY` | value copied to `global` (§3.2); project copy deleted if unused (§3.1) |
+| shared → project | `global/KEY` → `<project>/KEY` | value copied to `<project>`; `global` never deleted |
+| project → plain | reference → the value | project copy deleted if unused (§3.1) |
+| shared → plain | reference → the value | `global` never deleted |
+
+Every file of this checkout that defines the key is rewritten, the same set `init` would rewrite. Writing a plain value uses `restoreLineValue`, the quoting `uninstall` already uses, so the line comes back in the form the parser reads.
+
+If a key's reference differs between files (`.env` has `whasal/KEY`, `.env.local` has `global/KEY`), the key is listed once per distinct reference and the preview names which files each row covers.
+
+### 3.1 Deleting the project copy
+
+A project-scope secret is deleted after the move only when, after the rewrite, no env file in this checkout still references it. Shared (`global`) secrets are never deleted by a move: other projects may use them, and Kerstel cannot see their files.
+
+"This checkout" is the only one Kerstel knows about until #13 tracks each checkout separately. If the vault's recorded root for the project is not the current directory, another checkout may still read the secret, so the copy is **kept**, and the preview says so:
+
+```
+  kerstel://whasal/STRIPE_KEY is kept: whasal was set up in /Users/ali/src/whasal, which may still use it.
+```
+
+The deleted value survives in the backup taken before the rewrite (§5).
+
+### 3.2 An existing shared value
+
+Moving to shared when `global/KEY` already exists:
+
+- **Same value:** nothing to ask; the reference is repointed.
+- **Different value:** interactive asks, default first:
+
+  ```
+  ? kerstel://global/STRIPE_KEY already holds a different value (41 chars). Which one stays?
+    > Keep the shared value; this project uses it from now on
+      Replace it with this project's value (every project using the shared key changes too)
+  ```
+
+  Kerstel does not read other projects' files, so it cannot say which projects use the shared key, and the prompt does not guess a count. The direct form refuses with the first sentence unless `--replace-shared` is given.
+
+### 3.3 What a move does not touch
+
+`package.json` wiring, the launcher, and `.gitignore` stay as they are. If, after a move, no env file of the project holds a reference, the summary adds:
+
+```
+ℹ Nothing here reads the vault any more; ks uninstall removes the wiring.
+```
+
+## 4. Preview
+
+Printed before Apply, in both forms. One block per key:
+
+```
+  STRIPE_KEY → Keep as plain text
+    .env, .env.local:  kerstel://whasal/STRIPE_KEY  →  plain text (32 chars)
+    kerstel://whasal/STRIPE_KEY is removed from the vault (nothing else here uses it)
+```
+
+### 4.1 No values
+
+A value going into a file is shown as its length, whatever `isSafeToDisplay` says: the user picked the key, and the preview is about where it goes, not what it is.
+
+### 4.2 Plain text into a file git would commit
+
+For each file that would receive a plain-text value, when the project is a git repository:
+
+- tracked (`git ls-files --error-unmatch <file>` succeeds), or
+- not ignored (`git check-ignore -q <file>` fails),
+
+the preview warns:
+
+```
+!  .env is tracked by git; STRIPE_KEY's value would be committed.
+!  .env.local is not in .gitignore; STRIPE_KEY's value could be committed.
+```
+
+Interactive: the warning stays above Apply, and the default stays No. Direct: the command refuses unless `--allow-tracked` is given. Outside a git repository, or when `git` is not on `PATH`, no check is made and nothing is said.
+
+### 4.3 Keys that cannot move
+
+- **A reference the vault does not hold** (a teammate's clone before `init` filled it in): named, not offered. `Run ks init to store it first.`
+- **A value the parser refused** (`init`'s unsupported lines): never listed.
+- **A key in plain text with different values in different files**, moving into the vault: the same rule and wording as `init` (the value from the first file wins; the others survive in the backup).
+
+## 5. Apply
+
+In order, stopping at the first failure with nothing half-done in the vault:
+
+1. `createBackup` over every file to be rewritten, the backup `init` takes, so `uninstall` and a manual restore see it. Printed as `✓ Backed up .env, .env.local`.
+2. Vault writes: `setSecret` for every destination value.
+3. Env file rewrites, each through the existing atomic write.
+4. Vault deletions (§3.1).
+5. `registerProject(scope, root)`, as `init` does, so a move in a fresh checkout still records the project.
+6. One `✓` line per key.
+
+A vault write that fails before step 3 leaves the files untouched. A file write that fails leaves the new vault entries in place (harmless: a stored value nothing references) and skips step 4, so no value is lost.
+
+## 6. Other commands
+
+- **`uninstall`:** no change. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
+- **`doctor`:** no change.
+- **`init`:** only the pointer line (§2.3).
+
+## 7. Code
+
+- `packages/cli/src/move/plan.ts`: pure planner. Input: the scanned keys (key, files, current reference or value), the vault lookups it needs, the destinations, the registered root, the git status of each file. Output: the rewrites, vault writes, deletions, kept copies with reasons, conflicts, and warnings. No I/O.
+- `packages/cli/src/move/git.ts`: the tracked/ignored checks, via `Bun.spawnSync`, returning `null` outside a repository.
+- `packages/cli/src/commands/move.ts`: argument parsing, the prompts, the preview, apply.
+- `index.ts`: `move` in the dispatcher and the help text.
+- Reuses from `init`: env discovery and parsing, `explain`/`isSafeToDisplay`, `DESTINATION_CHOICES`, `formatReference`, `createBackup`, `restoreLineValue`, `setLineValue`.
+
+## 8. Docs
+
+- CLI page: a `move` row with both forms and the three flags.
+- Getting started: a short "Changing your mind" section after the wizard.
+- README: the command list.
+- `init` copy that mentions the pointer line.
+- Changelog: an `Added` line under 0.1.4.
+
+## 9. Testing
+
+- **Planner** (`move-plan.test.ts`): every row of the §3 table; same and different shared values, with and without `--replace-shared`; project copy deleted when unused, kept when another file still references it, kept when the recorded root differs; a key with different references in different files; a missing reference; nothing left to move.
+- **Git checks** (`move-git.test.ts`): a temp repository with a tracked file, an ignored file, and an untracked unignored file; no repository.
+- **Command** (`move.test.ts`): the direct form end to end on a temp project and vault, including refusals, `--yes`, and exit codes; a scripted interactive run through the test prompter; the backup exists before the files change; no value appears in stdout or stderr.
+- **init:** the pointer line appears on "Already migrated" and when plain-text keys remain.
