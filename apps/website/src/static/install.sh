@@ -103,11 +103,20 @@ platform_name() {
 # on the path could swap both and the checksum would still match. http:// to
 # this machine and file:// never cross a network, so they stay allowed.
 proto_for() {
+  local authority
   case "$1" in
     https://*) printf '=https' ;;
     file://*) printf '=file' ;;
-    http://127.0.0.1 | http://127.0.0.1[:/]* | http://localhost | http://localhost[:/]*) printf '=http' ;;
-    "http://[::1]" | "http://[::1]"[:/]*) printf '=http' ;;
+    http://*)
+      # The host is everything up to the first / ? or #, and must be exactly
+      # a loopback name with an optional port: a prefix match would let
+      # http://localhost:x@evil.example through, which curl reads as evil.example.
+      authority="${1#http://}"
+      authority="${authority%%[/?#]*}"
+      if printf '%s' "$authority" | grep -Eq '^(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?$'; then
+        printf '=http'
+      fi
+      ;;
     *) printf '' ;;
   esac
 }

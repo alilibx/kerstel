@@ -310,3 +310,13 @@ test("every curl call is pinned to the base URL's scheme, redirects included", (
     expect(line).toContain('--proto-redir "$CURL_PROTO"');
   }
 });
+
+test("an http:// base that only starts with a loopback name is refused", async () => {
+  writeRelease();
+  for (const base of ["http://localhost:1@evil.example/rel", "http://127.0.0.1.evil.example/rel"]) {
+    const result = await install({ KERSTEL_DOWNLOAD_BASE: base });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("KERSTEL_DOWNLOAD_BASE must be an https:// URL");
+  }
+  expect(existsSync(join(installDir, "kerstel"))).toBe(false);
+});

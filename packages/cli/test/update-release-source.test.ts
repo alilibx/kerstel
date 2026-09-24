@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { githubReleases, releaseBaseProblem } from "../src/update/release-source";
+import { displayUrl, githubReleases, releaseBaseProblem } from "../src/update/release-source";
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
 
@@ -128,4 +128,13 @@ test("the default source is not a mirror; an override is, and says where", () =>
   const source = withReleasesUrl("https://mirror.example.com/kerstel/", () => githubReleases());
   expect(source.mirror).toBe("https://mirror.example.com/kerstel");
   expect(source.problem).toBeNull();
+});
+
+test("displayUrl drops a mirror's credentials, and the mirror line never shows them", () => {
+  expect(displayUrl("https://user:hunter2@mirror.example.com/kerstel/")).toBe("https://mirror.example.com/kerstel");
+  expect(displayUrl("https://mirror.example.com/kerstel")).toBe("https://mirror.example.com/kerstel");
+  expect(displayUrl("nope")).toBe("(not a URL)");
+  const source = withReleasesUrl("https://user:hunter2@mirror.example.com/kerstel", () => githubReleases());
+  expect(source.mirror).toBe("https://mirror.example.com/kerstel");
+  expect(source.assetUrl("0.1.0", "a")).toContain("hunter2");
 });

@@ -269,7 +269,7 @@ test("a download that redirects to plain http is refused, and nothing is install
     fetch: () => new Response(null, { status: 302, headers: { location: "http://mirror.example.invalid/kerstel" } }),
   });
   servers.push(server);
-  const base = `http://127.0.0.1:${server.port}`;
+  const base = `http://user:hunter2@127.0.0.1:${server.port}`;
   const source: ReleaseSource = {
     latestVersion: async () => "0.2.0",
     assetUrl: (version, asset) => `${base}/v${version}/${asset}`,
@@ -278,5 +278,9 @@ test("a download that redirects to plain http is refused, and nothing is install
   await expect(
     performUpdate({ source, currentVersion: "0.1.0", targetPath: target, asset: ASSET }),
   ).rejects.toThrow(/https/);
+  const error = await performUpdate({ source, currentVersion: "0.1.0", targetPath: target, asset: ASSET }).catch(
+    (e: Error) => e,
+  );
+  expect(String(error)).not.toContain("hunter2");
   expect(readFileSync(target, "utf8")).toContain("0.1.0");
 });

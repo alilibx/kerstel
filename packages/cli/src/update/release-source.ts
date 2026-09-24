@@ -38,6 +38,22 @@ export function isSafeReleaseUrl(url: string): boolean {
 }
 
 /**
+ * `url` as it may be printed: any user name and password removed, since a
+ * mirror's URL can carry its credentials. Unparseable input is not printed.
+ */
+export function displayUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "(not a URL)";
+  }
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.toString().replace(/\/$/, "");
+}
+
+/**
  * Why `base`, read from `variable`, cannot be used, or null when it can. The
  * message names the variable but never echoes the URL, which may carry a
  * mirror's credentials.
@@ -73,7 +89,7 @@ export function githubReleases(options: GitHubReleasesOptions = {}): ReleaseSour
   const timeoutMs = options.timeoutMs ?? 3000;
   return {
     problem,
-    mirror: override === undefined || base === KERSTEL_REPO_URL ? null : base,
+    mirror: override === undefined || base === KERSTEL_REPO_URL ? null : displayUrl(base),
     async latestVersion() {
       // Refused, not attempted: the request itself would go over plain HTTP.
       if (problem) return null;

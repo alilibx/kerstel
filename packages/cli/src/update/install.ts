@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isSafeReleaseUrl, type ReleaseSource } from "./release-source";
+import { displayUrl, isSafeReleaseUrl, type ReleaseSource } from "./release-source";
 import { compareVersions } from "./versions";
 
 export interface UpdateOptions {
@@ -115,11 +115,11 @@ async function fetchFollowingSafeRedirects(url: string, signal: AbortSignal): Pr
     current = new URL(location, current).toString();
     if (!isSafeReleaseUrl(current)) {
       throw new UnsafeRedirectError(
-        `could not download ${url}: it redirected away from https://, so the download was refused`,
+        `could not download ${displayUrl(url)}: it redirected away from https://, so the download was refused`,
       );
     }
   }
-  throw new Error(`could not download ${url}: too many redirects`);
+  throw new Error(`could not download ${displayUrl(url)}: too many redirects`);
 }
 
 /**
@@ -139,11 +139,11 @@ async function download(
     response = await fetchFollowingSafeRedirects(url, controller.signal);
   } catch (error) {
     if (error instanceof UnsafeRedirectError) throw error;
-    throw new Error(`could not download ${url}: ${(error as Error).message}`);
+    throw new Error(`could not download ${displayUrl(url)}: ${(error as Error).message}`);
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) throw new Error(`could not download ${url} (HTTP ${response.status})`);
+  if (!response.ok) throw new Error(`could not download ${displayUrl(url)} (HTTP ${response.status})`);
   if (!response.body) return new Uint8Array(await response.arrayBuffer());
 
   // Read the body chunk by chunk so the caller can draw progress; buffering
@@ -163,7 +163,7 @@ async function download(
       onProgress?.(received, total);
     }
   } catch (error) {
-    throw new Error(`could not download ${url}: ${(error as Error).message}`);
+    throw new Error(`could not download ${displayUrl(url)}: ${(error as Error).message}`);
   }
   return Buffer.concat(chunks, received);
 }
