@@ -10,6 +10,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Security
 
+- When no OS credential store answers and Kerstel falls back to keeping the vault key in `~/.kerstel/vault.key`, every command that opens the vault now warns about it on stderr, not only `kerstel doctor`. Setting `KERSTEL_KEYCHAIN_BACKEND=file` yourself says the file is intended and turns the warning off. The command that creates a vault key also says so, and where it put it.
 - `kerstel update`, `--version`, `doctor` and `install.sh` refuse a `KERSTEL_RELEASES_URL` or `KERSTEL_DOWNLOAD_BASE` that is not `https://`, naming the variable, and a download that redirects away from `https://`. Over plain HTTP a mirror's binary and checksum could both be swapped in transit. `http://` to `127.0.0.1` or `localhost` still works for local mirrors. `update` now says which mirror it uses, and `install.sh` rejects a `KERSTEL_VERSION` that is not a version like `0.1.0`.
 - `kerstel init` no longer prints a credential in full because its name starts with `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_`. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (`VITE_SUPABASE_KEY`, `NEXT_PUBLIC_API_KEY`), a value with a known token prefix (`sk_`, `AIza`, `ghp_`, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. `PORT=3000` and other configuration values still show as they are.
 

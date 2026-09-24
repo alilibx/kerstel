@@ -157,7 +157,8 @@ export async function doctorCommand(
 
   let ctx: Awaited<ReturnType<typeof openContext>>;
   try {
-    ctx = await openContext();
+    // doctor reports the key store in its own check, so no key-file warning above it.
+    ctx = await openContext({ warnFileKey: false });
   } catch (error) {
     // Nothing else here can be trusted -- the vault itself would not open, so
     // there is no secret count, no backend, no project to report on.
