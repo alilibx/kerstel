@@ -39,7 +39,8 @@ A reference names exactly one scope — `global`, or a project name — with no 
 
 ```bash
 ks init [--yes] [--dry-run]                       # Migrate this project's .env files
-ks move [KEY...] [--to global|project|plaintext]  # Move keys between the vault and plain text
+ks move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tracked]
+                                                  # Move keys between the vault and plain text
 ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
 ks get <scope>/<KEY> [--reveal]                   # Read a secret
 ks ls [--scope <scope>]                           # List stored references
@@ -66,7 +67,7 @@ macOS and Linux, x64 and arm64. The installer verifies the release checksum and 
 
 The installer also adds `ks`, a shortcut for `kerstel`. If something else on your `PATH` is already called `ks`, it leaves that alone and tells you to use `kerstel` instead. Everything below works the same either way — `ks` and `kerstel` are the same binary.
 
-To remove Kerstel, run `ks uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, the binary, and every `kerstel` or `ks` link that points at it, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
+To remove Kerstel, run `ks uninstall`. It rewrites every project's references back to their values, unwraps your scripts, and then deletes `~/.kerstel`, the vault key, the binary, and every `kerstel` or `ks` link that points at it, in that order. Values go back in the quoting you wrote them in. It refuses if a secret would be lost, and names it: that includes a value `init` kept only in its encrypted backup, when a key had different values in several `.env` files, and a value `ks move` saved in its backup that is now nowhere else. `--force` goes ahead anyway. If git tracks a restored `.env` file, it tells you to run `git rm --cached` on it. On a machine with no Kerstel data, it just removes the binary.
 
 ## Set up a project
 

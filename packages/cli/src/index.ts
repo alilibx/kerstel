@@ -20,7 +20,7 @@ const HEADER = `${bold("kerstel")} — local-first secrets for your projects`;
 
 const COMMANDS = `Usage:
   ${cliName()} init [--yes] [--dry-run]              Migrate this project's .env files
-  ${cliName()} move [KEY...] [--to global|project|plaintext] [--yes]
+  ${cliName()} move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tracked]
                                                 Move keys between the vault and plain text
   ... | ${cliName()} set <scope>/<KEY>               Store a secret piped on stdin
   ${cliName()} set <scope>/<KEY> --value <value>     Same, but the value lands in your
