@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moveCommand, parseMoveArgs } from "../src/commands/move";
 import { listBackups } from "../src/init/backup";
-import { ScriptedPrompter } from "../src/init/prompts";
+import { CancelledError, ScriptedPrompter, type Prompter } from "../src/init/prompts";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
@@ -43,7 +43,7 @@ async function withVault<T>(use: (vault: Vault) => T): Promise<T> {
 }
 
 /** Runs the command in `root` and returns its exit code and everything it printed. */
-async function run(root: string, args: string[], prompter: ScriptedPrompter | null) {
+async function run(root: string, args: string[], prompter: Prompter | null) {
   const lines: string[] = [];
   const realLog = console.log;
   const realCwd = process.cwd();
@@ -206,4 +206,77 @@ test("interactive: answering No changes nothing", async () => {
   expect(code).toBe(0);
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=v\n");
   expect(listBackups("app")).toHaveLength(0);
+});
+
+test("a named key is reported and skipped when there are no .env files at all; none left exits 1", async () => {
+  const root = makeProject({});
+
+  const named = await run(root, ["K", "--to", "global", "--yes"], null);
+  expect(named.code).toBe(1);
+  expect(named.out).toContain("K is not in any .env file; skipped.");
+
+  const bare = await run(root, [], new ScriptedPrompter([]));
+  expect(bare.code).toBe(0);
+  expect(bare.out).toContain("Nothing to move.");
+});
+
+test("a vault row the vault doesn't hold is reported, not offered, and not asked a destination", async () => {
+  const root = makeProject({ ".env": "A=kerstel://app/A\nB=v\n" });
+  // A's reference is never stored: the row exists in the file, but not in the vault.
+  const prompter = new ScriptedPrompter([["B:plaintext"], "global", "yes"]);
+  const { code, out } = await run(root, [], prompter);
+
+  expect(code).toBe(0);
+  expect(out).toContain("A: kerstel://app/A is not in the vault. Run");
+  expect(out).toContain("init to store it first.");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=kerstel://app/A\nB=kerstel://global/B\n");
+});
+
+test("a named key whose only row has a missing vault reference is reported once and skipped", async () => {
+  const root = makeProject({ ".env": "A=kerstel://app/A\n" });
+  const { code, out } = await run(root, ["A", "--to", "plaintext", "--yes"], null);
+  expect(code).toBe(1);
+  expect(out).toContain("A: kerstel://app/A is not in the vault. Run");
+  expect(out.match(/is not in the vault/g)).toHaveLength(1);
+});
+
+test("when every row is foreign or has a missing vault reference, nothing is offered", async () => {
+  const root = makeProject({ ".env": "A=kerstel://app/A\nB=kerstel://other/B\n" });
+  const { code, out } = await run(root, [], new ScriptedPrompter([]));
+  expect(code).toBe(0);
+  expect(out).toContain("Nothing to move.");
+});
+
+test("the key menu header counts distinct keys, not rows", async () => {
+  const root = makeProject({
+    ".env": "K=kerstel://app/K\nOTHER=v\n",
+    ".env.local": "K=kerstel://global/K\n",
+  });
+  await withVault((v) => {
+    v.setSecret({ scope: "app", key: "K" }, "project-value");
+    v.setSecret({ scope: "global", key: "K" }, "shared-value");
+  });
+  const prompter = new ScriptedPrompter([[], "no"]);
+  const { out } = await run(root, [], prompter);
+  // Two rows share the key K (project and global), plus OTHER: 2 distinct keys.
+  expect(out).toContain("2 variables in");
+});
+
+test("a cancelled prompt makes moveCommand exit 130 and change nothing", async () => {
+  const root = makeProject({ ".env": "K=v\n" });
+  const cancels: Prompter = {
+    select: async () => {
+      throw new CancelledError();
+    },
+    multiselect: async () => {
+      throw new CancelledError();
+    },
+    text: async () => {
+      throw new CancelledError();
+    },
+  };
+  const { code, out } = await run(root, ["K"], cancels);
+  expect(code).toBe(130);
+  expect(out).toContain("Cancelled. Nothing was changed.");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=v\n");
 });

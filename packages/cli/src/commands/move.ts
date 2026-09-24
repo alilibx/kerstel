@@ -144,6 +144,12 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
   const detected = detectProject(safeRealpath(options.cwd));
   removeStaleTemps(detected.root);
   if (detected.envFiles.length === 0) {
+    // Spec §2.2: a named key the scan can't find is reported and skipped, per
+    // key; with nothing left to move that is a failure, not a no-op.
+    if (options.keys.length > 0) {
+      for (const key of options.keys) fail(`${key} is not in any .env file; skipped.`);
+      return 1;
+    }
     info(`No .env files in ${detected.root}. Nothing to move.`);
     return 0;
   }
@@ -162,16 +168,33 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
       info(`${f.key} in ${f.files.join(", ")} reads ${f.reference}, another project's scope; it is not offered.`);
     }
 
+    // Spec §4.3 "named, not offered": a vault row (project or global) whose
+    // reference the vault doesn't actually hold must not reach the key menu
+    // or be asked a destination. Reported once, here, before either.
+    const missingRefIds = new Set<string>();
+    for (const row of rows) {
+      if (row.ref && vault.getSecret(row.ref) === null) {
+        missingRefIds.add(row.id);
+        fail(`${row.key}: ${refId(row.ref)} is not in the vault. Run ${cliName()} init to store it first.`);
+      }
+    }
+    const offerable = rows.filter((row) => !missingRefIds.has(row.id));
+
     // --- Which rows ----------------------------------------------------------
     let picked: ScannedRow[];
     if (options.keys.length === 0) {
-      console.log(`  ${scope}: ${rows.length} variables in ${fileNames}`);
+      if (offerable.length === 0) {
+        info("Nothing to move.");
+        return 0;
+      }
+      const distinctKeys = new Set(offerable.map((row) => row.key)).size;
+      console.log(`  ${scope}: ${distinctKeys} variables in ${fileNames}`);
       const ids = await prompter!.multiselect(
         "Which keys?",
-        rows.map((row) => ({ value: row.id, label: row.key, hint: rowHint(row) })),
+        offerable.map((row) => ({ value: row.id, label: row.key, hint: rowHint(row) })),
         [],
       );
-      picked = rows.filter((row) => ids.includes(row.id));
+      picked = offerable.filter((row) => ids.includes(row.id));
     } else {
       picked = [];
       for (const key of options.keys) {
@@ -180,7 +203,11 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
           fail(`${key} is not in ${fileNames}; skipped.`);
           continue;
         }
-        const movable = options.to ? keyRows.filter((row) => row.place !== options.to) : keyRows;
+        // Rows with a missing vault reference were already reported above;
+        // a key with no other row is simply skipped, not reported twice.
+        const available = keyRows.filter((row) => !missingRefIds.has(row.id));
+        if (available.length === 0) continue;
+        const movable = options.to ? available.filter((row) => row.place !== options.to) : available;
         if (movable.length === 0) {
           info(`${key} is already ${PLACE_LABELS[options.to!]}; skipped.`);
           continue;
