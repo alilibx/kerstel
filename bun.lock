@@ -11,21 +11,21 @@
     },
     "apps/website": {
       "name": "@kerstel/website",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "dependencies": {
         "marked": "^18.0.13",
       },
     },
     "packages/cli": {
       "name": "@kerstel/cli",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "dependencies": {
         "@clack/prompts": "^1.8.1",
       },
     },
     "packages/hook": {
       "name": "@kerstel/hook",
-      "version": "0.1.3",
+      "version": "0.1.4",
     },
   },
   "packages": {
