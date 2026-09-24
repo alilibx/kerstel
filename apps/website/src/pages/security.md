@@ -72,7 +72,7 @@ Plaintext leaves the vault in five places:
 4. **On your terminal**, when `kerstel resolve kerstel://<scope>/<KEY>` prints a value to stdout.
 5. **Back in your `.env` files**, when `kerstel uninstall` restores them. That is the point of the command; it warns afterwards, and names any restored file git already tracks.
 
-Plaintext never appears in log output, error messages, or audit rows. One exception exists in `kerstel init`: its overview prints values it classifies as configuration, such as `PORT=3000`. A name that says it is a credential wins over a `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_` prefix, and a value with a known token prefix (`sk_`, `AIza`, `ghp_`) or a URL with a password or token in it is never printed, whatever its key is called. Everything else is shown only as its length.
+Plaintext never appears in log output, error messages, or audit rows. One exception exists in `kerstel init`: its overview prints values it classifies as configuration, such as `PORT=3000`. A name that says it is a credential wins over a `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_` prefix, and a value with a known token prefix (`sk_`, `AIza`, `ghp_`, a JWT) is never printed, whatever its key is called. Neither is a URL with a password in it, a query parameter named like a credential (`token=`, `api_key=`, `sig=`, `auth=`), or a long path segment that mixes letters and digits, as webhook tokens do. Everything else is shown only as its length.
 
 ## Out of scope
 
