@@ -2,21 +2,19 @@
 
 All notable changes to Kerstel are listed here. Versions follow [Semantic Versioning](https://semver.org). Kerstel is pre-1.0: minor releases may change behaviour.
 
-## 0.1.4 (unreleased)
+## 0.1.5 (unreleased)
+
+## 0.1.4 (2026-09-25)
 
 ### Added
 
-- `kerstel move` changes where a key lives after `init`: between this project's vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or `ks move KEY --to global|project|plaintext --yes` from a script. The env files are backed up first, and a vault value it removes or replaces, or a plain value that loses to the vault's, is saved in the backup; `uninstall` names any such value that exists nowhere else before it deletes the backups. `init` now points you to it after it finishes, so changing your mind about a key later doesn't mean re-running `init`.
+- `kerstel move` changes where a key lives after `init`: between this project's vault, the vault shared by all your projects, and plain text. Run it with no arguments to pick keys from a list, or `ks move KEY --to global|project|plaintext --yes` from a script. The env files are backed up first, and a vault value it removes or replaces, or a plain value that loses to the vault's, is saved in the backup; `uninstall` names any such value that exists nowhere else before it deletes the backups. A value with no plain-text spelling that fits its line's quoting stays in the vault, named, instead of being written back changed. `init` now points you to it after it finishes, so changing your mind about a key later doesn't mean re-running `init`.
 
 ### Security
 
 - When no OS credential store answers and Kerstel falls back to keeping the vault key in `~/.kerstel/vault.key`, every command that opens the vault now warns about it on stderr, not only `kerstel doctor`. Setting `KERSTEL_KEYCHAIN_BACKEND=file` yourself says the file is intended and turns the warning off. The command that creates a vault key also says so, and where it put it.
 - `kerstel update`, `--version`, `doctor` and `install.sh` refuse a `KERSTEL_RELEASES_URL` or `KERSTEL_DOWNLOAD_BASE` that is not `https://`, naming the variable, and a download that redirects away from `https://`. Over plain HTTP a mirror's binary and checksum could both be swapped in transit. `http://` to `127.0.0.1` or `localhost` still works for local mirrors. `update` now says which mirror it uses, and `install.sh` rejects a `KERSTEL_VERSION` that is not a version like `0.1.0`.
 - `kerstel init` no longer prints a credential in full because its name starts with `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_`. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (`VITE_SUPABASE_KEY`, `NEXT_PUBLIC_API_KEY`), a value with a known token prefix (`sk_`, `AIza`, `ghp_`, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. `PORT=3000` and other configuration values still show as they are.
-
-### Fixed
-
-- `kerstel move` moving a value to plain text no longer writes it wrong when it has no spelling that fits a line's own quoting (for example a value holding both `'` and `"` in a double-quoted line). It used to fall back to an escaped form that read back as a different value and then delete the vault's copy, silently changing the value. Such a key now stays in the vault and is named: `KEY: its value cannot be written as plain text in .env without changing it, so it stays in the vault.`
 
 ## 0.1.3 (2026-09-21)
 
