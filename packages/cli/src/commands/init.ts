@@ -517,6 +517,11 @@ export function summaryLines(options: {
   return lines;
 }
 
+/** Spec 2026-09-24 §2.3: the way back from a choice made here. */
+export function movePointer(): string {
+  return `To move a key between the vault and plain text later, run ${cliName()} move.`;
+}
+
 type SelfCheckResult =
   | { status: "passed" }
   | { status: "failed"; message: string; stderr: string }
@@ -820,10 +825,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
           );
         }
         info(`Nothing to change: ${wiredClaim}; ${clauses.join("; ")}.`);
+        if (kept.length > 0) info(movePointer());
         return 0;
       }
 
       ok(`Already migrated: every value in ${fileNames.join(", ")} is a reference, and ${wiredClaim}.`);
+      info(movePointer());
       return 0;
     }
 
@@ -1033,6 +1040,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     ];
     if (plaintext.length === 0) {
       closing.push("Your .env files hold only references now, so they're safe to commit.");
+    } else {
+      closing.push(movePointer());
     }
     note(closing.join("\n"), "Next steps");
     return 0;
