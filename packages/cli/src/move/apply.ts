@@ -4,6 +4,7 @@ import {
   existsSync,
   fsyncSync,
   openSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -14,6 +15,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { createBackup, type BackupResult, type BackupVaultValue } from "../init/backup";
 import type { SecretRef } from "../reference";
+import { cliName } from "../ui/cli-name";
 import type { Vault } from "../vault/store";
 import { refId, type FileRewrite, type MovePlan, type VaultWrite } from "./plan";
 
@@ -101,6 +103,17 @@ export class MoveApplyError extends Error {
   }
 }
 
+/**
+ * An env file changed between the scan and Apply. Thrown before the backup,
+ * so nothing was written and there is no backup to name.
+ */
+export class MoveStaleFileError extends Error {
+  constructor(readonly file: string) {
+    super(`${file} changed since ${cliName()} move read it; nothing was changed. Run ${cliName()} move again.`);
+    this.name = "MoveStaleFileError";
+  }
+}
+
 /** Internal: names the vault ref or file whose write threw, for the rollback message. */
 class StepFailure extends Error {
   constructor(
@@ -129,6 +142,19 @@ export function applyMove(plan: MovePlan, options: ApplyOptions): ApplyResult {
   if (plan.conflicts.length > 0) throw new Error("applyMove was given a plan with unanswered conflicts.");
   const { vault } = options;
   const write = options.writeFile ?? writeFileAtomic;
+
+  // 0. The plan was made from what the scan read, and the Apply? question may
+  // have waited a long time. A file edited since would be overwritten with
+  // the plan's rewrite of the OLD contents, losing the edit.
+  for (const f of plan.files) {
+    let current: string | null;
+    try {
+      current = readFileSync(f.path, "utf8");
+    } catch {
+      current = null;
+    }
+    if (current !== f.before) throw new MoveStaleFileError(f.name);
+  }
 
   // 1. Backup, before anything else changes.
   const backup = createBackup({

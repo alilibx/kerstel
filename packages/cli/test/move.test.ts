@@ -200,6 +200,22 @@ test("interactive: pick a key, pick a destination, answer a conflict, apply", as
   expect(out).not.toContain("shared-value");
 });
 
+test("a file edited while Apply? waits is refused with exit 1 and left alone", async () => {
+  const root = makeProject({ ".env": "K=v\n" });
+  class EditingPrompter extends ScriptedPrompter {
+    override async select<T extends string>(question: string, choices: { value: T; label: string }[], d: T) {
+      if (question === "Apply?") writeFileSync(join(root, ".env"), "K=v\nEDITED=1\n");
+      return super.select(question, choices, d);
+    }
+  }
+  const { code, out } = await run(root, ["K", "--to", "global"], new EditingPrompter(["yes"]));
+  expect(code).toBe(1);
+  expect(out).toContain(".env changed since");
+  expect(out).toContain("nothing was changed.");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=v\nEDITED=1\n");
+  expect(listBackups("app")).toHaveLength(0);
+});
+
 test("interactive: answering No changes nothing", async () => {
   const root = makeProject({ ".env": "K=v\n" });
   const { code } = await run(root, ["K"], new ScriptedPrompter(["global", "no"]));

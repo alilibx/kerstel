@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { listBackups, readBackup, readBackupVault } from "../src/init/backup";
 import { loadEnvFiles } from "../src/init/collect";
 import { discoverEnvFiles } from "../src/init/detect";
-import { MoveApplyError, applyMove, removeStaleTemps, writeFileAtomic } from "../src/move/apply";
+import { MoveApplyError, MoveStaleFileError, applyMove, removeStaleTemps, writeFileAtomic } from "../src/move/apply";
 import { planMove, type ConflictChoice } from "../src/move/plan";
 import { scanRows, type Place } from "../src/move/scan";
 import { generateDataKey } from "../src/vault/crypto";
@@ -110,6 +110,24 @@ test("a plain value that loses to a kept destination is saved in the backup's va
   expect(readBackupVault("app", result.backup.timestamp, dataKey)).toEqual([
     { scope: "global", key: "K", value: "plain-incoming" },
   ]);
+});
+
+test("a file edited after the scan is not overwritten: nothing is written and no backup is taken", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=plain-a\n" }, {});
+  const plan = makePlan(root, vault, [["A:plaintext", "global"]]);
+  writeFileSync(join(root, ".env"), "A=plain-a\nB=added-meanwhile\n");
+
+  let caught: unknown;
+  try {
+    applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(MoveStaleFileError);
+  expect((caught as Error).message).toMatch(/^\.env changed since (ks|kerstel) move read it; nothing was changed\. Run (ks|kerstel) move again\.$/);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=plain-a\nB=added-meanwhile\n");
+  expect(vault.getSecret({ scope: "global", key: "A" })).toBeNull();
+  expect(listBackups("app")).toHaveLength(0);
 });
 
 test("a failure writing the vault leaves the vault and files as they were", () => {
