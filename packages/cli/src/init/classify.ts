@@ -69,6 +69,13 @@ const SECRET_KEYS =
 const SECRET_QUERY =
   /[?&]([^=&]*[-_.])?(key|token|secret|password|sig|signature)=/i;
 
+/**
+ * Values that carry a well-known credential prefix: Stripe and OpenAI-style
+ * `sk_`/`sk-`/`rk_`, Google `AIza`, GitHub `ghp_` and friends, Slack `xox?-`,
+ * AWS `AKIA`. Whatever the key is called, such a value is never printed.
+ */
+const TOKEN_PREFIX = /^(sk[-_]|rk_|AIza|gh[pousr]_|github_pat_|xox[abprs]-|AKIA[0-9A-Z]{12})/;
+
 const BOOLEANS = new Set(["true", "false", "yes", "no", "on", "off", "1", "0"]);
 const NUMBER = /^-?\d+(\.\d+)?$/;
 const URL_HEAD = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)/i;
@@ -144,16 +151,23 @@ export function explain(key: string, value: string): Explanation {
  * or a webhook URL with its token in the path puts it on screen and, under
  * `--yes`, into CI logs.
  *
- * True only for a key that is configuration by convention (`PORT`,
- * `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth hiding -- empty,
- * a boolean, a number, a short lowercase word -- under a key that does not
- * name a credential. A URL is shown only under a configuration key. The caller
- * still combines this with where the value is going and with `--keep`.
+ * A key that names a credential is never shown, even behind a `PUBLIC_`,
+ * `VITE_` or `NEXT_PUBLIC_` prefix: those prefixes are bundler namespaces, and
+ * people do put live keys behind them. Nor is a value that carries a known
+ * token prefix, or a URL with a password or a token in it, whatever its key.
+ *
+ * Past those, true only for a key that is configuration by convention
+ * (`PORT`, `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth
+ * hiding -- empty, a boolean, a number, a short lowercase word. A URL is shown
+ * only under a configuration key. The caller still combines this with where
+ * the value is going and with `--keep`.
  */
 export function isSafeToDisplay(key: string, value: string): boolean {
-  if (PLAINTEXT_KEYS.test(key)) return true;
-  if (SECRET_KEYS.test(key)) return false;
   const trimmed = value.trim();
+  if (SECRET_KEYS.test(key) || TOKEN_PREFIX.test(trimmed)) return false;
+  const authority = urlAuthority(trimmed);
+  if (authority !== null && (authority.includes("@") || SECRET_QUERY.test(trimmed))) return false;
+  if (PLAINTEXT_KEYS.test(key)) return true;
   return (
     trimmed === "" ||
     BOOLEANS.has(trimmed.toLowerCase()) ||

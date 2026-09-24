@@ -183,6 +183,18 @@ test.each([
   ["SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/abc", false],
   ["HOMEPAGE", "https://example.com", false],
   ["SESSION_ID", "a-long-opaque-value", false],
+  // A public prefix is a bundler namespace, not a promise the value is public:
+  // a credential word in the name, or a token-shaped value, still masks it.
+  ["VITE_SUPABASE_KEY", "sk_live_4f9abcdef", false],
+  ["NEXT_PUBLIC_API_KEY", "sk_live_4f9abcdef", false],
+  ["PUBLIC_TOKEN", "sk_live_4f9abcdef", false],
+  ["VITE_ANALYTICS_ID", "sk_live_4f9abcdef", false],
+  ["NEXT_PUBLIC_MAPS", "AIzaSyA-1234567890abcdef", false],
+  ["VITE_GITHUB", "ghp_abcdefghijklmnop", false],
+  ["VITE_API_URL", "https://user:pass@api.example.com", false],
+  ["NEXT_PUBLIC_FEED", "https://example.com/feed?token=abc", false],
+  ["VITE_API_URL", "https://api.example.com", true],
+  ["NEXT_PUBLIC_ANALYTICS_ID", "G-ABCDEFGHIJ", true],
 ] as const)("isSafeToDisplay(%p, …) is %p", (key, value, expected) => {
   expect(isSafeToDisplay(key, value)).toBe(expected);
 });
