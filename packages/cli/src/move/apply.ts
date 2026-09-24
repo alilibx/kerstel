@@ -111,10 +111,14 @@ class StepFailure extends Error {
   }
 }
 
-/** Spec §5.1: every value the move will delete or overwrite. */
+/**
+ * Spec §5.1: every value the move will delete or overwrite, and every
+ * incoming plain value that lost to a kept destination.
+ */
 export function backupVaultValues(plan: MovePlan): BackupVaultValue[] {
   return [
     ...plan.deletions.map((d) => ({ scope: d.ref.scope, key: d.ref.key, value: d.value })),
+    ...plan.discarded.map((d) => ({ scope: d.ref.scope, key: d.ref.key, value: d.value })),
     ...plan.vaultWrites
       .filter((w) => w.previous !== null)
       .map((w) => ({ scope: w.ref.scope, key: w.ref.key, value: w.previous! })),

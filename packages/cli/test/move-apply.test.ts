@@ -99,6 +99,19 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
   ]);
 });
 
+test("a plain value that loses to a kept destination is saved in the backup's vault section", () => {
+  const { root, vault, dataKey } = setup({ ".env": "K=plain-incoming\n" }, { "global/K": "existing" });
+  const plan = makePlan(root, vault, [["K:plaintext", "global"]], { "kerstel://global/K": "keep" });
+
+  const result = applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root });
+
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://global/K\n");
+  expect(vault.getSecret({ scope: "global", key: "K" })).toBe("existing");
+  expect(readBackupVault("app", result.backup.timestamp, dataKey)).toEqual([
+    { scope: "global", key: "K", value: "plain-incoming" },
+  ]);
+});
+
 test("a failure writing the vault leaves the vault and files as they were", () => {
   const { root, vault, dataKey } = setup(
     { ".env": "A=plain-a\nB=plain-b\n" },

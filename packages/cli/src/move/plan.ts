@@ -95,11 +95,23 @@ export interface Skipped {
   ref: SecretRef;
 }
 
+/**
+ * An incoming plain-text value that lost to a kept destination. Its files are
+ * rewritten to the destination's reference, so without this the backup would
+ * hold it only as a file line uninstall does not look for. Spec §5.1.
+ */
+export interface Discarded {
+  /** The destination it lost to. */
+  ref: SecretRef;
+  value: string;
+}
+
 export interface MovePlan {
   moves: PlannedMove[];
   files: FileRewrite[];
   vaultWrites: VaultWrite[];
   deletions: Deletion[];
+  discarded: Discarded[];
   kept: KeptCopy[];
   conflicts: Conflict[];
   gitWarnings: GitWarning[];
@@ -118,6 +130,7 @@ export function planMove(input: PlanInput): MovePlan {
     files: [],
     vaultWrites: [],
     deletions: [],
+    discarded: [],
     kept: [],
     conflicts: [],
     gitWarnings: [],
@@ -164,6 +177,7 @@ export function planMove(input: PlanInput): MovePlan {
           plan.mergeWarnings.push({ key: row.key, used: planned.firstFiles[0]!, others: row.files });
           outcome = "kept";
           length = planned.value.length;
+          if (row.place === "plaintext") plan.discarded.push({ ref: toRef, value });
         }
       } else {
         const existing = input.vaultValue(toRef);
@@ -183,6 +197,7 @@ export function planMove(input: PlanInput): MovePlan {
           } else if (choice === "keep") {
             outcome = "kept";
             length = existing.length;
+            if (row.place === "plaintext") plan.discarded.push({ ref: toRef, value });
             plannedDestinations.set(id, { value: existing, firstFiles: row.files });
           } else {
             plan.conflicts.push({ key: row.key, ref: toRef, existingLength: existing.length });

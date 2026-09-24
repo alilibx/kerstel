@@ -204,6 +204,48 @@ test("two rows for one key moving to the same conflicting destination: exactly o
   expect(replaced.moves[1]!.outcome).toBe("kept");
 });
 
+test("a plain value that loses to a kept destination is recorded as discarded; a vault one is not", () => {
+  const kept = plan({
+    files: { ".env": "K=plain-incoming\n" },
+    vault: { "global/K": "existing" },
+    moves: [["K:plaintext", "global"]],
+    choices: { "kerstel://global/K": "keep" },
+  });
+  expect(kept.moves[0]!.outcome).toBe("kept");
+  expect(kept.discarded).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-incoming" }]);
+
+  const replaced = plan({
+    files: { ".env": "K=plain-incoming\n" },
+    vault: { "global/K": "existing" },
+    moves: [["K:plaintext", "global"]],
+    choices: { "kerstel://global/K": "replace" },
+  });
+  expect(replaced.discarded).toEqual([]);
+
+  const fromVault = plan({
+    files: { ".env": "K=kerstel://app/K\n" },
+    vault: { "app/K": "project-value", "global/K": "existing" },
+    moves: [["K:kerstel://app/K", "global"]],
+    choices: { "kerstel://global/K": "keep" },
+  });
+  expect(fromVault.discarded).toEqual([]);
+  expect(fromVault.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "project-value" }]);
+});
+
+test("a plain value that loses a cross-request merge is recorded as discarded", () => {
+  const result = plan({
+    files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=plain-b\n" },
+    vault: { "app/K": "vault-a" },
+    moves: [
+      ["K:kerstel://app/K", "global"],
+      ["K:plaintext", "global"],
+    ],
+  });
+  expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "vault-a", previous: null }]);
+  expect(result.moves[1]!.outcome).toBe("kept");
+  expect(result.discarded).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-b" }]);
+});
+
 test("a project copy another file still references is kept", () => {
   const result = plan({
     files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\nOTHER=kerstel://app/K\n" },
