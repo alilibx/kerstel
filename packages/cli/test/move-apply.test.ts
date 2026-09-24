@@ -77,7 +77,7 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
     { ".env": "A=kerstel://app/A\nB=kerstel://app/B\n" },
     { "app/A": "value-a", "app/B": "value-b", "global/B": "old-shared-b" },
   );
-  const plan = makePlan(root, vault, [["A:project", "plaintext"], ["B:project", "global"]], {
+  const plan = makePlan(root, vault, [["A:kerstel://app/A", "plaintext"], ["B:kerstel://app/B", "global"]], {
     "kerstel://global/B": "replace",
   });
 
@@ -137,7 +137,7 @@ test("a failure writing a file restores the vault and the files already written"
     { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\n" },
     { "app/K": "v", "global/K": "old-shared" },
   );
-  const plan = makePlan(root, vault, [["K:project", "global"]], { "kerstel://global/K": "replace" });
+  const plan = makePlan(root, vault, [["K:kerstel://app/K", "global"]], { "kerstel://global/K": "replace" });
   let writes = 0;
   const writeFile = (path: string, contents: string) => {
     writes += 1;

@@ -184,7 +184,7 @@ test("interactive: pick a key, pick a destination, answer a conflict, apply", as
     v.setSecret({ scope: "app", key: "K" }, "project-value");
     v.setSecret({ scope: "global", key: "K" }, "shared-value");
   });
-  const prompter = new ScriptedPrompter([["K:project"], "global", "keep", "yes"]);
+  const prompter = new ScriptedPrompter([["K:kerstel://app/K"], "global", "keep", "yes"]);
   const { code, out } = await run(root, [], prompter);
 
   expect(code).toBe(0);

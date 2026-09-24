@@ -63,8 +63,13 @@ function destinationLabel(place: Place, scope: string): string {
   return DESTINATION_CHOICES(scope).find((choice) => choice.value === place)!.label;
 }
 
-function rowHint(row: ScannedRow): string {
-  if (row.place !== "plaintext" || row.value === null) return PLACE_LABELS[row.place];
+/**
+ * A key can have two rows in one place (`.env.local` reading `app/K_LOCAL`,
+ * `.env` reading `app/K`); `ambiguous` adds the reference so the two differ.
+ */
+function rowHint(row: ScannedRow, ambiguous: boolean): string {
+  if (row.ref) return ambiguous ? `${PLACE_LABELS[row.place]}  ${refId(row.ref)}` : PLACE_LABELS[row.place];
+  if (row.value === null) return PLACE_LABELS[row.place];
   const shown = isSafeToDisplay(row.key, row.value) ? row.value : `(${row.value.length} chars)`;
   return `${PLACE_LABELS[row.place]}  ${shown}`;
 }
@@ -191,7 +196,14 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
       console.log(`  ${scope}: ${distinctKeys} variables in ${fileNames}`);
       const ids = await prompter!.multiselect(
         "Which keys?",
-        offerable.map((row) => ({ value: row.id, label: row.key, hint: rowHint(row) })),
+        offerable.map((row) => ({
+          value: row.id,
+          label: row.key,
+          hint: rowHint(
+            row,
+            offerable.some((other) => other !== row && other.key === row.key && other.place === row.place),
+          ),
+        })),
         [],
       );
       picked = offerable.filter((row) => ids.includes(row.id));

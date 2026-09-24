@@ -1,7 +1,7 @@
 import type { Suggestion } from "../init/classify";
 import type { LoadedEnvFile } from "../init/collect";
 import { entries, lookup } from "../init/dotenv-file";
-import { GLOBAL_SCOPE, parseReference, type SecretRef } from "../reference";
+import { GLOBAL_SCOPE, formatReference, parseReference, type SecretRef } from "../reference";
 
 /**
  * Where a key lives now, in the same three words `init` uses for where it
@@ -20,7 +20,12 @@ export const PLACE_LABELS: Record<Place, string> = {
 };
 
 export interface ScannedRow {
-  /** `${key}:${place}`: unique, and the value the key menu returns. */
+  /**
+   * Unique, and the value the key menu returns: `${key}:plaintext` for a plain
+   * row, `${key}:kerstel://scope/KEY` for a vault row. Spec §2.1: one row per
+   * distinct reference, so `.env.local` reading `app/K_LOCAL` and `.env`
+   * reading `app/K` stay two rows even though both are "project".
+   */
   id: string;
   key: string;
   place: Place;
@@ -89,7 +94,7 @@ export function scanRows(loaded: LoadedEnvFile[], scope: string): ScanResult {
         continue;
       }
 
-      const id = `${pair.key}:${place}`;
+      const id = ref === null ? `${pair.key}:plaintext` : `${pair.key}:${formatReference(ref.scope, ref.key)}`;
       const existing = byId.get(id);
       if (!existing) {
         const row: ScannedRow = {

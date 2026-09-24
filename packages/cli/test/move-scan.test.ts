@@ -13,7 +13,7 @@ function load(files: Record<string, string>): LoadedEnvFile[] {
   }));
 }
 
-test("one row per key and place, each naming its files", () => {
+test("one row per key and reference (or plain text), each naming its files", () => {
   const loaded = load({
     ".env.local": "STRIPE_KEY=kerstel://global/STRIPE_KEY\nPORT=4000\n",
     ".env": "STRIPE_KEY=kerstel://whasal/STRIPE_KEY\nPORT=3000\nDB=kerstel://whasal/DB\n",
@@ -22,25 +22,36 @@ test("one row per key and place, each naming its files", () => {
 
   expect(foreign).toEqual([]);
   expect(rows.map((r) => [r.id, r.files])).toEqual([
-    ["STRIPE_KEY:global", [".env.local"]],
+    ["STRIPE_KEY:kerstel://global/STRIPE_KEY", [".env.local"]],
     ["PORT:plaintext", [".env.local", ".env"]],
-    ["STRIPE_KEY:project", [".env"]],
-    ["DB:project", [".env"]],
+    ["STRIPE_KEY:kerstel://whasal/STRIPE_KEY", [".env"]],
+    ["DB:kerstel://whasal/DB", [".env"]],
   ]);
   const port = rows.find((r) => r.id === "PORT:plaintext")!;
   expect(port.value).toBe("4000");
   expect(port.conflicts).toEqual([".env"]);
-  expect(rows.find((r) => r.id === "DB:project")!.ref).toEqual({ scope: "whasal", key: "DB" });
+  expect(rows.find((r) => r.id === "DB:kerstel://whasal/DB")!.ref).toEqual({ scope: "whasal", key: "DB" });
 });
 
 test("a key with a reference in one file and a plain value in another gives two rows", () => {
   const { rows } = scanRows(load({ ".env.local": "K=plain\n", ".env": "K=kerstel://app/K\n" }), "app");
-  expect(rows.map((r) => r.id)).toEqual(["K:plaintext", "K:project"]);
+  expect(rows.map((r) => r.id)).toEqual(["K:plaintext", "K:kerstel://app/K"]);
+});
+
+test("two different project references for one key give two rows, each with its own reference and file", () => {
+  const { rows } = scanRows(
+    load({ ".env.local": "K=kerstel://app/K_LOCAL\n", ".env": "K=kerstel://app/K\n" }),
+    "app",
+  );
+  expect(rows.map((r) => [r.id, r.place, r.ref, r.files])).toEqual([
+    ["K:kerstel://app/K_LOCAL", "project", { scope: "app", key: "K_LOCAL" }, [".env.local"]],
+    ["K:kerstel://app/K", "project", { scope: "app", key: "K" }, [".env"]],
+  ]);
 });
 
 test("the last assignment in a file decides that file's row", () => {
   const { rows } = scanRows(load({ ".env": "K=first\nK=kerstel://app/K\n" }), "app");
-  expect(rows.map((r) => r.id)).toEqual(["K:project"]);
+  expect(rows.map((r) => r.id)).toEqual(["K:kerstel://app/K"]);
 });
 
 test("a reference to another project's scope is foreign, not a row", () => {

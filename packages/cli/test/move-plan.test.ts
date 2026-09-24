@@ -69,7 +69,7 @@ test("project → shared copies the value and deletes the unused project copy", 
   const result = plan({
     files: { ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "global"]],
+    moves: [["K:kerstel://app/K", "global"]],
   });
   expect(after(result, ".env")).toBe("K=kerstel://global/K\n");
   expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "v", previous: null }]);
@@ -80,7 +80,7 @@ test("shared → project copies the value and never deletes global", () => {
   const result = plan({
     files: { ".env": "K=kerstel://global/K\n" },
     vault: { "global/K": "v" },
-    moves: [["K:global", "project"]],
+    moves: [["K:kerstel://global/K", "project"]],
   });
   expect(after(result, ".env")).toBe("K=kerstel://app/K\n");
   expect(result.vaultWrites[0]!.ref).toEqual({ scope: "app", key: "K" });
@@ -92,7 +92,7 @@ test("project → plain writes the value back and deletes the project copy", () 
   const result = plan({
     files: { ".env": 'K="kerstel://app/K"\n' },
     vault: { "app/K": "has space" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
   });
   expect(after(result, ".env")).toBe('K="has space"\n');
   expect(result.moves[0]!.outcome).toBe("plaintext");
@@ -103,7 +103,7 @@ test("shared → plain writes the value back and keeps global", () => {
   const result = plan({
     files: { ".env": "K=kerstel://global/K\n" },
     vault: { "global/K": "v" },
-    moves: [["K:global", "plaintext"]],
+    moves: [["K:kerstel://global/K", "plaintext"]],
   });
   expect(after(result, ".env")).toBe("K=v\n");
   expect(result.deletions).toEqual([]);
@@ -121,7 +121,7 @@ test("every covered file is rewritten, and every assignment in it", () => {
 
 for (const dest of ["global", "project"] as const) {
   const destRef = dest === "global" ? "global/K" : "app/K";
-  const source = dest === "global" ? "K:project" : "K:global";
+  const source = dest === "global" ? "K:kerstel://app/K" : "K:kerstel://global/K";
   const sourceRef = dest === "global" ? "app/K" : "global/K";
 
   test(`an existing ${dest} entry with the same value asks nothing`, () => {
@@ -167,7 +167,7 @@ test("two rows for one key moving to the same absent destination: the first requ
     vault: { "app/K": "vault-b" },
     moves: [
       ["K:plaintext", "global"],
-      ["K:project", "global"],
+      ["K:kerstel://app/K", "global"],
     ],
   });
   expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-a", previous: null }]);
@@ -184,7 +184,7 @@ test("two rows for one key moving to the same conflicting destination: exactly o
     vault: { "app/K": "vault-b", "global/K": "existing-different" },
     moves: [
       ["K:plaintext", "global"],
-      ["K:project", "global"],
+      ["K:kerstel://app/K", "global"],
     ] as [string, Place][],
   };
 
@@ -208,7 +208,7 @@ test("a project copy another file still references is kept", () => {
   const result = plan({
     files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\nOTHER=kerstel://app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "global"]],
+    moves: [["K:kerstel://app/K", "global"]],
   });
   expect(result.deletions).toEqual([]);
   expect(result.kept).toEqual([{ ref: { scope: "app", key: "K" }, reason: "referenced", root: null }]);
@@ -218,7 +218,7 @@ test("a project copy is kept when the recorded root is another checkout", () => 
   const result = plan({
     files: { ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
     recordedRoot: "/elsewhere/app",
   });
   expect(result.deletions).toEqual([]);
@@ -229,7 +229,7 @@ test("a project copy is deleted when the vault has no record of the project", ()
   const result = plan({
     files: { ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
     recordedRoot: null,
   });
   expect(result.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "v" }]);
@@ -239,12 +239,32 @@ test("different references in different files move as separate rows", () => {
   const result = plan({
     files: { ".env.local": "K=kerstel://global/K\n", ".env": "K=kerstel://app/K\n" },
     vault: { "global/K": "g", "app/K": "p" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
   });
   expect(result.moves).toHaveLength(1);
   expect(result.moves[0]!.files).toEqual([".env"]);
   expect(after(result, ".env")).toBe("K=p\n");
   expect(after(result, ".env.local")).toBeUndefined();
+});
+
+test("two different project references for one key: moving one rewrites only its file, with its own value", () => {
+  const files = { ".env.local": "K=kerstel://app/K_LOCAL\n", ".env": "K=kerstel://app/K\n" };
+  const vault = { "app/K_LOCAL": "local-value", "app/K": "base-value" };
+
+  const base = plan({ files, vault, moves: [["K:kerstel://app/K", "plaintext"]] });
+  expect(base.moves).toHaveLength(1);
+  expect(base.moves[0]!.files).toEqual([".env"]);
+  expect(base.moves[0]!.fromRef).toEqual({ scope: "app", key: "K" });
+  expect(after(base, ".env")).toBe("K=base-value\n");
+  expect(after(base, ".env.local")).toBeUndefined();
+  expect(base.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "base-value" }]);
+
+  const local = plan({ files, vault, moves: [["K:kerstel://app/K_LOCAL", "plaintext"]] });
+  expect(local.moves[0]!.files).toEqual([".env.local"]);
+  expect(local.moves[0]!.fromRef).toEqual({ scope: "app", key: "K_LOCAL" });
+  expect(after(local, ".env.local")).toBe("K=local-value\n");
+  expect(after(local, ".env")).toBeUndefined();
+  expect(local.deletions).toEqual([{ ref: { scope: "app", key: "K_LOCAL" }, value: "local-value" }]);
 });
 
 test("a reference in one file and a plain value in another: moving the plain row", () => {
@@ -258,7 +278,7 @@ test("a reference in one file and a plain value in another: moving the plain row
 });
 
 test("a reference the vault does not hold is skipped, not moved", () => {
-  const result = plan({ files: { ".env": "K=kerstel://app/K\n" }, moves: [["K:project", "plaintext"]] });
+  const result = plan({ files: { ".env": "K=kerstel://app/K\n" }, moves: [["K:kerstel://app/K", "plaintext"]] });
   expect(result.skipped).toEqual([{ key: "K", ref: { scope: "app", key: "K" } }]);
   expect(result.moves).toEqual([]);
   expect(result.files).toEqual([]);
@@ -277,7 +297,7 @@ test("plain text into a tracked or unignored file warns; into an ignored one doe
   const result = plan({
     files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
     git: { ".env": "tracked", ".env.local": "ignored" },
   });
   expect(result.gitWarnings).toEqual([{ file: ".env", key: "K", status: "tracked" }]);
@@ -287,14 +307,14 @@ test("noReferencesLeft is set when the last reference moves out", () => {
   const last = plan({
     files: { ".env": "K=kerstel://app/K\nPORT=3000\n" },
     vault: { "app/K": "v" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
   });
   expect(last.noReferencesLeft).toBe(true);
 
   const notLast = plan({
     files: { ".env": "K=kerstel://app/K\nJ=kerstel://app/J\n" },
     vault: { "app/K": "v", "app/J": "w" },
-    moves: [["K:project", "plaintext"]],
+    moves: [["K:kerstel://app/K", "plaintext"]],
   });
   expect(notLast.noReferencesLeft).toBe(false);
 });
