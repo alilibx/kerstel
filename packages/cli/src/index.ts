@@ -2,6 +2,7 @@ import { daemonCommand } from "./commands/daemon";
 import { doctorCommand } from "./commands/doctor";
 import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
+import { moveCommand } from "./commands/move";
 import { runCommand } from "./commands/run";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
@@ -19,6 +20,8 @@ const HEADER = `${bold("kerstel")} — local-first secrets for your projects`;
 
 const COMMANDS = `Usage:
   ${cliName()} init [--yes] [--dry-run]              Migrate this project's .env files
+  ${cliName()} move [KEY...] [--to global|project|plaintext] [--yes]
+                                                Move keys between the vault and plain text
   ... | ${cliName()} set <scope>/<KEY>               Store a secret piped on stdin
   ${cliName()} set <scope>/<KEY> --value <value>     Same, but the value lands in your
                                                 shell history and in \`ps\` output
@@ -87,6 +90,8 @@ export async function runCli(argv: string[]): Promise<number> {
     switch (command) {
       case "init":
         return await initCommand(args);
+      case "move":
+        return await moveCommand(args);
       case "set":
         return await setCommand(args);
       case "get":
