@@ -151,6 +151,7 @@ for (const dest of ["global", "project"] as const) {
     expect(kept.conflicts).toEqual([]);
     expect(kept.vaultWrites).toEqual([]);
     expect(kept.moves[0]!.outcome).toBe("kept");
+    expect(kept.moves[0]!.length).toBe("existing-value".length);
 
     const replaced = plan({ ...base, choices: { [`kerstel://${destRef}`]: "replace" } });
     expect(replaced.vaultWrites).toEqual([
@@ -159,6 +160,49 @@ for (const dest of ["global", "project"] as const) {
     expect(replaced.moves[0]!.outcome).toBe("replaced");
   });
 }
+
+test("two rows for one key moving to the same absent destination: the first request writes, the second merges", () => {
+  const result = plan({
+    files: { ".env.local": "K=plain-a\n", ".env": "K=kerstel://app/K\n" },
+    vault: { "app/K": "vault-b" },
+    moves: [
+      ["K:plaintext", "global"],
+      ["K:project", "global"],
+    ],
+  });
+  expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-a", previous: null }]);
+  expect(result.conflicts).toEqual([]);
+  expect(result.mergeWarnings).toEqual([{ key: "K", used: ".env.local", others: [".env"] }]);
+  expect(result.moves[0]!.outcome).toBe("new");
+  expect(result.moves[1]!.outcome).toBe("kept");
+  expect(result.moves[1]!.length).toBe("plain-a".length);
+});
+
+test("two rows for one key moving to the same conflicting destination: exactly one conflict, resolved by one write", () => {
+  const base = {
+    files: { ".env.local": "K=plain-a\n", ".env": "K=kerstel://app/K\n" },
+    vault: { "app/K": "vault-b", "global/K": "existing-different" },
+    moves: [
+      ["K:plaintext", "global"],
+      ["K:project", "global"],
+    ] as [string, Place][],
+  };
+
+  const open = plan(base);
+  expect(open.conflicts).toEqual([
+    { key: "K", ref: { scope: "global", key: "K" }, existingLength: "existing-different".length },
+  ]);
+  expect(open.moves[0]!.outcome).toBe("conflict");
+  expect(open.moves[1]!.outcome).toBe("conflict");
+
+  const replaced = plan({ ...base, choices: { "kerstel://global/K": "replace" } });
+  expect(replaced.vaultWrites).toEqual([
+    { ref: { scope: "global", key: "K" }, value: "plain-a", previous: "existing-different" },
+  ]);
+  expect(replaced.conflicts).toEqual([]);
+  expect(replaced.moves[0]!.outcome).toBe("replaced");
+  expect(replaced.moves[1]!.outcome).toBe("kept");
+});
 
 test("a project copy another file still references is kept", () => {
   const result = plan({

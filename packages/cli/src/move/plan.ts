@@ -131,6 +131,12 @@ export function planMove(input: PlanInput): MovePlan {
   const working = input.loaded.map((entry) => ({ entry, file: parseDotenv(entry.original) }));
   const byName = new Map(working.map((w) => [w.entry.info.name, w.file]));
   const destinations = new Set<string>();
+  // Two rows in one plan can target the same destination (e.g. a plaintext
+  // row and a project row both moving to global/KEY). The first request
+  // decides the destination; later requests compare against what it decided
+  // rather than re-reading the vault, so a destination gets at most one
+  // VaultWrite and at most one Conflict per plan.
+  const plannedDestinations = new Map<string, { value: string | "pending"; firstFiles: string[] }>();
 
   for (const { row, to } of input.requests) {
     if (row.place === to) continue;
@@ -143,26 +149,46 @@ export function planMove(input: PlanInput): MovePlan {
 
     let toRef: SecretRef | null = null;
     let outcome: Outcome = "plaintext";
+    let length = value.length;
     if (to !== "plaintext") {
       toRef = { scope: to === "global" ? GLOBAL_SCOPE : input.scope, key: row.key };
       const id = refId(toRef);
       destinations.add(id);
-      const existing = input.vaultValue(toRef);
-      if (existing === null) {
-        plan.vaultWrites.push({ ref: toRef, value, previous: null });
-        outcome = "new";
-      } else if (existing === value) {
-        outcome = "same";
-      } else {
-        const choice = input.choices.get(id);
-        if (choice === "replace") {
-          plan.vaultWrites.push({ ref: toRef, value, previous: existing });
-          outcome = "replaced";
-        } else if (choice === "keep") {
-          outcome = "kept";
-        } else {
-          plan.conflicts.push({ key: row.key, ref: toRef, existingLength: existing.length });
+      const planned = plannedDestinations.get(id);
+      if (planned) {
+        if (planned.value === "pending") {
           outcome = "conflict";
+        } else if (planned.value === value) {
+          outcome = "same";
+        } else {
+          plan.mergeWarnings.push({ key: row.key, used: planned.firstFiles[0]!, others: row.files });
+          outcome = "kept";
+          length = planned.value.length;
+        }
+      } else {
+        const existing = input.vaultValue(toRef);
+        if (existing === null) {
+          plan.vaultWrites.push({ ref: toRef, value, previous: null });
+          outcome = "new";
+          plannedDestinations.set(id, { value, firstFiles: row.files });
+        } else if (existing === value) {
+          outcome = "same";
+          plannedDestinations.set(id, { value, firstFiles: row.files });
+        } else {
+          const choice = input.choices.get(id);
+          if (choice === "replace") {
+            plan.vaultWrites.push({ ref: toRef, value, previous: existing });
+            outcome = "replaced";
+            plannedDestinations.set(id, { value, firstFiles: row.files });
+          } else if (choice === "keep") {
+            outcome = "kept";
+            length = existing.length;
+            plannedDestinations.set(id, { value: existing, firstFiles: row.files });
+          } else {
+            plan.conflicts.push({ key: row.key, ref: toRef, existingLength: existing.length });
+            outcome = "conflict";
+            plannedDestinations.set(id, { value: "pending", firstFiles: row.files });
+          }
         }
       }
       if (row.place === "plaintext" && row.conflicts.length > 0) {
@@ -195,7 +221,7 @@ export function planMove(input: PlanInput): MovePlan {
       files: row.files,
       fromRef: row.ref,
       toRef,
-      length: value.length,
+      length,
       outcome,
     });
   }
