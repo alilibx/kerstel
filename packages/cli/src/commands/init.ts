@@ -409,6 +409,23 @@ function untouchedLabel(fileName: string, unsupported: UnsupportedValue): string
   return unsupported.key.startsWith("line ") ? `${fileName} ${unsupported.key}` : unsupported.key;
 }
 
+/**
+ * Plain-text keys `ks move` could actually act on: parsed `KEY=value` pairs,
+ * unlike `plaintextKeysRemaining`, which also lists lines the parser refused
+ * to read at all. A line `ks move` never touched is not a line it can move.
+ */
+function movablePlaintextKeys(files: { name: string; contents: string }[]): string[] {
+  const remaining: string[] = [];
+  for (const { contents } of files) {
+    const file = parseDotenv(contents);
+    for (const pair of entries(file)) {
+      if (parseReference(pair.value) !== null) continue;
+      if (!remaining.includes(pair.key)) remaining.push(pair.key);
+    }
+  }
+  return remaining;
+}
+
 interface GitignoreChange {
   path: string;
   before: string;
@@ -1040,7 +1057,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     ];
     if (plaintext.length === 0) {
       closing.push("Your .env files hold only references now, so they're safe to commit.");
-    } else {
+    } else if (movablePlaintextKeys(plannedFiles).length > 0) {
       closing.push(movePointer());
     }
     note(closing.join("\n"), "Next steps");

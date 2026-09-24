@@ -722,6 +722,30 @@ test("a first run that leaves keys in plain text points at move", async () => {
   expect(out).toContain("To move a key between the vault and plain text later, run");
 });
 
+test("a first run whose only remaining plain text is a parser-refused line does not point at move", async () => {
+  isolateEnv({ prefix: "init-pointer-unsupported" });
+  await bootLocalDaemon();
+  const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7PEMBODY";
+  const tail = "kL0tuEJ6abcdEFGH1234567890abcdefghijklmnopqrstuvwxyz==";
+  const source = [
+    "API_KEY=sk-pem-test-value",
+    "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----",
+    body,
+    tail,
+    "-----END PRIVATE KEY-----",
+    "",
+  ].join("\n");
+  const root = makeProject({ "package.json": NPM_PACKAGE, ".env": source });
+
+  const out = await captureLog(() => runInit(options(root, ["--yes", "--non-interactive"]), new DefaultsPrompter()));
+
+  // API_KEY is moved to the vault, leaving PRIVATE_KEY as the only plain-text
+  // value -- and PRIVATE_KEY is a line the parser refused to read at all, so
+  // `ks move` has nothing there to act on either.
+  expect(out).toContain("PRIVATE_KEY left untouched");
+  expect(out).not.toContain("To move a key between the vault and plain text later, run");
+});
+
 /** Runs `body` with console.log captured, and returns everything it printed. */
 async function captureLog(body: () => Promise<unknown>): Promise<string> {
   const captured: string[] = [];
