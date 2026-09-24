@@ -26,6 +26,10 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] Wire every command of a compound script, after its leading `NAME=value` assignments, and report half-wired scripts in `doctor` ([#61](https://github.com/alilibx/kerstel/issues/61))
 - [x] A committed launcher, `.kerstel/exec.cjs`, so wired scripts run unchanged on deploy hosts that have no Kerstel, plus a "Deploying" docs page ([#62](https://github.com/alilibx/kerstel/issues/62))
 
+## 0.1.4: change your mind
+
+- [ ] `kerstel move`: move a key between the vault and plain text, or between this project and the shared scope, after `init` ([#71](https://github.com/alilibx/kerstel/issues/71))
+
 ## 0.2.0: terminal UI and monorepos
 
 - [ ] `kerstel ui`: a full-screen view of the vault in the terminal, with no network listener ([#8](https://github.com/alilibx/kerstel/issues/8))
