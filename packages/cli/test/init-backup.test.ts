@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupTimestamp, createBackup, listBackups, restoreBackup } from "../src/init/backup";
+import { backupTimestamp, createBackup, listBackups, readBackupVault, restoreBackup } from "../src/init/backup";
 import { backupsDir } from "../src/paths";
 import { generateDataKey } from "../src/vault/crypto";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
@@ -128,4 +128,67 @@ test.if(process.platform !== "win32")("backups are owner-only", () => {
   expect(statSync(result.dir).mode & 0o777).toBe(0o700);
   expect(statSync(join(result.dir, ".env.enc")).mode & 0o777).toBe(0o600);
   expect(statSync(join(result.dir, "manifest.json")).mode & 0o777).toBe(0o600);
+});
+
+test("a backup's vault section round-trips and restoreBackup ignores it", () => {
+  isolateEnv({ prefix: "backup-vault" });
+  const key = generateDataKey();
+  const vault = [
+    { scope: "my-app", key: "STRIPE_KEY", value: "sk-VAULT-CANARY-1" },
+    { scope: "global", key: "OPENAI_API_KEY", value: "sk-VAULT-CANARY-2" },
+  ];
+
+  const result = createBackup({ scope: "my-app", dataKey: key, files: FILES, vault });
+  expect(readBackupVault("my-app", result.timestamp, key)).toEqual(vault);
+
+  const manifest = JSON.parse(readFileSync(join(result.dir, "manifest.json"), "utf8"));
+  expect(manifest.version).toBe(1);
+  expect(manifest.vault.map((e: { scope: string; key: string }) => `${e.scope}/${e.key}`)).toEqual([
+    "my-app/STRIPE_KEY",
+    "global/OPENAI_API_KEY",
+  ]);
+  expect(JSON.stringify(manifest)).not.toContain("VAULT-CANARY");
+
+  const target = restoreTarget("kerstel-restore-vault-");
+  const written = restoreBackup("my-app", result.timestamp, target, key);
+  expect(written.map((path) => path.slice(target.length + 1)).sort()).toEqual([".env", ".env.local"]);
+  expect(readdirSync(target)).not.toContain("vault");
+});
+
+test("no vault file is on disk in plaintext", () => {
+  isolateEnv({ prefix: "backup-vault-enc" });
+  const result = createBackup({
+    scope: "my-app",
+    dataKey: generateDataKey(),
+    files: FILES,
+    vault: [{ scope: "my-app", key: "K", value: "sk-VAULT-CANARY-3" }],
+  });
+  expect(readdirSync(result.dir).sort()).toEqual([".env.enc", ".env.local.enc", "manifest.json", "vault.enc"]);
+  for (const name of readdirSync(result.dir)) {
+    expect(readFileSync(join(result.dir, name)).toString("latin1")).not.toContain("VAULT-CANARY");
+  }
+});
+
+test("a backup without a vault section reads back as an empty list", () => {
+  isolateEnv({ prefix: "backup-no-vault" });
+  const key = generateDataKey();
+  const result = createBackup({ scope: "my-app", dataKey: key, files: FILES });
+  expect(readBackupVault("my-app", result.timestamp, key)).toEqual([]);
+  expect(readdirSync(result.dir)).not.toContain("vault.enc");
+});
+
+test("a tampered vault section throws instead of returning a wrong value", () => {
+  isolateEnv({ prefix: "backup-vault-tamper" });
+  const key = generateDataKey();
+  const result = createBackup({
+    scope: "my-app",
+    dataKey: key,
+    files: FILES,
+    vault: [{ scope: "my-app", key: "K", value: "v1" }],
+  });
+  const manifestPath = join(result.dir, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.vault[0].sha256 = "0".repeat(64);
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  expect(() => readBackupVault("my-app", result.timestamp, key)).toThrow(/corrupt/);
 });
