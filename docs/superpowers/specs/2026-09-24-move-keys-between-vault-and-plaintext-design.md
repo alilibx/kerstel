@@ -48,17 +48,33 @@ $ ks move
 4. **Preview** every change (§4), then **Apply? Yes / No**, default No.
 5. **Apply** (§5).
 
-The menus use `init`'s prompter. Without a terminal and without key names and `--to`, the command exits 2 with the same shape of message `init` gives: `ks move asks questions, and this is not a terminal. Name the keys and --to, for example: ks move STRIPE_KEY --to global --yes`. Exit codes follow `init`: 0 done or nothing to do, 1 refused (§3.2, §4.2) or nothing left to move, 2 usage, 130 cancelled.
+The menus use `init`'s prompter. Key names given without `--to` skip step 3's first menu and ask only the destination.
+
+### 2.4 Without a terminal
+
+A question that cannot be asked is an error, never a default:
+
+| Arguments | Terminal | No terminal |
+|---|---|---|
+| none | menus | exit 2: `ks move asks questions, and this is not a terminal. Name the keys and --to, for example: ks move STRIPE_KEY --to global --yes` |
+| keys, no `--to` | destination menu | exit 2, same message |
+| keys and `--to` | preview, then Apply? | preview, then exit 2 unless `--yes`: `Apply needs a terminal; re-run with --yes.` |
+| keys, `--to`, `--yes` | preview, apply | preview, apply |
+| `--to` without keys | exit 2: `--to needs the keys to move.` | same |
+
+A conflict (§3.2) or a tracked file (§4.2) without its flag is a refusal in the direct form whether or not there is a terminal, so a script behaves the same when run by hand.
+
+Exit codes follow `init`: 0 done or nothing to do, 1 refused (§3.2, §4.2) or no named key left to move, 2 usage or a question with no terminal, 130 cancelled.
 
 ### 2.2 Direct
 
 ```
-ks move STRIPE_KEY PORT --to global|project|plaintext [--yes] [--replace-shared] [--allow-tracked]
+ks move STRIPE_KEY PORT --to global|project|plaintext [--yes] [--replace] [--allow-tracked]
 ```
 
 No menus. The preview still prints; `--yes` answers Apply. `--to` applies to every named key. A named key the scan does not find, or that is already at the destination, is reported and skipped; if no key is left, exit 1. The flags:
 
-- `--replace-shared`: see §3.2.
+- `--replace`: see §3.2.
 - `--allow-tracked`: see §4.2.
 
 ### 2.3 Pointer from `init`
@@ -75,10 +91,10 @@ Whenever `init` finishes with keys still in plain text, or reports "Already migr
 
 | From → To | Env files | Vault |
 |---|---|---|
-| plain → project | value → `kerstel://<project>/KEY` | value stored in `<project>` |
+| plain → project | value → `kerstel://<project>/KEY` | value stored in `<project>` (§3.2 if one exists) |
 | plain → shared | value → `kerstel://global/KEY` | value stored in `global` (§3.2 if one exists) |
 | project → shared | `<project>/KEY` → `global/KEY` | value copied to `global` (§3.2); project copy deleted if unused (§3.1) |
-| shared → project | `global/KEY` → `<project>/KEY` | value copied to `<project>`; `global` never deleted |
+| shared → project | `global/KEY` → `<project>/KEY` | value copied to `<project>` (§3.2); `global` never deleted |
 | project → plain | reference → the value | project copy deleted if unused (§3.1) |
 | shared → plain | reference → the value | `global` never deleted |
 
@@ -96,14 +112,14 @@ A project-scope secret is deleted after the move only when, after the rewrite, n
   kerstel://whasal/STRIPE_KEY is kept: whasal was set up in /Users/ali/src/whasal, which may still use it.
 ```
 
-The deleted value survives in the backup taken before the rewrite (§5).
+When the vault has no record of the project yet, there is no other checkout Kerstel knows of, and the copy is deleted if unused. The deleted value is saved in the backup taken before the rewrite (§5.1).
 
-### 3.2 An existing shared value
+### 3.2 A destination that already holds a value
 
-Moving to shared when `global/KEY` already exists:
+Any move into the vault, to `global/KEY` or to `<project>/KEY`, first looks up that entry. A project entry can exist with no file here referencing it: another checkout's, or one left by `ks set`.
 
-- **Same value:** nothing to ask; the reference is repointed.
-- **Different value:** interactive asks, default first:
+- **Absent or the same value:** nothing to ask.
+- **Different value:** interactive asks, default first. For `global`:
 
   ```
   ? kerstel://global/STRIPE_KEY already holds a different value (41 chars). Which one stays?
@@ -111,7 +127,9 @@ Moving to shared when `global/KEY` already exists:
       Replace it with this project's value (every project using the shared key changes too)
   ```
 
-  Kerstel does not read other projects' files, so it cannot say which projects use the shared key, and the prompt does not guess a count. The direct form refuses with the first sentence unless `--replace-shared` is given.
+  For `<project>`, the same question with `the vault's value; these files use it from now on` and `Replace it with the value being moved (anything else reading kerstel://whasal/STRIPE_KEY changes too)`.
+
+  Kerstel does not read other projects' or checkouts' files, so it cannot say who else reads the entry, and the prompt does not guess a count. The direct form refuses with the first sentence unless `--replace` is given. Either way, the value that loses is saved in the backup (§5.1).
 
 ### 3.3 What a move does not touch
 
@@ -159,29 +177,35 @@ Interactive: the warning stays above Apply, and the default stays No. Direct: th
 
 ## 5. Apply
 
-In order, stopping at the first failure with nothing half-done in the vault:
+In order:
 
-1. `createBackup` over every file to be rewritten, the backup `init` takes, so `uninstall` and a manual restore see it. Printed as `✓ Backed up .env, .env.local`.
-2. Vault writes: `setSecret` for every destination value.
-3. Env file rewrites, each through the existing atomic write.
-4. Vault deletions (§3.1).
-5. `registerProject(scope, root)`, as `init` does, so a move in a fresh checkout still records the project.
+1. **Backup** (§5.1). Printed as `✓ Backed up .env, .env.local`.
+2. **Vault writes:** `setSecret` for every destination value.
+3. **Env file rewrites,** each through the existing atomic write.
+4. **Vault deletions:** `removeSecret` for each project copy §3.1 allows.
+5. **Project record:** `registerProject(scope, root)` only when the vault has no record for the scope. A record with a different root is left alone: overwriting it would make the next move in this checkout believe it is the only one, and §3.1 would delete copies the recorded checkout still reads.
 6. One `✓` line per key.
 
-A vault write that fails before step 3 leaves the files untouched. A file write that fails leaves the new vault entries in place (harmless: a stored value nothing references) and skips step 4, so no value is lost.
+**Rollback.** If step 2 or 3 fails, every vault entry step 2 touched goes back to its state from step 1: a replaced value is written back, a new entry is removed. Files already rewritten in step 3 are restored from the backup. Step 4 does not run. The command exits 1 naming what failed and the backup directory. A failure in step 4 or 5 leaves an extra vault entry or a missing record, which loses nothing, and is reported.
+
+### 5.1 The backup
+
+`createBackup` saves the env files to be rewritten, as `init` does. For a key already in the vault those files hold only `kerstel://` references, so the backup gains a `vault` section: every vault entry the move will delete (§3.1) or overwrite (§3.2), with its value, encrypted with the data key like the files, one `vault.enc` alongside the `.enc` files and its entries (`scope`, `key`, `bytes`, `sha256`, no value) listed in the manifest. `readBackup` returns it; `restoreBackup` ignores it, so restoring files never writes to the vault. The manifest stays `version: 1`, since the section is optional and older readers skip unknown fields.
 
 ## 6. Other commands
 
-- **`uninstall`:** no change. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
+- **`uninstall`:** no change to what it restores; it reads backups through `readBackup`, which now also returns the `vault` section, and ignores it. It restores the references that remain; plain-text keys are already plain text; a deleted project copy is not a reference any more.
 - **`doctor`:** no change.
 - **`init`:** only the pointer line (§2.3).
 
 ## 7. Code
 
 - `packages/cli/src/move/plan.ts`: pure planner. Input: the scanned keys (key, files, current reference or value), the vault lookups it needs, the destinations, the registered root, the git status of each file. Output: the rewrites, vault writes, deletions, kept copies with reasons, conflicts, and warnings. No I/O.
+- `packages/cli/src/move/apply.ts`: steps 1-6 of §5 and the rollback, against the real vault and files.
 - `packages/cli/src/move/git.ts`: the tracked/ignored checks, via `Bun.spawnSync`, returning `null` outside a repository.
 - `packages/cli/src/commands/move.ts`: argument parsing, the prompts, the preview, apply.
 - `index.ts`: `move` in the dispatcher and the help text.
+- `packages/cli/src/init/backup.ts`: the optional `vault` section (§5.1).
 - Reuses from `init`: env discovery and parsing, `explain`/`isSafeToDisplay`, `DESTINATION_CHOICES`, `formatReference`, `createBackup`, `restoreLineValue`, `setLineValue`.
 
 ## 8. Docs
@@ -194,7 +218,9 @@ A vault write that fails before step 3 leaves the files untouched. A file write 
 
 ## 9. Testing
 
-- **Planner** (`move-plan.test.ts`): every row of the §3 table; same and different shared values, with and without `--replace-shared`; project copy deleted when unused, kept when another file still references it, kept when the recorded root differs; a key with different references in different files; a missing reference; nothing left to move.
+- **Planner** (`move-plan.test.ts`): every row of the §3 table; an existing destination entry, shared and project, same and different value, with and without `--replace`; project copy deleted when unused, kept when another file still references it, kept when the recorded root differs, deleted when there is no record; a key with different references in different files; a missing reference; nothing left to move.
+- **Apply and backup** (`move-apply.test.ts`): the backup's `vault` section holds every deleted and overwritten value and `restoreBackup` leaves the vault alone; a failure injected at step 2 and at step 3 leaves the vault and files as they were; a differing project record is never overwritten.
+- **No terminal:** every row of the §2.4 table.
 - **Git checks** (`move-git.test.ts`): a temp repository with a tracked file, an ignored file, and an untracked unignored file; no repository.
 - **Command** (`move.test.ts`): the direct form end to end on a temp project and vault, including refusals, `--yes`, and exit codes; a scripted interactive run through the test prompter; the backup exists before the files change; no value appears in stdout or stderr.
 - **init:** the pointer line appears on "Already migrated" and when plain-text keys remain.
