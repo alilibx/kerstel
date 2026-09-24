@@ -53,9 +53,14 @@
 <h2 class="release-version"><a href="#0.1.4">0.1.4</a></h2>
 <span class="release-date release-unreleased">In development</span>
 </div>
+<details class="release-details">
+<summary><span class="release-count">1 change</span></summary>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-security"><h3 class="change-type">Security</h3><ul>
+<li><code>kerstel init</code> no longer prints a credential in full because its name starts with <code>PUBLIC_</code>, <code>VITE_</code> or <code>NEXT_PUBLIC_</code>. Those prefixes are bundler namespaces, not a promise that the value is public, so a key whose name says it is a secret (<code>VITE_SUPABASE_KEY</code>, <code>NEXT_PUBLIC_API_KEY</code>), a value with a known token prefix (<code>sk_</code>, <code>AIza</code>, <code>ghp_</code>, and the like), and a URL with a password, a credential-named query parameter or a token-like path segment in it are now shown only as their length, whatever the key is called. <code>PORT=3000</code> and other configuration values still show as they are.</li>
+</ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.1.3">
 <span class="release-marker" aria-hidden="true"></span>

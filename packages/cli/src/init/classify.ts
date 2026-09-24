@@ -64,10 +64,26 @@ const SECRET_KEYS =
 /**
  * A query parameter that hands the credential over in the URL itself --
  * a presigned link, a webhook with its token in the query. The parameter NAME
- * has to end with the word, so `?monkey=1` is not a key.
+ * has to end with the word, so `?monkey=1` is not a key; `apikey` and `auth`
+ * are named whole, since they carry no separator.
  */
 const SECRET_QUERY =
-  /[?&]([^=&]*[-_.])?(key|token|secret|password|sig|signature)=/i;
+  /[?&](([^=&]*[-_.])?(key|token|secret|password|sig|signature)|apikey|auth)=/i;
+
+/**
+ * A path segment that looks like a credential rather than a route: 16 or more
+ * characters mixing letters and digits, as in a Slack or Discord webhook.
+ * Used only to decide what may be PRINTED, never what stays in a file.
+ */
+const OPAQUE_SEGMENT = /\/(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}(?=[/?#]|$)/;
+
+/**
+ * Values that carry a well-known credential prefix: Stripe and OpenAI-style
+ * `sk_`/`sk-`/`rk_`, Google `AIza`, GitHub `ghp_` and friends, Slack `xox?-`,
+ * AWS `AKIA`, and a JWT (`eyJ…`, as Supabase keys are). Whatever the key is
+ * called, such a value is never printed.
+ */
+const TOKEN_PREFIX = /^(sk[-_]|rk_|AIza|gh[pousr]_|github_pat_|xox[abprs]-|AKIA[0-9A-Z]{12}|eyJ[A-Za-z0-9_-]{8,}\.)/;
 
 const BOOLEANS = new Set(["true", "false", "yes", "no", "on", "off", "1", "0"]);
 const NUMBER = /^-?\d+(\.\d+)?$/;
@@ -144,16 +160,26 @@ export function explain(key: string, value: string): Explanation {
  * or a webhook URL with its token in the path puts it on screen and, under
  * `--yes`, into CI logs.
  *
- * True only for a key that is configuration by convention (`PORT`,
- * `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth hiding -- empty,
- * a boolean, a number, a short lowercase word -- under a key that does not
- * name a credential. A URL is shown only under a configuration key. The caller
- * still combines this with where the value is going and with `--keep`.
+ * A key that names a credential is never shown, even behind a `PUBLIC_`,
+ * `VITE_` or `NEXT_PUBLIC_` prefix: those prefixes are bundler namespaces, and
+ * people do put live keys behind them. Nor is a value that carries a known
+ * token prefix, or a URL with a password, a token in its query, or an opaque
+ * credential-like path segment, whatever its key.
+ *
+ * Past those, true only for a key that is configuration by convention
+ * (`PORT`, `NODE_ENV`, `PUBLIC_*`), or for a value with no content worth
+ * hiding -- empty, a boolean, a number, a short lowercase word. A URL is shown
+ * only under a configuration key. The caller still combines this with where
+ * the value is going and with `--keep`.
  */
 export function isSafeToDisplay(key: string, value: string): boolean {
-  if (PLAINTEXT_KEYS.test(key)) return true;
-  if (SECRET_KEYS.test(key)) return false;
   const trimmed = value.trim();
+  if (SECRET_KEYS.test(key) || TOKEN_PREFIX.test(trimmed)) return false;
+  const authority = urlAuthority(trimmed);
+  if (authority !== null && (authority.includes("@") || SECRET_QUERY.test(trimmed) || OPAQUE_SEGMENT.test(trimmed))) {
+    return false;
+  }
+  if (PLAINTEXT_KEYS.test(key)) return true;
   return (
     trimmed === "" ||
     BOOLEANS.has(trimmed.toLowerCase()) ||
