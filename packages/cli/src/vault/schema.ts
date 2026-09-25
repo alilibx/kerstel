@@ -80,8 +80,10 @@ const MIGRATIONS: string[] = [
   // new table is created under another name, filled, and renamed into place
   // AFTER the old one is dropped. Renaming the old table first would rewrite
   // the REFERENCES clauses in `secrets` and `audit_log` to follow it. Every
-  // `id` is kept, so those references would still hold (no code writes them
-  // today). A v2 vault can hold two rows for one folder (`init --scope a`,
+  // `id` is kept, but migrate() turns foreign keys on, so DROP TABLE's implicit
+  // DELETE fires ON DELETE SET NULL: any `secrets.project_id` or
+  // `audit_log.project_id` set would be cleared. No code writes either column,
+  // so nothing is lost. A v2 vault can hold two rows for one folder (`init --scope a`,
   // then `--scope b`); the newest one per folder is kept.
   `
   CREATE TABLE projects_v3 (
