@@ -450,3 +450,59 @@ test("the plan deletes Kerstel's launcher and leaves a foreign one, named", asyn
   expect(plan.foreignLaunchers).toEqual([{ path: join(theirs, ".kerstel", "exec.cjs"), project: "other-app" }]);
   expect(hasLoss(plan)).toBe(false);
 });
+
+test("a move backup is read once per scope, against every checkout's restored files", async () => {
+  const v = await freshVault();
+  // Checkout B ran `ks move API_KEY --to plaintext`: the vault copy is gone,
+  // saved in the scope's backup, and B's .env now holds the value in plaintext.
+  const main = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "API_KEY=moved-to-plain\n" });
+  v.registerProject("demo-app", main, "demo-app");
+  v.registerProject("demo-app", worktree, "demo-app");
+  const backup = createBackup({
+    scope: "demo-app",
+    dataKey,
+    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    vault: [
+      { scope: "demo-app", key: "API_KEY", value: "moved-to-plain" },
+      { scope: "demo-app", key: "GONE", value: "nowhere-else" },
+    ],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  // API_KEY sits plain in the worktree's .env; GONE is named exactly once.
+  expect(plan.backupOnly).toEqual([{ project: "demo-app", key: "GONE", files: ["vault.enc"], backupDir: backup.dir }]);
+  expect(JSON.stringify(plan)).not.toContain("nowhere-else");
+});
+
+test("an unreadable backup of a scope with two checkouts is named once", async () => {
+  const v = await freshVault();
+  const main = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  v.registerProject("demo-app", main, "demo-app");
+  v.registerProject("demo-app", worktree, "demo-app");
+  const backup = createBackup({ scope: "demo-app", dataKey, files: [{ name: ".env", contents: "PORT=3000\n" }] });
+  writeFileSync(join(backup.dir, ".env.enc"), "not a ciphertext");
+
+  expect(planUninstall(v, dataKey).unreadableBackups.map((entry) => entry.backupDir)).toEqual([backup.dir]);
+});
+
+test("a backup directory for a scope no folder is registered under is still scanned", async () => {
+  const v = await freshVault();
+  // The folder was registered as old-name, then re-scoped: its row now says demo-app.
+  const root = project({ "package.json": WIRED, ".env": "PORT=3000\n" });
+  v.registerProject("demo-app", root, "demo-app");
+  const backup = createBackup({
+    scope: "old-name",
+    dataKey,
+    files: [{ name: ".env", contents: "PORT=3000\n" }],
+    vault: [{ scope: "old-name", key: "API_KEY", value: "only-in-old-backup" }],
+  });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.backupOnly).toEqual([
+    { project: "old-name", key: "API_KEY", files: ["vault.enc"], backupDir: backup.dir },
+  ]);
+  expect(hasLoss(plan)).toBe(true);
+  expect(JSON.stringify(plan)).not.toContain("only-in-old-backup");
+});

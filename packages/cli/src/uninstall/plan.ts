@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isKerstelLauncher, launcherPath } from "../init/launcher";
 import { listBackups, readBackup, readBackupVault, type BackupVaultValue } from "../init/backup";
@@ -107,8 +107,9 @@ export function emptyPlan(): UninstallPlan {
  * Narrowed to the files where a backed-up value will not be back after the
  * restore: a key `init` left in plaintext (`--keep`, or a "plaintext" answer)
  * still holds every value in the live files, so it loses nothing. `restored`
- * maps each env file name to its contents after the restore. Backups are
- * decrypted in memory only; no value leaves this function.
+ * holds, per checkout of the scope, each env file name mapped to its contents
+ * after the restore: a value is lost only when no checkout gets it back.
+ * Backups are decrypted in memory only; no value leaves this function.
  *
  * A `ks move` backup's vault section is read too (see `movedValues`); a
  * section that cannot be read makes the whole backup unreadable.
@@ -117,7 +118,7 @@ function scanBackups(
   project: string,
   vault: Vault,
   dataKey: Buffer,
-  restored: Map<string, string>,
+  restored: Map<string, string>[],
 ): { backupOnly: BackupOnlyValue[]; unreadable: UnreadableBackup[] } {
   const backupOnly: BackupOnlyValue[] = [];
   const unreadable: UnreadableBackup[] = [];
@@ -152,11 +153,13 @@ function movedValues(
   saved: BackupVaultValue[],
   backupDir: string,
   vault: Vault,
-  restored: Map<string, string>,
+  restored: Map<string, string>[],
 ): BackupOnlyValue[] {
   const restoredPairs = new Set<string>();
-  for (const contents of restored.values()) {
-    for (const pair of entries(parseDotenv(contents))) restoredPairs.add(`${pair.key}\n${pair.value}`);
+  for (const checkout of restored) {
+    for (const contents of checkout.values()) {
+      for (const pair of entries(parseDotenv(contents))) restoredPairs.add(`${pair.key}\n${pair.value}`);
+    }
   }
   const keys = new Set<string>();
   for (const entry of saved) {
@@ -171,7 +174,7 @@ function collapsedValues(
   project: string,
   files: { name: string; contents: string }[],
   backupDir: string,
-  restored: Map<string, string>,
+  restored: Map<string, string>[],
 ): BackupOnlyValue[] {
   // The manifest lists files in the order init loaded them, highest
   // precedence first, which is the order collectKeys expects.
@@ -203,9 +206,10 @@ function collapsedValues(
 
   const valuesOf = (source: string, key: string) =>
     new Set(entries(parseDotenv(source)).filter((pair) => pair.key === key).map((pair) => pair.value));
-  // A reference in a backup (from an init re-run) is not a value, so it cannot be lost.
+  // A reference in a backup (from an init re-run) is not a value, so it cannot
+  // be lost. A value any checkout's same-named file gets back is not lost either.
   const loses = (entry: LoadedEnvFile, key: string) => {
-    const after = valuesOf(restored.get(entry.info.name) ?? "", key);
+    const after = new Set(restored.flatMap((checkout) => [...valuesOf(checkout.get(entry.info.name) ?? "", key)]));
     return [...valuesOf(entry.original, key)].some((value) => !parseReference(value) && !after.has(value));
   };
 
@@ -232,8 +236,13 @@ function collapsedValues(
 export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   const plan = emptyPlan();
   const used = new Set<string>();
+  // Every checkout of a scope shares its backups, so they are scanned once per
+  // scope, after all its checkouts are restored. Insertion order is row order.
+  const restoredByScope = new Map<string, Map<string, string>[]>();
+  const registeredScopes = new Set<string>();
 
   for (const project of vault.listProjects()) {
+    registeredScopes.add(project.name);
     const root = project.rootPath;
     const unreachable = (reason: string) => plan.unreachable.push({ name: project.name, rootPath: root, reason });
 
@@ -326,11 +335,23 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       }
     }
 
-    const backups = scanBackups(project.name, vault, dataKey, restoredContents);
-    plan.backupOnly.push(...backups.backupOnly);
-    plan.unreadableBackups.push(...backups.unreadable);
+    const scopeRestored = restoredByScope.get(project.name) ?? [];
+    scopeRestored.push(restoredContents);
+    restoredByScope.set(project.name, scopeRestored);
     plan.restored.push({ name: project.name, rootPath: root, envFiles: restoredEnvFiles });
   }
+
+  const scan = (scope: string, restored: Map<string, string>[]) => {
+    const backups = scanBackups(scope, vault, dataKey, restored);
+    plan.backupOnly.push(...backups.backupOnly);
+    plan.unreadableBackups.push(...backups.unreadable);
+  };
+  for (const [scope, restored] of restoredByScope) scan(scope, restored);
+  // A scope with backups but no row (the folder was re-scoped, or the upgrade
+  // to schema 3 dropped an older row for it) still holds values: check them
+  // against everything the restore puts back.
+  const everyRestored = [...restoredByScope.values()].flat();
+  for (const scope of orphanBackupScopes(registeredScopes)) scan(scope, everyRestored);
 
   plan.unused = vault
     .listSecrets()
@@ -338,6 +359,19 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
     .filter((reference) => !used.has(reference));
 
   return plan;
+}
+
+/** Backup scope directories no registered row is named after, sorted. */
+function orphanBackupScopes(registered: Set<string>): string[] {
+  const dir = backupsDir();
+  if (!existsSync(dir)) return [];
+  try {
+    return readdirSync(dir)
+      .filter((name) => !registered.has(name) && statSync(join(dir, name)).isDirectory())
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 /** True when applying the plan would lose a secret. See the loss gate in spec §6.2. */
