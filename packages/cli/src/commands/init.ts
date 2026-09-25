@@ -292,7 +292,7 @@ async function decideTargets(
     if (options.keepKeys.has(key.key)) return { ...base, target: "plaintext", reason, fixed: true };
     if (options.globalKeys.has(key.key)) return { ...base, target: "global", reason, fixed: true };
     const existing = existingTarget(key.key);
-    if (existing) return { ...base, target: existing, reason: "already in the vault", fixed: false };
+    if (existing) return { ...base, target: existing, reason: "in the vault", fixed: false };
     return { ...base, target: suggestion, reason, fixed: false };
   });
 

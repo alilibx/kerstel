@@ -1253,6 +1253,9 @@ test("a value the vault already holds becomes a reference without being stored a
   expect(code).toBe(0);
   expect(out).toContain("already in the vault");
   expect(out).not.toContain("tok-aaaa-1111");
+  // Nothing was stored: the run only registered the folder.
+  expect(out).toContain("Registered api with the vault.");
+  expect(out).not.toMatch(/Stored \d+ secret/);
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
 });
 
@@ -1343,7 +1346,10 @@ test("--dry-run marks a key the vault holds without comparing values", async () 
   const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
   const { code, out } = await initQuietly(root, ["--dry-run", "--yes"], new DefaultsPrompter());
   expect(code).toBe(0);
-  expect(out).toContain("in the vault");
+  // The overview row's note is exactly "in the vault": "already in the vault" must not satisfy it.
+  const row = out.split("\n").find((line) => line.includes("API_TOKEN") && line.includes("in the vault"));
+  expect(row).toBeDefined();
+  expect(row).not.toContain("already in the vault");
   expect(out).not.toContain("differs from the vault");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=tok-file-1111\n");
 });
