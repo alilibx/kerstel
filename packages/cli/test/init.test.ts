@@ -1340,6 +1340,58 @@ test("an existing global entry sets the destination, and --keep still wins", asy
   });
 });
 
+test("a shared value that differs is left alone, and the key stays with this project", async () => {
+  isolateEnv({ prefix: "init-shared-differs" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => {
+    vault.setSecret({ scope: "global", key: "DATABASE_URL" }, "postgres://u:pw-other@db.example/other");
+    // A name the classifier suggests for the shared vault on its own.
+    vault.setSecret({ scope: "global", key: "STRIPE_SECRET_KEY" }, "sk-shared-8888");
+  });
+  const root = makeProject({
+    "package.json": API_PACKAGE("@acme/api"),
+    ".env": "DATABASE_URL=postgres://u:pw-mine@db.example/mine\nSTRIPE_SECRET_KEY=sk-mine-9999\n",
+  });
+
+  const prompter = new ScriptedPrompter(["accept", "apply"]);
+  const { code, out } = await initQuietly(root, [], prompter);
+  expect(code).toBe(0);
+  expect(prompter.asked.some((q) => q.includes("already holds a different value"))).toBe(false);
+  expect(out).toContain("differs from the shared vault");
+  expect(out).not.toContain("pw-mine");
+  expect(out).not.toContain("pw-other");
+  expect(out).not.toContain("sk-mine-9999");
+  expect(out).not.toContain("sk-shared-8888");
+
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("DATABASE_URL=kerstel://api/DATABASE_URL");
+  expect(env).toContain("STRIPE_SECRET_KEY=kerstel://api/STRIPE_SECRET_KEY");
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "global", key: "DATABASE_URL" })).toBe("postgres://u:pw-other@db.example/other");
+    expect(vault.getSecret({ scope: "global", key: "STRIPE_SECRET_KEY" })).toBe("sk-shared-8888");
+    expect(vault.getSecret({ scope: "api", key: "DATABASE_URL" })).toBe("postgres://u:pw-mine@db.example/mine");
+    expect(vault.getSecret({ scope: "api", key: "STRIPE_SECRET_KEY" })).toBe("sk-mine-9999");
+  });
+});
+
+test("choosing the shared vault for a differing key still asks which value stays", async () => {
+  isolateEnv({ prefix: "init-shared-chosen" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "global", key: "DATABASE_URL" }, "postgres://shared-db"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "DATABASE_URL=postgres://mine-db\n" });
+
+  const prompter = new ScriptedPrompter(["keep", "apply"]);
+  expect((await initQuietly(root, ["--global", "DATABASE_URL"], prompter)).code).toBe(0);
+  expect(prompter.asked.some((q) => q.includes("kerstel://global/DATABASE_URL already holds a different value"))).toBe(
+    true,
+  );
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=kerstel://global/DATABASE_URL\n");
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "global", key: "DATABASE_URL" })).toBe("postgres://shared-db");
+    expect(vault.getSecret({ scope: "api", key: "DATABASE_URL" })).toBeNull();
+  });
+});
+
 test("--dry-run marks a key the vault holds without comparing values", async () => {
   isolateEnv({ prefix: "init-dry-entry" });
   await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));

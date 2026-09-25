@@ -6,7 +6,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Changed
 
-- When a key's value in your `.env` differs from the one already in the vault, `kerstel init` now asks which one stays instead of overwriting the vault's. The vault's value stays by default and under `--yes`, and whichever value loses is kept in the encrypted backup, so `kerstel uninstall` names it before deleting the backups. A plain key already stored in this project's vault or in the vault shared by all your projects now points at that entry instead of being stored again.
+- When a key's value in your `.env` differs from the one already in the vault, `kerstel init` now asks which one stays instead of overwriting the vault's. The vault's value stays by default and under `--yes`, and whichever value loses is kept in the encrypted backup, so `kerstel uninstall` names it before deleting the backups. A plain key already stored in this project's vault now points at that entry instead of being stored again, and so does one the vault shared by all your projects holds with the same value. A shared value that differs is left alone and the key stays with this project, so a project is never pointed at another project's account or database without asking; pass `--global KEY` to choose the shared value.
 
 ### Fixed
 

@@ -237,6 +237,8 @@ interface Decision {
   vaultEntry: "same" | "differs" | "unknown" | null;
   /** True when the vault's value stays and nothing is stored for this key. */
   keepVault: boolean;
+  /** The shared vault holds this key with a different value, so it was kept out of there. */
+  sharedDiffers: boolean;
 }
 
 /**
@@ -284,15 +286,30 @@ async function decideTargets(
   prompter: Prompter,
   vault: VaultLookup,
 ): Promise<Decision[]> {
-  const existingTarget = (key: string): Suggestion | null =>
-    vault.has({ scope, key }) ? "project" : vault.has({ scope: GLOBAL_SCOPE, key }) ? "global" : null;
+  // A shared entry is another project's value as often as it is this one's:
+  // it takes the key only when it holds the same value. A different value is
+  // most likely a different account or database, and pointing this project at
+  // it -- the default answer, and --yes -- would be a silent wrong turn. So the
+  // key stays with this project, and the shared entry is left alone. Choosing
+  // the shared vault yourself still asks which value stays.
+  const sharedEntry = (key: CollectedKey): "same" | "differs" | "unknown" | null => {
+    const ref = { scope: GLOBAL_SCOPE, key: key.key };
+    if (!vault.has(ref)) return null;
+    if (!vault.canCompare) return "unknown";
+    return vault.value(ref) === key.value ? "same" : "differs";
+  };
   const decisions: Decision[] = keys.map((key) => {
     const { suggestion, reason } = explain(key.key, key.value);
-    const base = { key, suggestion, vaultEntry: null, keepVault: false };
+    const base = { key, suggestion, vaultEntry: null, keepVault: false, sharedDiffers: false };
     if (options.keepKeys.has(key.key)) return { ...base, target: "plaintext", reason, fixed: true };
     if (options.globalKeys.has(key.key)) return { ...base, target: "global", reason, fixed: true };
-    const existing = existingTarget(key.key);
-    if (existing) return { ...base, target: existing, reason: "in the vault", fixed: false };
+    if (vault.has({ scope, key: key.key })) return { ...base, target: "project", reason: "in the vault", fixed: false };
+    const shared = sharedEntry(key);
+    if (shared === "same") return { ...base, target: "global", reason: "in the shared vault", fixed: false };
+    if (shared === "differs") {
+      const target = suggestion === "global" ? "project" : suggestion;
+      return { ...base, target, reason: "the shared vault holds a different value", fixed: false, sharedDiffers: true };
+    }
     return { ...base, target: suggestion, reason, fixed: false };
   });
 
@@ -313,7 +330,9 @@ async function decideTargets(
         ? "differs from the vault"
         : d.vaultEntry === "unknown"
           ? "in the vault"
-          : undefined;
+          : d.sharedDiffers && d.target !== "plaintext"
+            ? "differs from the shared vault"
+            : undefined;
 
   const showOverview = (title: string): void => {
     decisions.forEach(compare);
