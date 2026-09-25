@@ -19,6 +19,7 @@ import {
   DefaultsPrompter,
   ScriptedPrompter,
   type Choice,
+  type Prompter,
   type TextOptions,
 } from "../src/init/prompts";
 import { backupsDir, socketPath } from "../src/paths";
@@ -1229,4 +1230,78 @@ test("a re-run without --scope keeps the scope this folder was registered under"
   await openTestVault((vault) => {
     expect(vault.listProjects().map((p) => p.name)).toEqual(["custom"]);
   });
+});
+
+async function initQuietly(root: string, args: string[], prompter: Prompter) {
+  const log = captureConsoleLog();
+  try {
+    return { code: await runInit(options(root, args), prompter), out: log.text() };
+  } finally {
+    log.restore();
+  }
+}
+
+test("a value the vault already holds becomes a reference without being stored again", async () => {
+  isolateEnv({ prefix: "init-same-value" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-aaaa-1111"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+
+  const { code, out } = await initQuietly(root, ["--yes"], new DefaultsPrompter());
+  expect(code).toBe(0);
+  expect(out).toContain("already in the vault");
+  expect(out).not.toContain("tok-aaaa-1111");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+});
+
+test("a differing value keeps the vault's by default, and the file's on request", async () => {
+  isolateEnv({ prefix: "init-differs" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+
+  const kept = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  const first = await initQuietly(kept, ["--yes"], new DefaultsPrompter());
+  expect(first.code).toBe(0);
+  expect(first.out).toContain("differs from the vault");
+  expect(first.out).not.toContain("tok-file-1111");
+  expect(first.out).not.toContain("tok-vault-0000");
+  expect(readFileSync(join(kept, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+  await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-vault-0000"));
+
+  const used = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-2222\n" });
+  const prompter = new ScriptedPrompter(["accept", "use", "apply"]);
+  expect((await initQuietly(used, [], prompter)).code).toBe(0);
+  expect(prompter.asked.some((q) => q.includes("already holds a different value"))).toBe(true);
+  await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-file-2222"));
+});
+
+test("an existing global entry sets the destination, and --keep still wins", async () => {
+  isolateEnv({ prefix: "init-global-entry" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "global", key: "SHARED_TOKEN" }, "tok-shared-5555"));
+  const root = makeProject({
+    "package.json": API_PACKAGE("@acme/api"),
+    ".env": "SHARED_TOKEN=tok-shared-5555\nKEPT_TOKEN=tok-kept-6666\n",
+  });
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "KEPT_TOKEN" }, "tok-other-7777"));
+
+  expect((await initQuietly(root, ["--yes", "--keep", "KEPT_TOKEN"], new DefaultsPrompter())).code).toBe(0);
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("SHARED_TOKEN=kerstel://global/SHARED_TOKEN");
+  expect(env).toContain("KEPT_TOKEN=tok-kept-6666");
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "api", key: "SHARED_TOKEN" })).toBeNull();
+    expect(vault.getSecret({ scope: "api", key: "KEPT_TOKEN" })).toBe("tok-other-7777");
+  });
+});
+
+test("--dry-run marks a key the vault holds without comparing values", async () => {
+  isolateEnv({ prefix: "init-dry-entry" });
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  const { code, out } = await initQuietly(root, ["--dry-run", "--yes"], new DefaultsPrompter());
+  expect(code).toBe(0);
+  expect(out).toContain("in the vault");
+  expect(out).not.toContain("differs from the vault");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=tok-file-1111\n");
 });
