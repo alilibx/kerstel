@@ -67,6 +67,18 @@ test("a row for a different package is a collision, and names that package", () 
   );
 });
 
+test("scopeCollisionMessage takes a custom remedy in place of the --scope one", () => {
+  expect(
+    scopeCollisionMessage(
+      "api",
+      { packageName: "@acme/api", root: "/acme/api" },
+      "Run kerstel init --scope <name> here to give this package its own.",
+    ),
+  ).toBe(
+    'The scope "api" belongs to @acme/api at /acme/api. Run kerstel init --scope <name> here to give this package its own.',
+  );
+});
+
 test("a row from before schema 3 is compared through the package.json in its folder", () => {
   const base = temp();
   const same = pkg(base, "main", "@acme/api");

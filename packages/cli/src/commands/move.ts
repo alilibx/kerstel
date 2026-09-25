@@ -2,6 +2,7 @@ import { openContext } from "../context";
 import { DESTINATION_CHOICES, isSafeToDisplay } from "../init/classify";
 import { loadEnvFiles } from "../init/collect";
 import { detectProject } from "../init/detect";
+import { entries } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import { CancelledError, ClackPrompter, type Choice, type Prompter } from "../init/prompts";
 import { MoveApplyError, MoveStaleFileError, applyMove, removeStaleTemps } from "../move/apply";
@@ -9,7 +10,7 @@ import { referencesInCheckouts } from "../move/checkouts";
 import { gitFileStatus } from "../move/git";
 import { planMove, refId, type ConflictChoice, type MovePlan, type MoveRequest } from "../move/plan";
 import { PLACE_LABELS, resolveProjectScope, scanRows, type Place, type ScannedRow } from "../move/scan";
-import { GLOBAL_SCOPE } from "../reference";
+import { GLOBAL_SCOPE, parseReference, type SecretRef } from "../reference";
 import { dim, fail, info, ok, yellow } from "../output";
 import { cliName } from "../ui/cli-name";
 import { canonicalRoot, checkScopeOwner, projectForRoot, scopeCollisionMessage } from "../vault/projects";
@@ -136,12 +137,14 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     return 2;
   }
 
-  // realpathSync: on macOS the working directory (and the test runner's own
+  // canonicalRoot: on macOS the working directory (and the test runner's own
   // tmpdir) is reached through a symlink (/tmp -> /private/tmp, and likewise
-  // for /var/folders). A bare string compare against the vault's recorded
-  // root -- itself resolved the same way when it was registered -- would
-  // false-negative "another checkout" for the SAME checkout reached through
-  // the link. Same fix as uninstall.ts's removeLinks, and for the same reason.
+  // for /var/folders). A bare string compare against a registered checkout's
+  // root -- itself canonicalized the same way when it was registered -- would
+  // false-negative "this folder" or "another checkout" for a checkout reached
+  // through the link. Same fix as uninstall.ts's removeLinks, and for the
+  // same reason; every root compared below (this folder's, and every other
+  // registered checkout's) goes through the same normalization.
   const detected = detectProject(canonicalRoot(options.cwd));
   removeStaleTemps(detected.root);
   if (detected.envFiles.length === 0) {
@@ -168,11 +171,23 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     const derived = deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
     const scope = here?.name ?? resolveProjectScope(loaded, derived);
     // Checkouts spec §6.4: a derived name another package already holds is
-    // that package's scope, not this one's.
-    if (!here && scope === derived) {
+    // that package's scope, not this one's -- but only when the name was
+    // actually derived. When the files themselves reference exactly one
+    // non-global scope, `resolveProjectScope` used that (even if it happens
+    // to equal the derived name), and the files are the better witness: no
+    // collision to refuse.
+    const referencedScopes = new Set(
+      loaded
+        .flatMap((entry) => entries(entry.file))
+        .map((pair) => parseReference(pair.value))
+        .filter((ref): ref is SecretRef => ref !== null && ref.scope !== GLOBAL_SCOPE)
+        .map((ref) => ref.scope),
+    );
+    const wasDerived = referencedScopes.size !== 1;
+    if (!here && wasDerived && scope === derived) {
       const owner = checkScopeOwner(projects, scope, detected.root, detected.packageName);
       if (owner.kind === "different-package") {
-        fail(scopeCollisionMessage(scope, owner));
+        fail(scopeCollisionMessage(scope, owner, `Run ${cliName()} init --scope <name> here to give this package its own.`));
         return 2;
       }
     }

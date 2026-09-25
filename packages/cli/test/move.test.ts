@@ -364,8 +364,33 @@ test("a copy no checkout reads is deleted even with another checkout registered"
 test("a derived scope that belongs to a different package is refused before anything is asked", async () => {
   const root = makeProject({ ".env": "K=plain-value\n" });
   await withVault((v) => v.registerProject("app", "/somewhere/else/app", "@other/app"));
-  const { code, out } = await run(root, ["K", "--to", "project", "--yes"], null);
+  const throwsOnAnyQuestion: Prompter = {
+    select: async () => {
+      throw new Error("a question was asked");
+    },
+    multiselect: async () => {
+      throw new Error("a question was asked");
+    },
+    text: async () => {
+      throw new Error("a question was asked");
+    },
+  };
+  const { code, out } = await run(root, ["K"], throwsOnAnyQuestion);
   expect(code).toBe(2);
   expect(out).toContain('The scope "app" belongs to @other/app at /somewhere/else/app.');
+  expect(out).toContain("kerstel init --scope <name> here to give this package its own.");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=plain-value\n");
+  expect(await withVault((v) => v.listProjects())).toEqual([
+    expect.objectContaining({ name: "app", rootPath: "/somewhere/else/app" }),
+  ]);
+});
+
+test("a scope the files themselves reference is not a collision, even when another package's row shares its name", async () => {
+  const root = makeProject({ ".env": "K=kerstel://app/K\n" });
+  await withVault((v) => {
+    v.setSecret({ scope: "app", key: "K" }, SECRET);
+    v.registerProject("app", "/somewhere/else/app", "@other/app");
+  });
+  const { code } = await run(root, ["K", "--to", "plaintext", "--yes"], null);
+  expect(code).toBe(0);
 });

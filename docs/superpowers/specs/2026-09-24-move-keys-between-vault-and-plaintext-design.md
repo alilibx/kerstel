@@ -87,7 +87,7 @@ Whenever `init` finishes with keys still in plain text, or reports "Already migr
 
 ## 3. What a move does
 
-`<project>` is the project's scope name, as `init` registered it: the vault's project record whose root is this checkout (compared after resolving symlinks); without one, the single non-global scope the files reference; otherwise the name derived from `package.json`. A derived name that another package's checkout already holds is refused before the key menu, with exit `2` and the message `init` prints ([checkouts spec §6.2](2026-09-19-monorepo-and-checkouts-design.md)), so a move never quietly joins an unrelated package's scope.
+`<project>` is the project's scope name, as `init` registered it: the vault's project record whose root is this checkout (compared after resolving symlinks); without one, the single non-global scope the files reference; otherwise the name derived from `package.json`. A derived name that another package's checkout already holds is refused before the key menu, with exit `2` and a message naming the owning package and telling you to run `init --scope <name>` here to give this package its own ([checkouts spec §6.2](2026-09-19-monorepo-and-checkouts-design.md)), so a move never quietly joins an unrelated package's scope.
 
 | From → To | Env files | Vault |
 |---|---|---|

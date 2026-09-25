@@ -108,8 +108,17 @@ function describeOwner(owner: { packageName: string | null; root: string }): str
   return owner.packageName ? `${owner.packageName} at ${owner.root}` : `the package at ${owner.root}`;
 }
 
-export function scopeCollisionMessage(scope: string, owner: { packageName: string | null; root: string }): string {
-  return `The scope "${scope}" belongs to ${describeOwner(owner)}. Re-run with --scope <name> to give this package its own.`;
+/**
+ * `remedy` lets a caller other than `init` name its own way to give the
+ * package its own scope (`init` only takes `--scope` on the command line
+ * itself; `move` has no such flag and must point at `init --scope` instead).
+ */
+export function scopeCollisionMessage(
+  scope: string,
+  owner: { packageName: string | null; root: string },
+  remedy = "Re-run with --scope <name> to give this package its own.",
+): string {
+  return `The scope "${scope}" belongs to ${describeOwner(owner)}. ${remedy}`;
 }
 
 export function scopeShareMessage(scope: string, owner: { packageName: string | null; root: string }): string {
