@@ -53,9 +53,14 @@
 <h2 class="release-version"><a href="#0.1.5">0.1.5</a></h2>
 <span class="release-date release-unreleased">In development</span>
 </div>
+<details class="release-details">
+<summary><span class="release-count">1 change</span></summary>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
+<li>Two checkouts of one package, such as git worktrees, are now registered separately. Running <code>init</code> in the second no longer replaces the first, a value the vault already holds is reused rather than stored again, and <code>kerstel uninstall</code> restores both. <code>ks move</code> keeps a project copy while any registered checkout still reads it. If a different package already uses the scope <code>init</code> would derive, <code>init</code> stops and names that package instead of sharing its secrets by accident.</li>
+</ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.1.4">
 <span class="release-marker" aria-hidden="true"></span>

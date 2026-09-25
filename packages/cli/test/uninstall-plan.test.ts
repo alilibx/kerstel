@@ -393,6 +393,46 @@ test("the plan restores values in their original quoting", async () => {
   expect(env.after).toBe(QUOTING_CASES.join("\n") + "\n");
 });
 
+test("both checkouts of one package are restored", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_TOKEN" }, "tok-aaaa-1111");
+  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  v.registerProject("demo-app", main, "demo-app");
+  v.registerProject("demo-app", worktree, "demo-app");
+
+  const plan = planUninstall(v, dataKey);
+  const mainEnv = plan.files.find((f) => f.path === join(main, ".env"));
+  const worktreeEnv = plan.files.find((f) => f.path === join(worktree, ".env"));
+  expect(mainEnv).toBeDefined();
+  expect(worktreeEnv).toBeDefined();
+  expect(mainEnv!.label).toBe("demo-app: .env");
+  expect(worktreeEnv!.label).toBe("demo-app: .env");
+  expect(plan.restored).toEqual(
+    expect.arrayContaining([
+      { name: "demo-app", rootPath: main, envFiles: [".env"] },
+      { name: "demo-app", rootPath: worktree, envFiles: [".env"] },
+    ]) as unknown as typeof plan.restored,
+  );
+  expect(plan.unreachable).toEqual([]);
+});
+
+test("a checkout whose folder is gone is reported while the other is restored", async () => {
+  const v = await freshVault();
+  v.setSecret({ scope: "demo-app", key: "API_TOKEN" }, "tok-aaaa-1111");
+  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  v.registerProject("demo-app", main, "demo-app");
+  v.registerProject("demo-app", worktree, "demo-app");
+  rmSync(worktree, { recursive: true, force: true });
+
+  const plan = planUninstall(v, dataKey);
+  expect(plan.unreachable).toEqual([{ name: "demo-app", rootPath: worktree, reason: "the folder no longer exists" }]);
+  const mainEnv = plan.files.find((f) => f.path === join(main, ".env"));
+  expect(mainEnv).toBeDefined();
+  expect(mainEnv!.label).toBe("demo-app: .env");
+});
+
 test("the plan deletes Kerstel's launcher and leaves a foreign one, named", async () => {
   const v = await freshVault();
   const ours = project({ "package.json": WIRED, ".env": "PORT=3000\n" });

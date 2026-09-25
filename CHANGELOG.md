@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.5 (unreleased)
 
+### Fixed
+
+- Two checkouts of one package, such as git worktrees, are now registered separately. Running `init` in the second no longer replaces the first, a value the vault already holds is reused rather than stored again, and `kerstel uninstall` restores both. `ks move` keeps a project copy while any registered checkout still reads it. If a different package already uses the scope `init` would derive, `init` stops and names that package instead of sharing its secrets by accident.
+
 ## 0.1.4 (2026-09-25)
 
 ### Added
