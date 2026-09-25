@@ -87,7 +87,7 @@ Whenever `init` finishes with keys still in plain text, or reports "Already migr
 
 ## 3. What a move does
 
-`<project>` is the project's scope name, as `init` registered it: the vault's project record whose root is this checkout (compared after resolving symlinks); without one, the single non-global scope the files reference; otherwise the name derived from `package.json`.
+`<project>` is the project's scope name, as `init` registered it: the vault's project record whose root is this checkout (compared after resolving symlinks); without one, the single non-global scope the files reference; otherwise the name derived from `package.json`. A derived name that another package's checkout already holds is refused before the key menu, with exit `2` and the message `init` prints ([checkouts spec §6.2](2026-09-19-monorepo-and-checkouts-design.md)), so a move never quietly joins an unrelated package's scope.
 
 | From → To | Env files | Vault |
 |---|---|---|
@@ -104,15 +104,15 @@ If a key's reference differs between files (`.env` has `whasal/KEY`, `.env.local
 
 ### 3.1 Deleting the project copy
 
-A project-scope secret is deleted after the move only when, after the rewrite, no env file in this checkout still references it. Shared (`global`) secrets are never deleted by a move: other projects may use them, and Kerstel cannot see their files.
+A project-scope secret is deleted after the move only when, after the rewrite, no env file in this checkout still references it and no env file of any other registered checkout of the scope does either. Shared (`global`) secrets are never deleted by a move: other projects may use them, and Kerstel cannot see their files.
 
-"This checkout" is the only one Kerstel knows about until #13 tracks each checkout separately. If the vault's recorded root for the project is not the current directory, another checkout may still read the secret, so the copy is **kept**, and the preview says so:
+The vault registers every checkout by its folder ([checkouts spec §6](2026-09-19-monorepo-and-checkouts-design.md)). The other checkouts' env files are read the way `uninstall` reads them (`detectProject`, then `loadEnvFiles`) and never written. A checkout whose folder is gone, or whose files cannot be read, counts as referencing nothing. A copy another checkout still reads is **kept**, and the preview names that checkout:
 
 ```
-  kerstel://whasal/STRIPE_KEY is kept: whasal was set up in /Users/ali/src/whasal, which may still use it.
+  kerstel://whasal/STRIPE_KEY is kept: the checkout at /Users/ali/src/whasal still reads it.
 ```
 
-When the vault has no record of the project yet, there is no other checkout Kerstel knows of, and the copy is deleted if unused. The deleted value is saved in the backup taken before the rewrite (§5.1).
+The command collects these references into a map from reference to the first checkout root that reads it, and passes it to the planner, which stays pure. The deleted value is saved in the backup taken before the rewrite (§5.1).
 
 ### 3.2 A destination that already holds a value
 
@@ -129,7 +129,7 @@ Any move into the vault, to `global/KEY` or to `<project>/KEY`, first looks up t
 
   For `<project>`, the same question with `the vault's value; these files use it from now on` and `Replace it with the value being moved (anything else reading kerstel://whasal/STRIPE_KEY changes too)`.
 
-  Kerstel does not read other projects' or checkouts' files, so it cannot say who else reads the entry, and the prompt does not guess a count. The direct form refuses with the first sentence unless `--replace` is given. Either way, the value that loses is saved in the backup (§5.1).
+  Kerstel does not read other projects' files, so for `global` it cannot say who else reads the entry, and the prompt does not guess a count for either scope. The direct form refuses with the first sentence unless `--replace` is given. Either way, the value that loses is saved in the backup (§5.1).
 
 ### 3.3 What a move does not touch
 
@@ -186,7 +186,7 @@ Then, in order:
 2. **Vault writes:** `setSecret` for every destination value.
 3. **Env file rewrites,** each atomic: write the new bytes to a temp file in the same directory (`.<name>.kerstel-tmp`, mode copied from the original), `fsync`, then `renameSync` over the original. `init` writes env files with a plain `writeFileSync`, so this is a new helper, `writeFileAtomic` in `move/apply.ts`; a crash mid-write leaves either the old file or the new one, never half of each. A leftover temp file from a crash is removed on the next run.
 4. **Vault deletions:** `removeSecret` for each project copy §3.1 allows.
-5. **Project record:** `registerProject(scope, root)` only when the vault has no record for the scope. A record with a different root is left alone: overwriting it would make the next move in this checkout believe it is the only one, and §3.1 would delete copies the recorded checkout still reads.
+5. **Project record:** `registerProject(scope, root, packageName)` only when the vault has no record for this folder. Registration is keyed on the folder, so it never replaces another checkout's record.
 6. One `✓` line per key.
 
 **Rollback.** If step 2 or 3 fails, every vault entry step 2 touched goes back to its state from step 1: a replaced value is written back, a new entry is removed. Files already rewritten in step 3 are restored from the backup. Step 4 does not run. The command exits 1 naming what failed and the backup directory. A failure in step 4 or 5 leaves an extra vault entry or a missing record, which loses nothing, and is reported.

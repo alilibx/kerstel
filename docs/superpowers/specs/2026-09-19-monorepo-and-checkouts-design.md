@@ -1,6 +1,6 @@
 # Monorepos and checkouts
 
-**Status:** approved design, 2026-09-19. Extends §5 and §8 of the [product spec](2026-09-17-kerstel-secrets-manager-design.md).
+**Status:** approved design, 2026-09-19; §6 revised 2026-09-25 for `ks move` and an explicit `--scope`. Extends §5 and §8 of the [product spec](2026-09-17-kerstel-secrets-manager-design.md).
 **Release:** 0.2.0 ([#34](https://github.com/alilibx/kerstel/issues/34) monorepo support, [#13](https://github.com/alilibx/kerstel/issues/13) checkout tracking).
 **Related:** the [terminal UI spec](2026-09-19-terminal-ui-design.md). Its References screen and `kerstel refs` read the registration this spec changes.
 
@@ -73,42 +73,57 @@ CREATE TABLE projects (
 CREATE INDEX projects_name_idx ON projects(name);
 ```
 
-The migration copies every row with its `id`, so `secrets.project_id` and `audit_log.project_id` keep pointing where they did, and leaves `package_name` null for rows written before this version. A version-2 vault can hold two rows for one folder, from `init --scope a` and then `init --scope b` in the same place; the migration keeps the newest row per `root_path` and drops the rest. The dropped scope's secrets stay in the vault, since secrets are keyed by scope text, and `refs` lists them as referenced by no project if nothing else uses them.
+The migration runs in one transaction, like every migration. It copies every row with its `id`, so `secrets.project_id` and `audit_log.project_id` would keep pointing where they did (no code writes either column today), and leaves `package_name` null for rows written before this version. A version-2 vault can hold two rows for one folder, from `init --scope a` and then `init --scope b` in the same place; the migration keeps the newest row per `root_path` and drops the rest. The dropped scope's secrets stay in the vault, since secrets are keyed by scope text, and `refs` lists them as referenced by no project if nothing else uses them.
 
-`registerProject(scope, rootPath, packageName)` upserts on `root_path`. `listProjects()` returns every row; callers that want one entry per scope group the rows.
+`registerProject(scope, rootPath, packageName)` upserts on `root_path`: running `init` again in a folder updates that row's scope and `package_name`, and never touches another folder's row. `listProjects()` returns one row per checkout; callers that want one entry per scope group the rows.
+
+Two helpers in `packages/cli/src/vault/projects.ts` serve `init`, `ks move`, and `doctor`:
+
+- `projectForRoot(projects, root)`: the row for this folder, comparing roots after resolving symlinks, since a row may hold the symlinked form of the same folder.
+- `checkScopeOwner(projects, scope, root, packageName)`: the outcome of the table in §6.2, one of `new`, `same-checkout`, `another-checkout`, or `different-package` with that row's package name and root.
+
+The `projects` table is not encrypted, so `init --dry-run` reads it without the key, read-only, the way it already reads the names of stored secrets.
 
 ### 6.2 Recognising a checkout in `init`
 
-Before registering, `init` looks at the rows that already hold the derived scope.
+Before registering, `init` looks at the rows that already hold the scope, derived or given with `--scope`. The first line of the table that matches decides; a scope can hold several rows, and a row for this folder or for this package wins over a row for another package.
 
 | Rows with this scope | Outcome |
 | --- | --- |
 | None | Register. |
-| One whose `root_path` is this folder | Re-run on the same checkout. Register, which updates `package_name`. |
-| One whose package is this package | A second checkout. Register a new row. |
-| Otherwise | A different package with the same slug. Exit `2`: `The scope "api" belongs to @acme/api at /Users/ali/src/acme/apps/api. Re-run with --scope <name> to give this package its own.` In a workspace run the message names the colliding member and says to run `init --scope <name>` inside it; when the colliding package is the root itself, it says to re-run here at the root with `--scope <name>`, which §4 step 1 accepts. |
+| Any whose `root_path` is this folder | Re-run on the same checkout. Register, which updates `package_name`. |
+| Any whose package is this package | A second checkout. Register a new row. |
+| Otherwise, with a derived scope | A different package with the same slug. Exit `2`: `The scope "api" belongs to @acme/api at /Users/ali/src/acme/apps/api. Re-run with --scope <name> to give this package its own.` In a workspace run the message names the colliding member and says to run `init --scope <name>` inside it; when the colliding package is the root itself, it says to re-run here at the root with `--scope <name>`, which §4 step 1 accepts. |
+| Otherwise, with an explicit `--scope` | The user chose to share the scope. Register a new row, and print one info line before the teammate flow: `The scope "api" is also used by @acme/api at /Users/ali/src/acme/apps/api; this folder will share its secrets.` |
+
+The check runs after the scope is settled and before the teammate flow, and under `--dry-run` too. For a second checkout, the step line under the banner adds `Another checkout of api is at /Users/ali/src/api-main.`
 
 "The same package" means the row's `package_name` equals this package's `package.json` name. A row with a null `package_name`, written before this version, is compared by reading the `package.json` at its `root_path`; when that folder is gone the row counts as the same package only if this package has no name and the two basenames match, which is the old rule's best guess. A package with no name in either place matches by basename.
 
-### 6.3 A second checkout's values
+### 6.3 Values the vault already holds
 
-The second checkout has either references, plaintext, or a mix.
+The second checkout has either references, plaintext, or a mix. The rules below apply to any plaintext key whose entry already exists, not only in a second checkout: a value stored earlier with `ks set` is treated the same way, where `init` used to overwrite it without asking.
 
 - A reference the vault already holds resolves as it does for a teammate today, and nothing is stored twice.
-- A plaintext key whose value equals the vault's becomes a reference with no store and no prompt. The overview marks it `already in the vault`.
-- A plaintext key whose value differs is marked `differs from the vault` in the overview, and "Look right?" offers `keep the vault's value` (default) or `use this file's value`. Keeping rewrites the line to the reference, and the file's value survives only in the encrypted backup, exactly as a losing value does across env files today. Using it overwrites the vault's value, which from Next writes a `set` audit row.
+- For each plaintext key, `init` looks up `<scope>/KEY`, then `global/KEY`. The first entry found sets the key's destination, so a second checkout never creates a duplicate in the other scope.
+- A plaintext key whose value equals that entry's becomes a reference with no store and no prompt. The overview marks it `already in the vault`.
+- A plaintext key whose value differs is marked `differs from the vault` in the overview, and "Look right?" offers `keep the vault's value` (default) or `use this file's value`. `--yes` and `--non-interactive` keep the vault's value. Keeping rewrites the line to the reference, and the file's value survives only in the encrypted backup, exactly as a losing value does across env files today. Using it overwrites the vault's value, which from Next writes a `set` audit row.
+- `--keep` still wins: a key named there stays plaintext whatever the vault holds.
 
 ### 6.4 Every checkout, everywhere
 
 - **`uninstall`** already loops over every `projects` row, so it restores every checkout. A checkout whose folder is gone is reported as unreachable by its root, as today, and a secret counts as used when any checkout references it.
 - **`refs`** and the UI's References screen group rows by scope and list each checkout root under it.
-- **`doctor`** in a checkout is unchanged. At a workspace root it adds one line per registered package under that root, with the wired-script and reference counts `projectStatus` computes for a lone project.
+- **`ks move`** deletes a project copy only when no registered checkout of the scope still references it, reading the other checkouts' env files, and refuses a derived scope that belongs to a different package (the [move spec](2026-09-24-move-keys-between-vault-and-plaintext-design.md) §3 and §3.1). After a move it registers this folder when the folder has no row.
+- **`doctor`** in a checkout names the scope from this folder's row, falling back to the derived name, so a checkout set up with `--scope custom` is reported under that name. When the scope has other checkouts it adds one info line, `Also checked out at /Users/ali/src/api-main`. At a workspace root it adds one line per registered package under that root, with the wired-script and reference counts `projectStatus` computes for a lone project.
 
 ## 7. Documentation changes
 
 - `docs/cli.md`: the `kerstel init` row and flag table describe the root behaviour, the pick step, the shared-key rule, and the `--scope` refusal; the `--from-stdin` row describes the nested form. The `uninstall` row says every checkout is restored.
 - `docs/getting-started.md` gains a short "In a monorepo" section. The README's `init` sentence mentions workspaces.
 - The product spec §8 gets one paragraph pointing here.
+- `docs/cli.md`'s `ks move` row says a copy another checkout reads is kept.
+- The [move spec](2026-09-24-move-keys-between-vault-and-plaintext-design.md) §3.1 and §5 step 5 describe the per-checkout rules.
 - `CHANGELOG.md`: one `Added` line for monorepo `init`, one `Fixed` line for checkouts.
 
 ## 8. Testing
@@ -116,7 +131,9 @@ The second checkout has either references, plaintext, or a mix.
 - **Detection:** fixtures for the `workspaces` array, the object form, `pnpm-workspace.yaml` with plain and quoted entries, a negation glob, a member under `node_modules` that must be skipped, a member without env files that must be excluded, an unparsable YAML that must warn, and a root with env files of its own.
 - **`init` at a root** with the scripted prompter: all packages, a subset, an empty selection, `--yes`, `--dry-run` writing nothing, `--scope` renaming the root package when it is selected and refused when it is not, a root-package scope collision recovered by re-running at the root with `--scope`, a shared key suggested `global`, a shared key with differing values kept per package, a failure in the second package leaving the first applied, and the nested `--from-stdin` form.
 - **Migration:** a version-2 vault upgrades with every `id`, `name`, `root_path`, and `created_at` intact and `package_name` null; `secrets.project_id` still joins.
-- **Registration:** each row of the table in §6.2, including the null `package_name` cases.
-- **Second checkout:** equal values become references without a store, a differing value with each answer, references already in the vault.
+- **Registration:** each row of the table in §6.2, including the null `package_name` cases, the explicit `--scope` share, and the check under `--dry-run`.
+- **Second checkout:** equal values become references without a store, a differing value with each answer and with `--yes`, an existing `global` entry setting the destination, `--keep` overriding, references already in the vault.
+- **`ks move`:** a copy another checkout reads is kept and named, a copy no checkout reads is deleted, a checkout whose folder is gone counts as reading nothing, a colliding derived scope is refused.
+- **`doctor`** names the scope from this folder's row.
 - **`uninstall`** restores two checkouts of one package and reports a missing one.
 - No test prints a value, and every temp tree, vault, and home is removed.
