@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { launcherSource } from "../src/init/launcher";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -14,16 +14,20 @@ import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { collectKeys, loadEnvFiles } from "../src/init/collect";
 import { discoverEnvFiles } from "../src/init/detect";
+import { listBackups, readBackupVault } from "../src/init/backup";
+import { planUninstall } from "../src/uninstall/plan";
 import {
   CancelledError,
   DefaultsPrompter,
   ScriptedPrompter,
   type Choice,
+  type Prompter,
   type TextOptions,
 } from "../src/init/prompts";
 import { backupsDir, socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
+import { captureLog as captureConsoleLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 let handle: DaemonHandle | null = null;
@@ -1144,4 +1148,208 @@ test("init does not warn for a .gitignore that only negates or names something e
     console.log = original;
   }
   expect(captured.join("\n")).not.toContain(".gitignore hides");
+});
+
+const API_PACKAGE = (name: string) => `{\n  "name": "${name}",\n  "scripts": {\n    "dev": "vite"\n  }\n}\n`;
+
+test("a second checkout of the same package is registered beside the first", async () => {
+  isolateEnv({ prefix: "init-checkouts" });
+  await bootLocalDaemon();
+  const main = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const worktree = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=kerstel://api/API_TOKEN\n" });
+
+  expect(await runInit({ ...options(main), yes: true }, new DefaultsPrompter())).toBe(0);
+  const log = captureConsoleLog();
+  let code: number;
+  try {
+    code = await runInit({ ...options(worktree), yes: true }, new DefaultsPrompter());
+  } finally {
+    log.restore();
+  }
+  expect(code).toBe(0);
+  expect(log.text()).toContain("Another checkout of api is at");
+
+  await openTestVault((vault) => {
+    const rows = vault.listProjects().filter((p) => p.name === "api");
+    expect(rows.map((p) => p.rootPath).sort()).toEqual([realpathSync(main), realpathSync(worktree)].sort());
+    expect(rows.every((p) => p.packageName === "@acme/api")).toBe(true);
+    expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-aaaa-1111");
+  });
+});
+
+test("a different package whose name slugifies the same is refused, naming the owner", async () => {
+  isolateEnv({ prefix: "init-collision" });
+  await bootLocalDaemon();
+  const acme = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const other = makeProject({ "package.json": API_PACKAGE("@other/api"), ".env": "API_TOKEN=tok-bbbb-2222\n" });
+  expect(await runInit({ ...options(acme), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  for (const extra of [[], ["--dry-run"]]) {
+    const log = captureConsoleLog();
+    let code: number;
+    try {
+      code = await runInit({ ...options(other, extra), yes: true }, new DefaultsPrompter());
+    } finally {
+      log.restore();
+    }
+    expect(code).toBe(2);
+    expect(log.text()).toContain(`The scope "api" belongs to @acme/api at ${realpathSync(acme)}.`);
+    expect(log.text()).not.toContain("tok-bbbb-2222");
+  }
+  expect(readFileSync(join(other, ".env"), "utf8")).toBe("API_TOKEN=tok-bbbb-2222\n");
+});
+
+test("an explicit --scope shares a scope with another package, and says so", async () => {
+  isolateEnv({ prefix: "init-share" });
+  await bootLocalDaemon();
+  const acme = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const other = makeProject({ "package.json": API_PACKAGE("@other/api"), ".env": "OTHER_TOKEN=tok-cccc-3333\n" });
+  expect(await runInit({ ...options(acme), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  const log = captureConsoleLog();
+  let code: number;
+  try {
+    code = await runInit({ ...options(other, ["--scope", "api"]), yes: true }, new DefaultsPrompter());
+  } finally {
+    log.restore();
+  }
+  expect(code).toBe(0);
+  expect(log.text()).toContain(`The scope "api" is also used by @acme/api at ${realpathSync(acme)}`);
+  await openTestVault((vault) => {
+    expect(vault.listProjects().filter((p) => p.name === "api")).toHaveLength(2);
+  });
+});
+
+test("a re-run without --scope keeps the scope this folder was registered under", async () => {
+  isolateEnv({ prefix: "init-rerun-scope" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  expect(await runInit({ ...options(root, ["--scope", "custom"]), yes: true }, new DefaultsPrompter())).toBe(0);
+  writeFileSync(join(root, ".env"), "API_TOKEN=kerstel://custom/API_TOKEN\nNEW_TOKEN=tok-dddd-4444\n");
+  expect(await runInit({ ...options(root), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NEW_TOKEN=kerstel://custom/NEW_TOKEN");
+  await openTestVault((vault) => {
+    expect(vault.listProjects().map((p) => p.name)).toEqual(["custom"]);
+  });
+});
+
+async function initQuietly(root: string, args: string[], prompter: Prompter) {
+  const log = captureConsoleLog();
+  try {
+    return { code: await runInit(options(root, args), prompter), out: log.text() };
+  } finally {
+    log.restore();
+  }
+}
+
+test("a value the vault already holds becomes a reference without being stored again", async () => {
+  isolateEnv({ prefix: "init-same-value" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-aaaa-1111"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+
+  const { code, out } = await initQuietly(root, ["--yes"], new DefaultsPrompter());
+  expect(code).toBe(0);
+  expect(out).toContain("already in the vault");
+  expect(out).not.toContain("tok-aaaa-1111");
+  // Nothing was stored: the run only registered the folder.
+  expect(out).toContain("Registered api with the vault.");
+  expect(out).not.toMatch(/Stored \d+ secret/);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+});
+
+test("a differing value keeps the vault's by default, and the file's on request", async () => {
+  isolateEnv({ prefix: "init-differs" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+
+  const kept = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  const first = await initQuietly(kept, ["--yes"], new DefaultsPrompter());
+  expect(first.code).toBe(0);
+  expect(first.out).toContain("differs from the vault");
+  expect(first.out).not.toContain("tok-file-1111");
+  expect(first.out).not.toContain("tok-vault-0000");
+  expect(readFileSync(join(kept, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+  await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-vault-0000"));
+
+  const used = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-2222\n" });
+  const prompter = new ScriptedPrompter(["accept", "use", "apply"]);
+  expect((await initQuietly(used, [], prompter)).code).toBe(0);
+  expect(prompter.asked.some((q) => q.includes("already holds a different value"))).toBe(true);
+  await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-file-2222"));
+});
+
+test("a file value dropped for the vault's is saved in the backup, and uninstall names it", async () => {
+  isolateEnv({ prefix: "init-differs-kept-backup" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  expect((await initQuietly(root, ["--yes"], new DefaultsPrompter())).code).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const [timestamp] = listBackups("api");
+  const saved = readBackupVault("api", timestamp!, key);
+  expect(saved.map((entry) => `${entry.scope}/${entry.key}`)).toEqual(["api/API_TOKEN"]);
+  expect(saved[0]!.value === "tok-file-1111").toBe(true);
+
+  const plan = await openTestVault((vault) => planUninstall(vault, key));
+  expect(plan.backupOnly.map((entry) => [entry.project, entry.key, entry.files])).toEqual([
+    ["api", "API_TOKEN", ["vault.enc"]],
+  ]);
+  expect(JSON.stringify(plan)).not.toContain("tok-file-1111");
+});
+
+test("a vault value replaced by the file's is saved in the backup, and uninstall names it", async () => {
+  isolateEnv({ prefix: "init-differs-used-backup" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-2222\n" });
+  expect((await initQuietly(root, [], new ScriptedPrompter(["accept", "use", "apply"]))).code).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const [timestamp] = listBackups("api");
+  const saved = readBackupVault("api", timestamp!, key);
+  expect(saved.map((entry) => `${entry.scope}/${entry.key}`)).toEqual(["api/API_TOKEN"]);
+  expect(saved[0]!.value === "tok-vault-0000").toBe(true);
+
+  const plan = await openTestVault((vault) => planUninstall(vault, key));
+  expect(plan.backupOnly.map((entry) => [entry.project, entry.key, entry.files])).toEqual([
+    ["api", "API_TOKEN", ["vault.enc"]],
+  ]);
+  expect(JSON.stringify(plan)).not.toContain("tok-vault-0000");
+});
+
+test("an existing global entry sets the destination, and --keep still wins", async () => {
+  isolateEnv({ prefix: "init-global-entry" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "global", key: "SHARED_TOKEN" }, "tok-shared-5555"));
+  const root = makeProject({
+    "package.json": API_PACKAGE("@acme/api"),
+    ".env": "SHARED_TOKEN=tok-shared-5555\nKEPT_TOKEN=tok-kept-6666\n",
+  });
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "KEPT_TOKEN" }, "tok-other-7777"));
+
+  expect((await initQuietly(root, ["--yes", "--keep", "KEPT_TOKEN"], new DefaultsPrompter())).code).toBe(0);
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("SHARED_TOKEN=kerstel://global/SHARED_TOKEN");
+  expect(env).toContain("KEPT_TOKEN=tok-kept-6666");
+  await openTestVault((vault) => {
+    expect(vault.getSecret({ scope: "api", key: "SHARED_TOKEN" })).toBeNull();
+    expect(vault.getSecret({ scope: "api", key: "KEPT_TOKEN" })).toBe("tok-other-7777");
+  });
+});
+
+test("--dry-run marks a key the vault holds without comparing values", async () => {
+  isolateEnv({ prefix: "init-dry-entry" });
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  const { code, out } = await initQuietly(root, ["--dry-run", "--yes"], new DefaultsPrompter());
+  expect(code).toBe(0);
+  // The overview row's note is exactly "in the vault": "already in the vault" must not satisfy it.
+  const row = out.split("\n").find((line) => line.includes("API_TOKEN") && line.includes("in the vault"));
+  expect(row).toBeDefined();
+  expect(row).not.toContain("already in the vault");
+  expect(out).not.toContain("differs from the vault");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=tok-file-1111\n");
 });

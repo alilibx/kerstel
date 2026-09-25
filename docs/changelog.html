@@ -53,9 +53,17 @@
 <h2 class="release-version"><a href="#0.1.5">0.1.5</a></h2>
 <span class="release-date release-unreleased">In development</span>
 </div>
+<details class="release-details">
+<summary><span class="release-count">2 changes</span></summary>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
+<li>When a key&#39;s value in your <code>.env</code> differs from the one already in the vault, <code>kerstel init</code> now asks which one stays instead of overwriting the vault&#39;s. The vault&#39;s value stays by default and under <code>--yes</code>, and whichever value loses is kept in the encrypted backup, so <code>kerstel uninstall</code> names it before deleting the backups. A plain key already stored in this project&#39;s vault or in the vault shared by all your projects now points at that entry instead of being stored again.</li>
+</ul></section>
+<section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
+<li>Two checkouts of one package, such as git worktrees, are now registered separately. Running <code>init</code> in the second no longer replaces the first, a value the vault already holds is reused rather than stored again, and <code>kerstel uninstall</code> restores both. <code>ks move</code> keeps a project copy while any registered checkout still reads it. If a different package already uses the scope <code>init</code> would derive, <code>init</code> stops and names that package instead of sharing its secrets by accident.</li>
+</ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.1.4">
 <span class="release-marker" aria-hidden="true"></span>

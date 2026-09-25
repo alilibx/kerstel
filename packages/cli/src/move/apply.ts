@@ -80,7 +80,10 @@ export interface ApplyOptions {
   /** The project scope; backups live under it. */
   scope: string;
   root: string;
-  recordedRoot: string | null;
+  /** True when this folder already has a project row (move spec §5 step 5). */
+  registered: boolean;
+  /** This folder's package.json name, recorded with the row. */
+  packageName: string | null;
   /** Tests inject a failing writer here. */
   writeFile?: (path: string, contents: string) => void;
 }
@@ -226,11 +229,12 @@ export function applyMove(plan: MovePlan, options: ApplyOptions): ApplyResult {
     }
   }
 
-  // 5. Project record, only when there is none. Never overwrite another root.
+  // 5. Project record, only when this folder has none. Rows are keyed on the
+  // folder, so this never replaces another checkout's record.
   let registered = false;
-  if (options.recordedRoot === null) {
+  if (!options.registered) {
     try {
-      vault.registerProject(options.scope, options.root);
+      vault.registerProject(options.scope, options.root, options.packageName);
       registered = true;
     } catch (error) {
       problems.push(`Could not record ${options.scope} in the vault: ${(error as Error).message}`);

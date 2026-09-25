@@ -18,6 +18,7 @@ const passingProject: ProjectStatus = {
   unreadable: [],
   shadowed: [],
   launcher: null,
+  otherCheckouts: [],
 };
 
 test("Wrapper: a kerstel in node_modules/.bin is a problem, and absent otherwise", () => {
@@ -537,4 +538,15 @@ test("Version warn: a refused KERSTEL_RELEASES_URL is named, not reported as off
     detail: "0.1.0 (could not check for updates: KERSTEL_RELEASES_URL must be an https:// URL.)",
   });
   expect(exitCode(checks)).toBe(0);
+});
+
+test("Checkouts: named when other checkouts of the scope exist, absent otherwise", () => {
+  const checks = gatherChecks(allPassFacts({ project: { ...passingProject, otherCheckouts: ["/wt/api", "/b/api"] } }));
+  expect(checks.find((c) => c.label === "Checkouts")).toEqual({
+    group: "project",
+    status: "info",
+    label: "Checkouts",
+    detail: "Also checked out at /wt/api, /b/api",
+  });
+  expect(gatherChecks(allPassFacts()).some((c) => c.label === "Checkouts")).toBe(false);
 });

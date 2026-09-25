@@ -4,6 +4,14 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.5 (unreleased)
 
+### Changed
+
+- When a key's value in your `.env` differs from the one already in the vault, `kerstel init` now asks which one stays instead of overwriting the vault's. The vault's value stays by default and under `--yes`, and whichever value loses is kept in the encrypted backup, so `kerstel uninstall` names it before deleting the backups. A plain key already stored in this project's vault or in the vault shared by all your projects now points at that entry instead of being stored again.
+
+### Fixed
+
+- Two checkouts of one package, such as git worktrees, are now registered separately. Running `init` in the second no longer replaces the first, a value the vault already holds is reused rather than stored again, and `kerstel uninstall` restores both. `ks move` keeps a project copy while any registered checkout still reads it. If a different package already uses the scope `init` would derive, `init` stops and names that package instead of sharing its secrets by accident.
+
 ## 0.1.4 (2026-09-25)
 
 ### Added

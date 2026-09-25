@@ -8,6 +8,8 @@ import { findShadowedBinaries } from "./shadow";
 import { launcherStatus, type LauncherStatus } from "./launcher";
 import { scriptState, type ScriptSkipReason } from "./script-shell";
 import { EXEC_PREFIX, LEGACY_EXEC_PREFIX, wirePackageJson } from "./wiring";
+import { canonicalRoot, checkScopeOwner, projectForRoot } from "../vault/projects";
+import type { ProjectRecord } from "../vault/store";
 
 export interface ProjectStatus {
   root: string;
@@ -36,6 +38,8 @@ export interface ProjectStatus {
   unreadable: string[];
   /** `node_modules/.bin/kerstel` and friends in this project or an ancestor, absolute. See shadow.ts. */
   shadowed: string[];
+  /** Other registered checkouts of this scope, by root (checkouts spec §6.4). */
+  otherCheckouts: string[];
 }
 
 /**
@@ -74,17 +78,29 @@ function readEnvFiles(files: EnvFileInfo[]): { loaded: LoadedEnvFile[]; unreadab
  */
 export function projectStatus(
   root: string,
-  vault: { getSecret(ref: SecretRef): string | null },
+  vault: { getSecret(ref: SecretRef): string | null; listProjects?(): ProjectRecord[] },
 ): ProjectStatus | null {
   const detected = detectProject(root);
   if (!detected.packageJson) return null;
 
-  let scope: string | null;
-  try {
-    scope = deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
-  } catch {
-    scope = null;
+  // The scope `init` registered for this folder wins: a checkout set up with
+  // --scope custom is `custom`, which the package name cannot say.
+  const projects = vault.listProjects?.() ?? [];
+  const recorded = projectForRoot(projects, detected.root);
+  let scope: string | null = recorded?.name ?? null;
+  if (scope === null) {
+    try {
+      scope = deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
+    } catch {
+      scope = null;
+    }
   }
+  // Only rows for the same package are checkouts of this one: a different
+  // package sharing the scope on purpose (`init --scope`) is not.
+  const here = canonicalRoot(detected.root);
+  const elsewhere = projects.filter((p) => canonicalRoot(p.rootPath) !== here);
+  const owner = scope === null ? null : checkScopeOwner(elsewhere, scope, detected.root, detected.packageName);
+  const otherCheckouts = owner?.kind === "another-checkout" ? owner.roots : [];
 
   const packageSource = readFileSync(detected.packageJsonPath, "utf8");
   const wiring = wirePackageJson(packageSource);
@@ -121,5 +137,6 @@ export function projectStatus(
     references: { total, resolvable, unresolved },
     unreadable,
     shadowed: findShadowedBinaries(detected.root),
+    otherCheckouts,
   };
 }

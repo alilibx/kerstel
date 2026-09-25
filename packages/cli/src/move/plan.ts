@@ -14,9 +14,9 @@ import type { Place, ScannedRow } from "./scan";
 
 /**
  * Spec §3: what a move does, decided with no I/O. The command feeds it the
- * vault lookups, the recorded root and git's answers; `apply.ts` carries the
- * result out. Values live in the plan because apply and the backup need them;
- * nothing here prints.
+ * vault lookups, the other checkouts' references and git's answers; `apply.ts`
+ * carries the result out. Values live in the plan because apply and the
+ * backup need them; nothing here prints.
  */
 
 export interface MoveRequest {
@@ -35,8 +35,11 @@ export interface PlanInput {
   loaded: LoadedEnvFile[];
   requests: MoveRequest[];
   vaultValue: (ref: SecretRef) => string | null;
-  /** The vault's recorded root for `scope`, or null when it has no record. */
-  recordedRoot: string | null;
+  /**
+   * References the other registered checkouts of `scope` still read, by
+   * `refId`, each with the first checkout root that reads it (move spec §3.1).
+   */
+  otherCheckoutRefs: Map<string, string>;
   /** Keyed by the destination's `kerstel://` reference. */
   choices: Map<string, ConflictChoice>;
   gitStatus: (fileName: string) => GitFileStatus | null;
@@ -328,8 +331,8 @@ export function planMove(input: PlanInput): MovePlan {
     decided.add(id);
     if (stillReferenced.has(id)) {
       plan.kept.push({ ref: move.fromRef, reason: "referenced", root: null });
-    } else if (input.recordedRoot !== null && input.recordedRoot !== input.root) {
-      plan.kept.push({ ref: move.fromRef, reason: "other-checkout", root: input.recordedRoot });
+    } else if (input.otherCheckoutRefs.has(id)) {
+      plan.kept.push({ ref: move.fromRef, reason: "other-checkout", root: input.otherCheckoutRefs.get(id)! });
     } else {
       const value = input.vaultValue(move.fromRef);
       if (value !== null) plan.deletions.push({ ref: move.fromRef, value });

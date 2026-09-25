@@ -36,7 +36,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] Manage global and project secrets in the UI, with masked values and audited reveal ([#9](https://github.com/alilibx/kerstel/issues/9))
 - [ ] See which project files reference which keys, in the UI and with `kerstel refs` ([#10](https://github.com/alilibx/kerstel/issues/10))
 - [ ] `kerstel init` at a monorepo root sets up every package with `.env` files in one run ([#34](https://github.com/alilibx/kerstel/issues/34))
-- [ ] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall` ([#13](https://github.com/alilibx/kerstel/issues/13))
+- [x] Track each checkout of a project separately, so two copies of one package (such as git worktrees) both work and both restore on `uninstall` ([#13](https://github.com/alilibx/kerstel/issues/13))
 - [ ] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))
 - [ ] `kerstel scan`: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value ([#52](https://github.com/alilibx/kerstel/issues/52))
 

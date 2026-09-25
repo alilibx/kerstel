@@ -14,6 +14,8 @@ export interface OverviewRow {
    * see `valueColumn`.
    */
   showValue: boolean;
+  /** A short fact about the vault's copy (`already in the vault`, `differs from the vault`). Never a value. */
+  note?: string;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -84,7 +86,7 @@ export function renderOverview(rows: OverviewRow[], scope: string, fileNames: st
   }));
   const table = renderTable(
     ordered.flatMap(({ members }) =>
-      members.map((row) => [row.key, valueColumn(row.value, row.showValue), dim(row.source)]),
+      members.map((row) => [row.key, valueColumn(row.value, row.showValue), dim(row.source), row.note ? dim(row.note) : ""]),
     ),
     { indent: 2 },
   );

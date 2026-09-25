@@ -4,7 +4,7 @@ import { openContext } from "../context";
 import { cliCommand, isCompiledBinary } from "../daemon/spawn";
 import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
-import { createBackup } from "../init/backup";
+import { createBackup, type BackupVaultValue } from "../init/backup";
 import { detectProject, type DetectedProject } from "../init/detect";
 import { entries, parseDotenv, serializeDotenv, setValue, type UnsupportedValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
@@ -31,6 +31,14 @@ import { renderTable } from "../ui/table";
 import { theme } from "../ui/theme";
 import { VERSION } from "../version";
 import { readStoredReferences } from "../vault/meta";
+import {
+  canonicalRoot,
+  checkScopeOwner,
+  projectForRoot,
+  readProjectRows,
+  scopeCollisionMessage,
+  scopeShareMessage,
+} from "../vault/projects";
 import type { Vault } from "../vault/store";
 
 /**
@@ -225,6 +233,10 @@ interface Decision {
   reason: string;
   /** Decided by `--keep` / `--global`: shown, never offered for change. */
   fixed: boolean;
+  /** Checkouts spec §6.3: how the vault's entry at the final target compares. Null: no entry. */
+  vaultEntry: "same" | "differs" | "unknown" | null;
+  /** True when the vault's value stays and nothing is stored for this key. */
+  keepVault: boolean;
 }
 
 /**
@@ -249,8 +261,20 @@ function destinationLabel(target: Suggestion, scope: string): string {
 }
 
 /**
+ * What `decideTargets` may ask the vault. `has` works in a dry run (names
+ * only); `value` is null there, since the dry run never opens the vault.
+ */
+interface VaultLookup {
+  has(ref: SecretRef): boolean;
+  value(ref: SecretRef): string | null;
+  canCompare: boolean;
+}
+
+/**
  * Spec §5.1 steps 2 and 3: every variable at once, grouped by where it would
- * go, then "Look right?" until the answer is yes.
+ * go, then "Look right?" until the answer is yes. Checkouts spec §6.3: a key
+ * the vault already holds goes where that entry is, and the overview says how
+ * the file's value compares with it.
  */
 async function decideTargets(
   keys: CollectedKey[],
@@ -258,15 +282,41 @@ async function decideTargets(
   fileNames: string[],
   options: InitOptions,
   prompter: Prompter,
+  vault: VaultLookup,
 ): Promise<Decision[]> {
+  const existingTarget = (key: string): Suggestion | null =>
+    vault.has({ scope, key }) ? "project" : vault.has({ scope: GLOBAL_SCOPE, key }) ? "global" : null;
   const decisions: Decision[] = keys.map((key) => {
     const { suggestion, reason } = explain(key.key, key.value);
-    if (options.keepKeys.has(key.key)) return { key, target: "plaintext", suggestion, reason, fixed: true };
-    if (options.globalKeys.has(key.key)) return { key, target: "global", suggestion, reason, fixed: true };
-    return { key, target: suggestion, suggestion, reason, fixed: false };
+    const base = { key, suggestion, vaultEntry: null, keepVault: false };
+    if (options.keepKeys.has(key.key)) return { ...base, target: "plaintext", reason, fixed: true };
+    if (options.globalKeys.has(key.key)) return { ...base, target: "global", reason, fixed: true };
+    const existing = existingTarget(key.key);
+    if (existing) return { ...base, target: existing, reason: "in the vault", fixed: false };
+    return { ...base, target: suggestion, reason, fixed: false };
   });
 
-  const showOverview = (title: string): void =>
+  const compare = (d: Decision): void => {
+    if (d.target === "plaintext") {
+      d.vaultEntry = null;
+      return;
+    }
+    const ref = { scope: d.target === "global" ? GLOBAL_SCOPE : scope, key: d.key.key };
+    if (!vault.has(ref)) d.vaultEntry = null;
+    else if (!vault.canCompare) d.vaultEntry = "unknown";
+    else d.vaultEntry = vault.value(ref) === d.key.value ? "same" : "differs";
+  };
+  const noteFor = (d: Decision): string | undefined =>
+    d.vaultEntry === "same"
+      ? "already in the vault"
+      : d.vaultEntry === "differs"
+        ? "differs from the vault"
+        : d.vaultEntry === "unknown"
+          ? "in the vault"
+          : undefined;
+
+  const showOverview = (title: string): void => {
+    decisions.forEach(compare);
     step(
       title,
       renderOverview(
@@ -277,18 +327,20 @@ async function decideTargets(
           conflicts: d.key.conflicts,
           target: d.target,
           showValue: showValue(d),
+          note: noteFor(d),
         })),
         scope,
         fileNames,
       ),
     );
+  };
 
   showOverview(
     `Found ${decisions.length === 1 ? "1 variable" : `${decisions.length} variables`}. Here's where I'd put them:`,
   );
 
   const open = decisions.filter((d) => !d.fixed);
-  if (open.length === 0) return decisions;
+  if (open.length === 0) return askVaultConflicts(decisions, scope, prompter);
 
   for (;;) {
     const answer = await prompter.select(
@@ -300,7 +352,7 @@ async function decideTargets(
       ],
       "accept",
     );
-    if (answer === "accept") return decisions;
+    if (answer === "accept") return askVaultConflicts(decisions, scope, prompter);
 
     if (answer === "change") {
       const picked = await prompter.multiselect(
@@ -333,6 +385,25 @@ async function decideTargets(
 
     showOverview("Here's where they'll go now:");
   }
+}
+
+/** Checkouts spec §6.3: one question per key whose file value differs from the vault's. */
+async function askVaultConflicts(decisions: Decision[], scope: string, prompter: Prompter): Promise<Decision[]> {
+  for (const d of decisions) {
+    if (d.vaultEntry === "same") d.keepVault = true;
+    if (d.vaultEntry !== "differs") continue;
+    const reference = formatReference(d.target === "global" ? GLOBAL_SCOPE : scope, d.key.key);
+    const answer = await prompter.select(
+      `${d.key.key}: ${reference} already holds a different value. Which one stays?`,
+      [
+        { value: "keep", label: "Keep the vault's value" },
+        { value: "use", label: "Use this file's value" },
+      ],
+      "keep",
+    );
+    d.keepVault = answer === "keep";
+  }
+  return decisions;
 }
 
 interface FileChange {
@@ -653,10 +724,18 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     return 1;
   }
 
-  const scope = options.scope ?? deriveScope({
-    packageName: detected.packageName,
-    rootPath: detected.root,
-  }).scope;
+  // Checkouts spec §6.2. The projects table is readable without the key, so
+  // this runs under --dry-run too, before anything is shown or written.
+  const projects = readProjectRows(vaultPath());
+  const scope =
+    options.scope ??
+    projectForRoot(projects, detected.root)?.name ??
+    deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
+  const owner = checkScopeOwner(projects, scope, detected.root, detected.packageName);
+  if (owner.kind === "different-package" && options.scope === undefined) {
+    fail(scopeCollisionMessage(scope, owner));
+    return 2;
+  }
 
   const fileNames = detected.envFiles.map((file) => file.name);
   step(
@@ -664,6 +743,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       .concat(fileNames.length > 0 ? [fileNames.join(", ")] : [])
       .join(" · "),
   );
+  if (owner.kind === "another-checkout") info(`Another checkout of ${scope} is at ${owner.roots.join(", ")}.`);
+  if (owner.kind === "different-package") info(scopeShareMessage(scope, owner));
 
   // Before the empty check: a project whose only .env is a broken symlink has
   // an env file, and "no .env files here" would be the wrong thing to say.
@@ -757,7 +838,12 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     }
 
     // --- Overview and "Look right?" -----------------------------------------
-    const decisions = plain.length > 0 ? await decideTargets(plain, scope, fileNames, options, prompter) : [];
+    const lookup: VaultLookup = {
+      has: inVault,
+      value: (ref) => (ctx ? ctx.vault.getSecret(ref) : null),
+      canCompare: ctx !== null,
+    };
+    const decisions = plain.length > 0 ? await decideTargets(plain, scope, fileNames, options, prompter, lookup) : [];
 
     const references = new Map<string, string>();
     for (const decision of decisions) {
@@ -814,7 +900,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       // Values a teammate just typed are the whole point of this run, and there
       // is no plan to approve, so the typing was the approval.
       if (ctx) {
-        ctx.vault.registerProject(scope, detected.root);
+        ctx.vault.registerProject(scope, canonicalRoot(detected.root), detected.packageName);
         storeSupplied(ctx.vault, supplied);
         for (const { ref } of supplied) ok(`Stored ${formatReference(ref.scope, ref.key)}`);
       }
@@ -928,15 +1014,27 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         // credential store, as this once did, was a second subprocess pipe
         // carrying the key and, on Linux, a second chance for a failing bus to
         // read as "no key stored" (see CliContext.dataKey).
+        // Checkouts spec §6.3: whichever value loses a keep/use question is
+        // saved in the backup's vault section (move spec §5.1), so uninstall
+        // names it rather than deleting its only copy unseen.
+        const losers: BackupVaultValue[] = [];
+        for (const decision of decisions) {
+          if (decision.vaultEntry !== "differs") continue;
+          const ref = { scope: decision.target === "global" ? GLOBAL_SCOPE : scope, key: decision.key.key };
+          const value = decision.keepVault ? decision.key.value : vault.getSecret(ref);
+          if (value !== null) losers.push({ ...ref, value });
+        }
         return createBackup({
           scope,
           dataKey: ctx!.dataKey,
           files: loaded.map((entry) => ({ name: entry.info.name, contents: entry.original })),
+          vault: losers,
         });
       },
     );
 
-    const toStore = decisions.filter((decision) => decision.target !== "plaintext");
+    // Checkouts spec §6.3: a key whose vault value stays becomes a reference but is not stored.
+    const toStore = decisions.filter((decision) => decision.target !== "plaintext" && !decision.keepVault);
     const storedCount = supplied.length + toStore.length;
     await withSpinner(
       "Storing values in the vault",
@@ -944,7 +1042,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         ? `Stored ${storedCount} secret${storedCount === 1 ? "" : "s"} in the vault.`
         : `Registered ${scope} with the vault.`,
       async () => {
-        vault.registerProject(scope, detected.root);
+        vault.registerProject(scope, canonicalRoot(detected.root), detected.packageName);
         storeSupplied(vault, supplied);
         for (const decision of toStore) {
           vault.setSecret(
@@ -995,7 +1093,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     }
 
     // --- Self-check ---------------------------------------------------------------
-    const probeDecision = toStore[0];
+    // Any vault-bound key will do, stored now or kept: `expected` is read from the vault.
+    const probeDecision = decisions.find((decision) => decision.target !== "plaintext");
     if (probeDecision) {
       const probeScope = probeDecision.target === "global" ? GLOBAL_SCOPE : scope;
       const expected = vault.getSecret({ scope: probeScope, key: probeDecision.key.key });

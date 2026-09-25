@@ -1,17 +1,19 @@
-import { existsSync, realpathSync } from "node:fs";
 import { openContext } from "../context";
 import { DESTINATION_CHOICES, isSafeToDisplay } from "../init/classify";
 import { loadEnvFiles } from "../init/collect";
 import { detectProject } from "../init/detect";
+import { entries } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import { CancelledError, ClackPrompter, type Choice, type Prompter } from "../init/prompts";
 import { MoveApplyError, MoveStaleFileError, applyMove, removeStaleTemps } from "../move/apply";
+import { referencesInCheckouts } from "../move/checkouts";
 import { gitFileStatus } from "../move/git";
 import { planMove, refId, type ConflictChoice, type MovePlan, type MoveRequest } from "../move/plan";
 import { PLACE_LABELS, resolveProjectScope, scanRows, type Place, type ScannedRow } from "../move/scan";
-import { GLOBAL_SCOPE } from "../reference";
+import { GLOBAL_SCOPE, parseReference, type SecretRef } from "../reference";
 import { dim, fail, info, ok, yellow } from "../output";
 import { cliName } from "../ui/cli-name";
+import { canonicalRoot, checkScopeOwner, projectForRoot, scopeCollisionMessage } from "../vault/projects";
 
 /** Spec: docs/superpowers/specs/2026-09-24-move-keys-between-vault-and-plaintext-design.md */
 
@@ -45,11 +47,6 @@ export function parseMoveArgs(args: string[], cwd: string): MoveOptions | { erro
   }
   if (options.to !== null && options.keys.length === 0) return { error: "--to needs the keys to move." };
   return options;
-}
-
-/** realpathSync, but a root another checkout recorded may no longer exist on disk. */
-function safeRealpath(path: string): string {
-  return existsSync(path) ? realpathSync(path) : path;
 }
 
 function noTerminalMessage(): string {
@@ -96,7 +93,7 @@ export function renderPreview(plan: MovePlan, scope: string): string[] {
       lines.push(
         k.reason === "referenced"
           ? `    ${refId(k.ref)} is kept: another file here still uses it.`
-          : `    ${refId(k.ref)} is kept: ${k.ref.scope} was set up in ${k.root}, which may still use it.`,
+          : `    ${refId(k.ref)} is kept: the checkout at ${k.root} still reads it.`,
       );
     }
   }
@@ -140,13 +137,15 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     return 2;
   }
 
-  // realpathSync: on macOS the working directory (and the test runner's own
+  // canonicalRoot: on macOS the working directory (and the test runner's own
   // tmpdir) is reached through a symlink (/tmp -> /private/tmp, and likewise
-  // for /var/folders). A bare string compare against the vault's recorded
-  // root -- itself resolved the same way when it was registered -- would
-  // false-negative "another checkout" for the SAME checkout reached through
-  // the link. Same fix as uninstall.ts's removeLinks, and for the same reason.
-  const detected = detectProject(safeRealpath(options.cwd));
+  // for /var/folders). A bare string compare against a registered checkout's
+  // root -- itself canonicalized the same way when it was registered -- would
+  // false-negative "this folder" or "another checkout" for a checkout reached
+  // through the link. Same fix as uninstall.ts's removeLinks, and for the
+  // same reason; every root compared below (this folder's, and every other
+  // registered checkout's) goes through the same normalization.
+  const detected = detectProject(canonicalRoot(options.cwd));
   removeStaleTemps(detected.root);
   if (detected.envFiles.length === 0) {
     // Spec §2.2: a named key the scan can't find is reported and skipped, per
@@ -167,9 +166,31 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     // The scope `init` registered for this root is the best witness: with
     // only plain values in the files, the files cannot say it was `--scope
     // custom`. Without a record, the files' own references, then the name.
-    const scope =
-      vault.listProjects().find((p) => safeRealpath(p.rootPath) === detected.root)?.name ??
-      resolveProjectScope(loaded, deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope);
+    const projects = vault.listProjects();
+    const here = projectForRoot(projects, detected.root);
+    const derived = deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
+    const scope = here?.name ?? resolveProjectScope(loaded, derived);
+    // Checkouts spec §6.4: a derived name another package already holds is
+    // that package's scope, not this one's -- but only when the name was
+    // actually derived. When the files themselves reference exactly one
+    // non-global scope, `resolveProjectScope` used that (even if it happens
+    // to equal the derived name), and the files are the better witness: no
+    // collision to refuse.
+    const referencedScopes = new Set(
+      loaded
+        .flatMap((entry) => entries(entry.file))
+        .map((pair) => parseReference(pair.value))
+        .filter((ref): ref is SecretRef => ref !== null && ref.scope !== GLOBAL_SCOPE)
+        .map((ref) => ref.scope),
+    );
+    const wasDerived = referencedScopes.size !== 1;
+    if (!here && wasDerived && scope === derived) {
+      const owner = checkScopeOwner(projects, scope, detected.root, detected.packageName);
+      if (owner.kind === "different-package") {
+        fail(scopeCollisionMessage(scope, owner, `Run ${cliName()} init --scope <name> here to give this package its own.`));
+        return 2;
+      }
+    }
     const { rows, foreign } = scanRows(loaded, scope);
     for (const f of foreign) {
       info(`${f.key} in ${f.files.join(", ")} reads ${f.reference}, another project's scope; it is not offered.`);
@@ -247,11 +268,12 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     }
 
     // --- Plan, and answer conflicts --------------------------------------------
-    const storedRoot = vault.listProjects().find((p) => p.name === scope)?.rootPath ?? null;
-    // Same realpath normalization as `detected.root` above, so a root
-    // recorded through the symlinked form of this same directory still
-    // compares equal.
-    const recordedRoot = storedRoot === null ? null : safeRealpath(storedRoot);
+    // Move spec §3.1: a copy another registered checkout of this scope still
+    // reads is kept. Their env files are read, never written.
+    const otherRoots = projects
+      .filter((p) => p.name === scope && canonicalRoot(p.rootPath) !== detected.root)
+      .map((p) => p.rootPath);
+    const otherCheckoutRefs = referencesInCheckouts(otherRoots);
     const choices = new Map<string, ConflictChoice>();
     const makePlan = () =>
       planMove({
@@ -260,7 +282,7 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
         loaded,
         requests,
         vaultValue: (ref) => vault.getSecret(ref),
-        recordedRoot,
+        otherCheckoutRefs,
         choices,
         gitStatus: (name) => gitFileStatus(detected.root, name),
       });
@@ -326,7 +348,14 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     // --- Apply -------------------------------------------------------------------------
     let result: ReturnType<typeof applyMove>;
     try {
-      result = applyMove(plan, { vault, dataKey: ctx.dataKey, scope, root: detected.root, recordedRoot });
+      result = applyMove(plan, {
+        vault,
+        dataKey: ctx.dataKey,
+        scope,
+        root: detected.root,
+        registered: here !== null,
+        packageName: detected.packageName,
+      });
     } catch (error) {
       if (error instanceof MoveApplyError || error instanceof MoveStaleFileError) {
         fail(error.message);

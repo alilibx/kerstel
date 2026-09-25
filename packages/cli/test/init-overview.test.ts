@@ -106,3 +106,17 @@ test("a shown value loses bidi and zero-width characters, which can reorder or h
   // The masked column never rendered the value, and its length counts every code unit.
   expect(valueColumn("abc\u202edef", false)).toBe("•••• 7 chars");
 });
+
+test("a row's note is shown after its source", () => {
+  const lines = renderOverview(
+    [
+      { key: "API_TOKEN", value: "x".repeat(12), source: ".env", conflicts: [], target: "project", showValue: false, note: "already in the vault" },
+      { key: "DB_URL", value: "y".repeat(20), source: ".env", conflicts: [], target: "project", showValue: false },
+    ],
+    "api",
+    [".env"],
+  );
+  const text = lines.join("\n");
+  expect(text).toContain("already in the vault");
+  expect(text).not.toContain("x".repeat(12));
+});
