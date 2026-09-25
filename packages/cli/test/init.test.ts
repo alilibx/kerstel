@@ -14,6 +14,8 @@ import { startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { ensureToken } from "../src/daemon/token";
 import { collectKeys, loadEnvFiles } from "../src/init/collect";
 import { discoverEnvFiles } from "../src/init/detect";
+import { listBackups, readBackupVault } from "../src/init/backup";
+import { planUninstall } from "../src/uninstall/plan";
 import {
   CancelledError,
   DefaultsPrompter,
@@ -1273,6 +1275,46 @@ test("a differing value keeps the vault's by default, and the file's on request"
   expect((await initQuietly(used, [], prompter)).code).toBe(0);
   expect(prompter.asked.some((q) => q.includes("already holds a different value"))).toBe(true);
   await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-file-2222"));
+});
+
+test("a file value dropped for the vault's is saved in the backup, and uninstall names it", async () => {
+  isolateEnv({ prefix: "init-differs-kept-backup" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-1111\n" });
+  expect((await initQuietly(root, ["--yes"], new DefaultsPrompter())).code).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const [timestamp] = listBackups("api");
+  const saved = readBackupVault("api", timestamp!, key);
+  expect(saved.map((entry) => `${entry.scope}/${entry.key}`)).toEqual(["api/API_TOKEN"]);
+  expect(saved[0]!.value === "tok-file-1111").toBe(true);
+
+  const plan = await openTestVault((vault) => planUninstall(vault, key));
+  expect(plan.backupOnly.map((entry) => [entry.project, entry.key, entry.files])).toEqual([
+    ["api", "API_TOKEN", ["vault.enc"]],
+  ]);
+  expect(JSON.stringify(plan)).not.toContain("tok-file-1111");
+});
+
+test("a vault value replaced by the file's is saved in the backup, and uninstall names it", async () => {
+  isolateEnv({ prefix: "init-differs-used-backup" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "api", key: "API_TOKEN" }, "tok-vault-0000"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-2222\n" });
+  expect((await initQuietly(root, [], new ScriptedPrompter(["accept", "use", "apply"]))).code).toBe(0);
+
+  const { key } = await loadOrCreateDataKey();
+  const [timestamp] = listBackups("api");
+  const saved = readBackupVault("api", timestamp!, key);
+  expect(saved.map((entry) => `${entry.scope}/${entry.key}`)).toEqual(["api/API_TOKEN"]);
+  expect(saved[0]!.value === "tok-vault-0000").toBe(true);
+
+  const plan = await openTestVault((vault) => planUninstall(vault, key));
+  expect(plan.backupOnly.map((entry) => [entry.project, entry.key, entry.files])).toEqual([
+    ["api", "API_TOKEN", ["vault.enc"]],
+  ]);
+  expect(JSON.stringify(plan)).not.toContain("tok-vault-0000");
 });
 
 test("an existing global entry sets the destination, and --keep still wins", async () => {

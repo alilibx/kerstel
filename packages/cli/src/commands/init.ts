@@ -4,7 +4,7 @@ import { openContext } from "../context";
 import { cliCommand, isCompiledBinary } from "../daemon/spawn";
 import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
-import { createBackup } from "../init/backup";
+import { createBackup, type BackupVaultValue } from "../init/backup";
 import { detectProject, type DetectedProject } from "../init/detect";
 import { entries, parseDotenv, serializeDotenv, setValue, type UnsupportedValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
@@ -1014,10 +1014,21 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         // credential store, as this once did, was a second subprocess pipe
         // carrying the key and, on Linux, a second chance for a failing bus to
         // read as "no key stored" (see CliContext.dataKey).
+        // Checkouts spec §6.3: whichever value loses a keep/use question is
+        // saved in the backup's vault section (move spec §5.1), so uninstall
+        // names it rather than deleting its only copy unseen.
+        const losers: BackupVaultValue[] = [];
+        for (const decision of decisions) {
+          if (decision.vaultEntry !== "differs") continue;
+          const ref = { scope: decision.target === "global" ? GLOBAL_SCOPE : scope, key: decision.key.key };
+          const value = decision.keepVault ? decision.key.value : vault.getSecret(ref);
+          if (value !== null) losers.push({ ...ref, value });
+        }
         return createBackup({
           scope,
           dataKey: ctx!.dataKey,
           files: loaded.map((entry) => ({ name: entry.info.name, contents: entry.original })),
+          vault: losers,
         });
       },
     );
