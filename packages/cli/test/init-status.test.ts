@@ -242,3 +242,17 @@ test("projectStatus takes the scope from this folder's row and lists the other c
   expect(projectStatus(root, emptyVault)?.scope).toBe("api");
   expect(projectStatus(root, emptyVault)?.otherCheckouts).toEqual([]);
 });
+
+test("projectStatus does not call a different package sharing the scope another checkout", () => {
+  const root = makeProject({ "package.json": '{ "name": "@acme/api" }\n' });
+  const rows = [
+    { name: "api", rootPath: root, packageName: "@acme/api", createdAt: 1 },
+    { name: "api", rootPath: "/other/api", packageName: "@other/api", createdAt: 2 },
+    { name: "api", rootPath: "/wt/api", packageName: "@acme/api", createdAt: 3 },
+  ];
+  const status = projectStatus(root, { getSecret: () => null, listProjects: () => rows });
+  expect(status?.otherCheckouts).toEqual(["/wt/api"]);
+
+  const sharedOnly = rows.filter((row) => row.rootPath !== "/wt/api");
+  expect(projectStatus(root, { getSecret: () => null, listProjects: () => sharedOnly })?.otherCheckouts).toEqual([]);
+});

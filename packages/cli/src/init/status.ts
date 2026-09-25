@@ -8,7 +8,7 @@ import { findShadowedBinaries } from "./shadow";
 import { launcherStatus, type LauncherStatus } from "./launcher";
 import { scriptState, type ScriptSkipReason } from "./script-shell";
 import { EXEC_PREFIX, LEGACY_EXEC_PREFIX, wirePackageJson } from "./wiring";
-import { canonicalRoot, projectForRoot } from "../vault/projects";
+import { canonicalRoot, checkScopeOwner, projectForRoot } from "../vault/projects";
 import type { ProjectRecord } from "../vault/store";
 
 export interface ProjectStatus {
@@ -95,9 +95,12 @@ export function projectStatus(
       scope = null;
     }
   }
+  // Only rows for the same package are checkouts of this one: a different
+  // package sharing the scope on purpose (`init --scope`) is not.
   const here = canonicalRoot(detected.root);
-  const otherCheckouts =
-    scope === null ? [] : projects.filter((p) => p.name === scope && canonicalRoot(p.rootPath) !== here).map((p) => p.rootPath);
+  const elsewhere = projects.filter((p) => canonicalRoot(p.rootPath) !== here);
+  const owner = scope === null ? null : checkScopeOwner(elsewhere, scope, detected.root, detected.packageName);
+  const otherCheckouts = owner?.kind === "another-checkout" ? owner.roots : [];
 
   const packageSource = readFileSync(detected.packageJsonPath, "utf8");
   const wiring = wirePackageJson(packageSource);
