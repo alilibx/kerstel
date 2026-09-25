@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { launcherSource } from "../src/init/launcher";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -24,6 +24,7 @@ import {
 import { backupsDir, socketPath } from "../src/paths";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
+import { captureLog as captureConsoleLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
 let handle: DaemonHandle | null = null;
@@ -1144,4 +1145,88 @@ test("init does not warn for a .gitignore that only negates or names something e
     console.log = original;
   }
   expect(captured.join("\n")).not.toContain(".gitignore hides");
+});
+
+const API_PACKAGE = (name: string) => `{\n  "name": "${name}",\n  "scripts": {\n    "dev": "vite"\n  }\n}\n`;
+
+test("a second checkout of the same package is registered beside the first", async () => {
+  isolateEnv({ prefix: "init-checkouts" });
+  await bootLocalDaemon();
+  const main = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const worktree = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=kerstel://api/API_TOKEN\n" });
+
+  expect(await runInit({ ...options(main), yes: true }, new DefaultsPrompter())).toBe(0);
+  const log = captureConsoleLog();
+  let code: number;
+  try {
+    code = await runInit({ ...options(worktree), yes: true }, new DefaultsPrompter());
+  } finally {
+    log.restore();
+  }
+  expect(code).toBe(0);
+  expect(log.text()).toContain("Another checkout of api is at");
+
+  await openTestVault((vault) => {
+    const rows = vault.listProjects().filter((p) => p.name === "api");
+    expect(rows.map((p) => p.rootPath).sort()).toEqual([realpathSync(main), realpathSync(worktree)].sort());
+    expect(rows.every((p) => p.packageName === "@acme/api")).toBe(true);
+    expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-aaaa-1111");
+  });
+});
+
+test("a different package whose name slugifies the same is refused, naming the owner", async () => {
+  isolateEnv({ prefix: "init-collision" });
+  await bootLocalDaemon();
+  const acme = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const other = makeProject({ "package.json": API_PACKAGE("@other/api"), ".env": "API_TOKEN=tok-bbbb-2222\n" });
+  expect(await runInit({ ...options(acme), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  for (const extra of [[], ["--dry-run"]]) {
+    const log = captureConsoleLog();
+    let code: number;
+    try {
+      code = await runInit({ ...options(other, extra), yes: true }, new DefaultsPrompter());
+    } finally {
+      log.restore();
+    }
+    expect(code).toBe(2);
+    expect(log.text()).toContain(`The scope "api" belongs to @acme/api at ${realpathSync(acme)}.`);
+    expect(log.text()).not.toContain("tok-bbbb-2222");
+  }
+  expect(readFileSync(join(other, ".env"), "utf8")).toBe("API_TOKEN=tok-bbbb-2222\n");
+});
+
+test("an explicit --scope shares a scope with another package, and says so", async () => {
+  isolateEnv({ prefix: "init-share" });
+  await bootLocalDaemon();
+  const acme = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  const other = makeProject({ "package.json": API_PACKAGE("@other/api"), ".env": "OTHER_TOKEN=tok-cccc-3333\n" });
+  expect(await runInit({ ...options(acme), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  const log = captureConsoleLog();
+  let code: number;
+  try {
+    code = await runInit({ ...options(other, ["--scope", "api"]), yes: true }, new DefaultsPrompter());
+  } finally {
+    log.restore();
+  }
+  expect(code).toBe(0);
+  expect(log.text()).toContain(`The scope "api" is also used by @acme/api at ${realpathSync(acme)}`);
+  await openTestVault((vault) => {
+    expect(vault.listProjects().filter((p) => p.name === "api")).toHaveLength(2);
+  });
+});
+
+test("a re-run without --scope keeps the scope this folder was registered under", async () => {
+  isolateEnv({ prefix: "init-rerun-scope" });
+  await bootLocalDaemon();
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
+  expect(await runInit({ ...options(root, ["--scope", "custom"]), yes: true }, new DefaultsPrompter())).toBe(0);
+  writeFileSync(join(root, ".env"), "API_TOKEN=kerstel://custom/API_TOKEN\nNEW_TOKEN=tok-dddd-4444\n");
+  expect(await runInit({ ...options(root), yes: true }, new DefaultsPrompter())).toBe(0);
+
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NEW_TOKEN=kerstel://custom/NEW_TOKEN");
+  await openTestVault((vault) => {
+    expect(vault.listProjects().map((p) => p.name)).toEqual(["custom"]);
+  });
 });

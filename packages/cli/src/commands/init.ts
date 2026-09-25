@@ -31,6 +31,14 @@ import { renderTable } from "../ui/table";
 import { theme } from "../ui/theme";
 import { VERSION } from "../version";
 import { readStoredReferences } from "../vault/meta";
+import {
+  canonicalRoot,
+  checkScopeOwner,
+  projectForRoot,
+  readProjectRows,
+  scopeCollisionMessage,
+  scopeShareMessage,
+} from "../vault/projects";
 import type { Vault } from "../vault/store";
 
 /**
@@ -653,10 +661,18 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     return 1;
   }
 
-  const scope = options.scope ?? deriveScope({
-    packageName: detected.packageName,
-    rootPath: detected.root,
-  }).scope;
+  // Checkouts spec §6.2. The projects table is readable without the key, so
+  // this runs under --dry-run too, before anything is shown or written.
+  const projects = readProjectRows(vaultPath());
+  const scope =
+    options.scope ??
+    projectForRoot(projects, detected.root)?.name ??
+    deriveScope({ packageName: detected.packageName, rootPath: detected.root }).scope;
+  const owner = checkScopeOwner(projects, scope, detected.root, detected.packageName);
+  if (owner.kind === "different-package" && options.scope === undefined) {
+    fail(scopeCollisionMessage(scope, owner));
+    return 2;
+  }
 
   const fileNames = detected.envFiles.map((file) => file.name);
   step(
@@ -664,6 +680,8 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       .concat(fileNames.length > 0 ? [fileNames.join(", ")] : [])
       .join(" · "),
   );
+  if (owner.kind === "another-checkout") info(`Another checkout of ${scope} is at ${owner.roots.join(", ")}.`);
+  if (owner.kind === "different-package") info(scopeShareMessage(scope, owner));
 
   // Before the empty check: a project whose only .env is a broken symlink has
   // an env file, and "no .env files here" would be the wrong thing to say.
@@ -814,7 +832,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       // Values a teammate just typed are the whole point of this run, and there
       // is no plan to approve, so the typing was the approval.
       if (ctx) {
-        ctx.vault.registerProject(scope, detected.root);
+        ctx.vault.registerProject(scope, canonicalRoot(detected.root), detected.packageName);
         storeSupplied(ctx.vault, supplied);
         for (const { ref } of supplied) ok(`Stored ${formatReference(ref.scope, ref.key)}`);
       }
@@ -944,7 +962,7 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
         ? `Stored ${storedCount} secret${storedCount === 1 ? "" : "s"} in the vault.`
         : `Registered ${scope} with the vault.`,
       async () => {
-        vault.registerProject(scope, detected.root);
+        vault.registerProject(scope, canonicalRoot(detected.root), detected.packageName);
         storeSupplied(vault, supplied);
         for (const decision of toStore) {
           vault.setSecret(
