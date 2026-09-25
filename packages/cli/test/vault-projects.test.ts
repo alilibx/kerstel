@@ -131,3 +131,19 @@ test("readProjectRows reads a v2 vault that has no package_name column", () => {
   db.close();
   expect(readProjectRows(file)).toEqual([{ name: "api", rootPath: "/a/api", packageName: null, createdAt: 5 }]);
 });
+
+test("readProjectRows keeps only the newest v2 row for a folder, as the migration does", () => {
+  const dir = temp();
+  const file = join(dir, "vault.db");
+  const db = new Database(file, { create: true });
+  // `init --scope a`, then `init --scope b` in the same folder: v2 kept both rows.
+  db.exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, root_path TEXT NOT NULL, created_at INTEGER NOT NULL);
+           INSERT INTO projects (id, name, root_path, created_at) VALUES (1, 'a', '/x/api', 5);
+           INSERT INTO projects (id, name, root_path, created_at) VALUES (2, 'b', '/x/api', 9);
+           INSERT INTO projects (id, name, root_path, created_at) VALUES (4, 'd', '/y/web', 7);
+           INSERT INTO projects (id, name, root_path, created_at) VALUES (3, 'c', '/y/web', 7);`);
+  db.close();
+  const rows = readProjectRows(file);
+  expect(rows.map((r) => r.name)).toEqual(["b", "d"]);
+  expect(projectForRoot(rows, "/x/api")?.name).toBe("b");
+});

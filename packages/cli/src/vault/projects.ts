@@ -27,7 +27,8 @@ export function canonicalRoot(path: string): string {
 /**
  * The projects table, read without the data key: it is not encrypted, and
  * `init --dry-run` must not open the vault. Works on a vault not yet migrated
- * to schema 3 (no `package_name` column). Absent or unreadable is empty.
+ * to schema 3 (no `package_name` column), returning the rows it will keep.
+ * Absent or unreadable is empty.
  */
 export function readProjectRows(file: string): ProjectRecord[] {
   if (!existsSync(file)) return [];
@@ -39,7 +40,17 @@ export function readProjectRows(file: string): ProjectRecord[] {
     const packageColumn = columns.includes("package_name") ? "package_name" : "NULL AS package_name";
     return db
       .query<{ name: string; root_path: string; package_name: string | null; created_at: number }, []>(
-        `SELECT name, root_path, ${packageColumn}, created_at FROM projects ORDER BY name, root_path`,
+        // Before the first open migrates a v2 vault, one folder can have two
+        // rows (`init --scope a`, then `--scope b`). Keep the newest per
+        // folder, by the same rule as migration 3, so this run sees the row
+        // the migration will keep.
+        `SELECT name, root_path, ${packageColumn}, created_at FROM projects p
+         WHERE NOT EXISTS (
+           SELECT 1 FROM projects q
+           WHERE q.root_path = p.root_path
+             AND (q.created_at > p.created_at OR (q.created_at = p.created_at AND q.id > p.id))
+         )
+         ORDER BY name, root_path`,
       )
       .all()
       .map((r) => ({ name: r.name, rootPath: r.root_path, packageName: r.package_name, createdAt: r.created_at }));
