@@ -228,3 +228,17 @@ test("projectStatus names old-form scripts and reports the launcher", () => {
   });
   expect(projectStatus(unwired, emptyVault)?.launcher).toBeNull();
 });
+
+test("projectStatus takes the scope from this folder's row and lists the other checkouts", () => {
+  const root = makeProject({ "package.json": '{ "name": "@acme/api" }\n' });
+  const rows = [
+    { name: "custom", rootPath: root, packageName: "@acme/api", createdAt: 1 },
+    { name: "custom", rootPath: "/wt/api", packageName: "@acme/api", createdAt: 2 },
+    { name: "other", rootPath: "/x/other", packageName: "other", createdAt: 3 },
+  ];
+  const status = projectStatus(root, { getSecret: () => null, listProjects: () => rows });
+  expect(status?.scope).toBe("custom");
+  expect(status?.otherCheckouts).toEqual(["/wt/api"]);
+  expect(projectStatus(root, emptyVault)?.scope).toBe("api");
+  expect(projectStatus(root, emptyVault)?.otherCheckouts).toEqual([]);
+});

@@ -328,6 +328,17 @@ function referencesCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
   };
 }
 
+/** Checkouts spec §6.4: a fact, not a problem. */
+function checkoutsCheck(project: ProjectStatus): Check | null {
+  if (project.otherCheckouts.length === 0) return null;
+  return {
+    group: "project",
+    status: "info",
+    label: "Checkouts",
+    detail: `Also checked out at ${project.otherCheckouts.join(", ")}`,
+  };
+}
+
 /**
  * A `kerstel` under node_modules/.bin runs instead of Kerstel for every wired
  * script (npm puts that directory first on PATH), so it is a problem, not a
@@ -382,6 +393,8 @@ export function gatherChecks(facts: DoctorFacts): Check[] {
     const shadow = shadowCheck(facts.project);
     if (shadow) checks.push(shadow);
     checks.push(referencesCheck(facts.project, facts.cli));
+    const checkouts = checkoutsCheck(facts.project);
+    if (checkouts) checks.push(checkouts);
     const envFiles = envFilesCheck(facts.project);
     if (envFiles) checks.push(envFiles);
   }
