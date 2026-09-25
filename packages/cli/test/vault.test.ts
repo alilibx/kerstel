@@ -104,13 +104,73 @@ test("removeSecret reports whether a row was deleted", () => {
   expect(v.getSecret({ scope: "global", key: "K" })).toBeNull();
 });
 
-test("projects register idempotently and update their path", () => {
+test("each folder is its own project row, and re-registering a folder updates it", () => {
   const v = vaultIn(tempDir(), generateDataKey());
-  v.registerProject("my-app", "/tmp/a");
-  v.registerProject("my-app", "/tmp/b");
-  const projects = v.listProjects();
-  expect(projects.length).toBe(1);
-  expect(projects[0]!.rootPath).toBe("/tmp/b");
+  v.registerProject("my-app", "/tmp/a", "@acme/my-app");
+  v.registerProject("my-app", "/tmp/b", "@acme/my-app");
+  v.registerProject("renamed", "/tmp/a", null);
+  expect(v.listProjects().map(({ name, rootPath, packageName }) => ({ name, rootPath, packageName }))).toEqual([
+    { name: "my-app", rootPath: "/tmp/b", packageName: "@acme/my-app" },
+    { name: "renamed", rootPath: "/tmp/a", packageName: null },
+  ]);
+});
+
+test("a version-2 vault upgrades with every project row intact", () => {
+  const dir = tempDir();
+  const file = join(dir, "vault.db");
+  const db = new Database(file, { create: true });
+  db.exec(`
+    CREATE TABLE projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+      root_path TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE secrets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, key TEXT NOT NULL,
+      value_ciphertext BLOB NOT NULL, nonce BLOB NOT NULL, environment TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(scope, key));
+    CREATE INDEX secrets_scope_idx ON secrets(scope);
+    CREATE TABLE audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, event TEXT NOT NULL,
+      scope TEXT NOT NULL, key TEXT NOT NULL, pid INTEGER, process_name TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL);
+    CREATE INDEX audit_log_ts_idx ON audit_log(ts DESC);
+    CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO projects (id, name, root_path, created_at) VALUES (4, 'web', '/src/web', 100);
+    INSERT INTO projects (id, name, root_path, created_at) VALUES (9, 'api', '/src/api', 200);
+    -- init --scope a, then init --scope b, in one folder: the newer row wins.
+    INSERT INTO projects (id, name, root_path, created_at) VALUES (11, 'old', '/src/same', 300);
+    INSERT INTO projects (id, name, root_path, created_at) VALUES (12, 'new', '/src/same', 400);
+    PRAGMA user_version = 2;
+  `);
+  db.close();
+
+  const v = vaultIn(dir, generateDataKey());
+  expect(v.listProjects()).toEqual([
+    { name: "api", rootPath: "/src/api", packageName: null, createdAt: 200 },
+    { name: "new", rootPath: "/src/same", packageName: null, createdAt: 400 },
+    { name: "web", rootPath: "/src/web", packageName: null, createdAt: 100 },
+  ]);
+  v.close();
+  open.pop();
+
+  const check = new Database(file, { readonly: true });
+  try {
+    expect(check.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(SCHEMA_VERSION);
+    const ids = check.query<{ id: number }, []>("SELECT id FROM projects ORDER BY id").all().map((r) => r.id);
+    expect(ids).toEqual([4, 9, 12]);
+    // secrets and audit_log still point at the rebuilt table, not a renamed copy.
+    const sql = check
+      .query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE name IN ('secrets', 'audit_log')")
+      .all()
+      .map((r) => r.sql);
+    for (const text of sql) expect(text).toContain("REFERENCES projects(id)");
+  } finally {
+    check.close();
+  }
+});
+
+test("the schema is at version 3", () => {
+  expect(SCHEMA_VERSION).toBe(3);
 });
 
 test("audit entries are stored newest-first and hold no values", () => {

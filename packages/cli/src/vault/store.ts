@@ -16,6 +16,8 @@ export interface SecretSummary {
 export interface ProjectRecord {
   name: string;
   rootPath: string;
+  /** The package.json name when `init` last ran here, or null (no name, or registered before schema 3). */
+  packageName: string | null;
   createdAt: number;
 }
 
@@ -33,7 +35,7 @@ export interface Vault {
   getSecret(ref: SecretRef): string | null;
   listSecrets(scope?: string): SecretSummary[];
   removeSecret(ref: SecretRef): boolean;
-  registerProject(name: string, rootPath: string): void;
+  registerProject(name: string, rootPath: string, packageName?: string | null): void;
   listProjects(): ProjectRecord[];
   appendAudit(entry: AuditEntry): void;
   listAudit(limit: number): AuditEntry[];
@@ -131,21 +133,25 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       return result.changes > 0;
     },
 
-    registerProject(name: string, rootPath: string): void {
+    registerProject(name: string, rootPath: string, packageName: string | null = null): void {
+      // One row per folder (checkouts spec §6.1): a second checkout adds a row,
+      // and re-running in a folder updates only that folder's row.
       db.query(
-        `INSERT INTO projects (name, root_path, created_at)
-         VALUES ($name, $root, $ts)
-         ON CONFLICT(name) DO UPDATE SET root_path = excluded.root_path`,
-      ).run({ $name: name, $root: rootPath, $ts: now() });
+        `INSERT INTO projects (name, root_path, package_name, created_at)
+         VALUES ($name, $root, $pkg, $ts)
+         ON CONFLICT(root_path) DO UPDATE SET
+           name         = excluded.name,
+           package_name = excluded.package_name`,
+      ).run({ $name: name, $root: rootPath, $pkg: packageName, $ts: now() });
     },
 
     listProjects(): ProjectRecord[] {
       return db
-        .query<{ name: string; root_path: string; created_at: number }, []>(
-          "SELECT name, root_path, created_at FROM projects ORDER BY name",
+        .query<{ name: string; root_path: string; package_name: string | null; created_at: number }, []>(
+          "SELECT name, root_path, package_name, created_at FROM projects ORDER BY name, root_path",
         )
         .all()
-        .map((r) => ({ name: r.name, rootPath: r.root_path, createdAt: r.created_at }));
+        .map((r) => ({ name: r.name, rootPath: r.root_path, packageName: r.package_name, createdAt: r.created_at }));
     },
 
     appendAudit(entry: AuditEntry): void {
