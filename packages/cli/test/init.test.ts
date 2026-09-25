@@ -1374,6 +1374,25 @@ test("a shared value that differs is left alone, and the key stays with this pro
   });
 });
 
+test("one by one, a key kept out of a differing shared vault is suggested for this project", async () => {
+  isolateEnv({ prefix: "init-shared-each" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "global", key: "STRIPE_SECRET_KEY" }, "sk-shared-8888"));
+  const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "STRIPE_SECRET_KEY=sk-mine-9999\n" });
+
+  const hints: string[] = [];
+  const prompter = new (class extends ScriptedPrompter {
+    override async select<T extends string>(question: string, choices: Choice<T>[], defaultValue: T): Promise<T> {
+      if (question.startsWith("STRIPE_SECRET_KEY · 1 of 1")) {
+        hints.push(...choices.filter((c) => c.hint?.includes("(suggested)")).map((c) => c.value));
+      }
+      return super.select(question, choices, defaultValue);
+    }
+  })(["each", "project", "accept", "apply"]);
+  expect((await initQuietly(root, [], prompter)).code).toBe(0);
+  expect(hints).toEqual(["project"]);
+});
+
 test("choosing the shared vault for a differing key still asks which value stays", async () => {
   isolateEnv({ prefix: "init-shared-chosen" });
   await bootLocalDaemon();

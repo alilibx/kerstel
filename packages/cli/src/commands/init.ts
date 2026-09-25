@@ -308,7 +308,16 @@ async function decideTargets(
     if (shared === "same") return { ...base, target: "global", reason: "in the shared vault", fixed: false };
     if (shared === "differs") {
       const target = suggestion === "global" ? "project" : suggestion;
-      return { ...base, target, reason: "the shared vault holds a different value", fixed: false, sharedDiffers: true };
+      // The suggestion moves with the target, so one-by-one mode does not mark
+      // the shared vault "(suggested)" for a key it just kept out of there.
+      return {
+        ...base,
+        suggestion: target,
+        target,
+        reason: "the shared vault holds a different value",
+        fixed: false,
+        sharedDiffers: true,
+      };
     }
     return { ...base, target: suggestion, reason, fixed: false };
   });
