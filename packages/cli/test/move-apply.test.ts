@@ -56,7 +56,7 @@ function makePlan(
   vault: Vault,
   moves: [string, Place][],
   choices: Record<string, ConflictChoice> = {},
-  recordedRoot: string | null = root,
+  otherCheckoutRefs: Map<string, string> = new Map(),
 ) {
   const loaded = loadEnvFiles(discoverEnvFiles(root));
   const { rows } = scanRows(loaded, "app");
@@ -66,7 +66,7 @@ function makePlan(
     loaded,
     requests: moves.map(([id, to]) => ({ row: rows.find((r) => r.id === id)!, to })),
     vaultValue: (ref) => vault.getSecret(ref),
-    recordedRoot,
+    otherCheckoutRefs,
     choices: new Map(Object.entries(choices)),
     gitStatus: () => null,
   });
@@ -81,7 +81,7 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
     "kerstel://global/B": "replace",
   });
 
-  const result = applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root });
+  const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
 
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=value-a\nB=kerstel://global/B\n");
   expect(vault.getSecret({ scope: "global", key: "B" })).toBe("value-b");
@@ -103,7 +103,7 @@ test("a plain value that loses to a kept destination is saved in the backup's va
   const { root, vault, dataKey } = setup({ ".env": "K=plain-incoming\n" }, { "global/K": "existing" });
   const plan = makePlan(root, vault, [["K:plaintext", "global"]], { "kerstel://global/K": "keep" });
 
-  const result = applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root });
+  const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
 
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://global/K\n");
   expect(vault.getSecret({ scope: "global", key: "K" })).toBe("existing");
@@ -119,7 +119,7 @@ test("a file edited after the scan is not overwritten: nothing is written and no
 
   let caught: unknown;
   try {
-    applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root });
+    applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
   } catch (error) {
     caught = error;
   }
@@ -150,7 +150,7 @@ test("a failure writing the vault leaves the vault and files as they were", () =
 
   let caught: unknown;
   try {
-    applyMove(plan, { vault: failing, dataKey, scope: "app", root, recordedRoot: root });
+    applyMove(plan, { vault: failing, dataKey, scope: "app", root, registered: true, packageName: "app" });
   } catch (error) {
     caught = error;
   }
@@ -178,7 +178,7 @@ test("a failure writing a file restores the vault and the files already written"
 
   let caughtFile: unknown;
   try {
-    applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: root, writeFile });
+    applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app", writeFile });
   } catch (error) {
     caughtFile = error;
   }
@@ -217,7 +217,7 @@ test("a failure that also fails to roll back still throws MoveApplyError naming 
 
   let caught: unknown;
   try {
-    applyMove(plan, { vault: failing, dataKey, scope: "app", root, recordedRoot: root });
+    applyMove(plan, { vault: failing, dataKey, scope: "app", root, registered: true, packageName: "app" });
   } catch (error) {
     caught = error;
   }
@@ -232,21 +232,22 @@ test("a failure that also fails to roll back still throws MoveApplyError naming 
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=plain-a\nB=plain-b\n");
 });
 
-test("the project is registered only when the vault has no record", () => {
+test("this folder is registered when it has no row, beside another checkout's", () => {
   const { root, vault, dataKey } = setup({ ".env": "A=plain\n" }, {});
-  vault.registerProject("app", "/elsewhere/app");
-  const plan = makePlan(root, vault, [["A:plaintext", "project"]], {}, "/elsewhere/app");
-  const result = applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: "/elsewhere/app" });
-  expect(result.registered).toBe(false);
-  expect(vault.listProjects()).toEqual([expect.objectContaining({ name: "app", rootPath: "/elsewhere/app" })]);
+  vault.registerProject("app", "/elsewhere/app", "app");
+  const plan = makePlan(root, vault, [["A:plaintext", "project"]], {});
+  const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: false, packageName: "app" });
+  expect(result.registered).toBe(true);
+  expect(vault.listProjects().map((p) => p.rootPath).sort()).toEqual(["/elsewhere/app", root].sort());
 });
 
-test("an unregistered project is registered at this root", () => {
+test("a folder that already has a row is not registered again", () => {
   const { root, vault, dataKey } = setup({ ".env": "A=plain\n" }, {});
-  const plan = makePlan(root, vault, [["A:plaintext", "project"]], {}, null);
-  const result = applyMove(plan, { vault, dataKey, scope: "app", root, recordedRoot: null });
-  expect(result.registered).toBe(true);
-  expect(vault.listProjects()).toEqual([expect.objectContaining({ name: "app", rootPath: root })]);
+  vault.registerProject("custom", root, "app");
+  const plan = makePlan(root, vault, [["A:plaintext", "project"]], {});
+  const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
+  expect(result.registered).toBe(false);
+  expect(vault.listProjects()).toEqual([expect.objectContaining({ name: "custom", rootPath: root })]);
 });
 
 test("writeFileAtomic keeps the mode and leaves no temp file", () => {

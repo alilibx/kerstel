@@ -21,7 +21,7 @@ interface Setup {
   files: Record<string, string>;
   vault?: Record<string, string>;
   moves: [id: string, to: Place][];
-  recordedRoot?: string | null;
+  otherCheckoutRefs?: Map<string, string>;
   choices?: Record<string, ConflictChoice>;
   git?: Record<string, GitFileStatus>;
 }
@@ -40,7 +40,7 @@ function plan(setup: Setup) {
       return { row, to };
     }),
     vaultValue: (ref: SecretRef) => vault[`${ref.scope}/${ref.key}`] ?? null,
-    recordedRoot: setup.recordedRoot === undefined ? ROOT : setup.recordedRoot,
+    otherCheckoutRefs: setup.otherCheckoutRefs ?? new Map(),
     choices: new Map(Object.entries(setup.choices ?? {})),
     gitStatus: (name) => setup.git?.[name] ?? null,
   };
@@ -256,25 +256,25 @@ test("a project copy another file still references is kept", () => {
   expect(result.kept).toEqual([{ ref: { scope: "app", key: "K" }, reason: "referenced", root: null }]);
 });
 
-test("a project copy is kept when the recorded root is another checkout", () => {
+test("a project copy another checkout reads is kept, naming that checkout", () => {
   const result = plan({
     files: { ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
     moves: [["K:kerstel://app/K", "plaintext"]],
-    recordedRoot: "/elsewhere/app",
+    otherCheckoutRefs: new Map([["kerstel://app/K", "/elsewhere/app"]]),
   });
   expect(result.deletions).toEqual([]);
   expect(result.kept).toEqual([{ ref: { scope: "app", key: "K" }, reason: "other-checkout", root: "/elsewhere/app" }]);
 });
 
-test("a project copy is deleted when the vault has no record of the project", () => {
+test("a project copy no checkout reads is deleted", () => {
   const result = plan({
     files: { ".env": "K=kerstel://app/K\n" },
     vault: { "app/K": "v" },
     moves: [["K:kerstel://app/K", "plaintext"]],
-    recordedRoot: null,
+    otherCheckoutRefs: new Map([["kerstel://app/OTHER", "/elsewhere/app"]]),
   });
-  expect(result.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "v" }]);
+  expect(result.deletions.map((d) => d.ref)).toEqual([{ scope: "app", key: "K" }]);
 });
 
 test("different references in different files move as separate rows", () => {

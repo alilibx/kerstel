@@ -323,3 +323,49 @@ test("a cancelled prompt makes moveCommand exit 130 and change nothing", async (
   expect(out).toContain("Cancelled. Nothing was changed.");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=v\n");
 });
+
+function secondCheckout(env: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "kerstel-move-wt-"));
+  createdDirs.push(root);
+  writeFileSync(join(root, "package.json"), PACKAGE);
+  for (const [name, contents] of Object.entries(env)) writeFileSync(join(root, name), contents);
+  return root;
+}
+
+test("a copy another checkout still reads is kept and that checkout is named", async () => {
+  const root = makeProject({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
+  const other = secondCheckout({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
+  await withVault((v) => {
+    v.setSecret({ scope: "app", key: "STRIPE_KEY" }, SECRET);
+    v.registerProject("app", root, "app");
+    v.registerProject("app", other, "app");
+  });
+  const { code, out } = await run(root, ["STRIPE_KEY", "--to", "plaintext", "--yes"], null);
+
+  expect(code).toBe(0);
+  expect(await withVault((v) => v.getSecret({ scope: "app", key: "STRIPE_KEY" }))).toBe(SECRET);
+  expect(out).toContain("is kept: the checkout at");
+  expect(out).toContain("still reads it");
+  expect(out).not.toContain(SECRET);
+});
+
+test("a copy no checkout reads is deleted even with another checkout registered", async () => {
+  const root = makeProject({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
+  const other = secondCheckout({ ".env": "OTHER=plain\n" });
+  await withVault((v) => {
+    v.setSecret({ scope: "app", key: "STRIPE_KEY" }, SECRET);
+    v.registerProject("app", root, "app");
+    v.registerProject("app", other, "app");
+  });
+  expect((await run(root, ["STRIPE_KEY", "--to", "plaintext", "--yes"], null)).code).toBe(0);
+  expect(await withVault((v) => v.getSecret({ scope: "app", key: "STRIPE_KEY" }))).toBeNull();
+});
+
+test("a derived scope that belongs to a different package is refused before anything is asked", async () => {
+  const root = makeProject({ ".env": "K=plain-value\n" });
+  await withVault((v) => v.registerProject("app", "/somewhere/else/app", "@other/app"));
+  const { code, out } = await run(root, ["K", "--to", "project", "--yes"], null);
+  expect(code).toBe(2);
+  expect(out).toContain('The scope "app" belongs to @other/app at /somewhere/else/app.');
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=plain-value\n");
+});
