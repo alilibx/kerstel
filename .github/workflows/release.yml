@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-14, asset: kerstel-darwin-arm64 }
+          - { runner: macos-15, asset: kerstel-darwin-arm64 }
           - { runner: macos-15-intel, asset: kerstel-darwin-x64 }
           - { runner: ubuntu-latest, asset: kerstel-linux-x64 }
           - { runner: ubuntu-24.04-arm, asset: kerstel-linux-arm64 }
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-14, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
+        runner: [macos-15, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
       - env:
