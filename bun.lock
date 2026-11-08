@@ -27,6 +27,10 @@
       "name": "@kerstel/hook",
       "version": "0.2.0",
     },
+    "packages/server": {
+      "name": "@kerstel/server",
+      "version": "0.3.0",
+    },
   },
   "packages": {
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
@@ -36,6 +40,8 @@
     "@kerstel/cli": ["@kerstel/cli@workspace:packages/cli"],
 
     "@kerstel/hook": ["@kerstel/hook@workspace:packages/hook"],
+
+    "@kerstel/server": ["@kerstel/server@workspace:packages/server"],
 
     "@kerstel/website": ["@kerstel/website@workspace:apps/website"],
 
