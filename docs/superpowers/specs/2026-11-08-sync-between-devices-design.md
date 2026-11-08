@@ -1,0 +1,299 @@
+# Sync between your devices
+
+- **Status:** draft for review, 2026-11-08
+- **Release:** 0.3.0, after 0.2.0 and before access gating (Next)
+- **Issues:** [#18](https://github.com/alilibx/kerstel/issues/18) sync, [#81](https://github.com/alilibx/kerstel/issues/81) the server, [#82](https://github.com/alilibx/kerstel/issues/82) devices
+- **Builds on:** the product spec (`2026-09-17-kerstel-secrets-manager-design.md`, §3 threat model, §5 vault, §7 daemon)
+- **Later work it must not block:** shared vaults (#20), proof of presence (#16), binding the data key to the Secure Enclave or TPM (#54)
+
+## 1. Problem
+
+A Kerstel vault lives on one machine. A developer with a laptop and a desktop has to set every secret twice, and a fresh machine starts empty: after `git clone`, `kerstel init` lists each key the vault lacks and asks for its value. The values then travel the way Kerstel exists to stop, through notes, chat, or a password manager's clipboard.
+
+Sync keeps one vault on all of a user's devices. A value set on the laptop resolves on the desktop, and a clone on a new machine runs as soon as the machine is paired.
+
+## 2. Goals and non-goals
+
+**Goals**
+
+- **Opt-in.** Nothing leaves the machine until the user runs `kerstel sync setup`. A vault that never syncs behaves exactly as it does in 0.2.0.
+- **End-to-end encrypted.** The server stores ciphertext and the smallest amount of metadata that sync needs (§4). It never sees a scope name, a key name, a value, a project path, or a hostname.
+- **Self-hostable.** The server is a separate binary and a Docker image, with SQLite storage and no other services.
+- **Offline-first.** Every command works with the server unreachable. Sync failures never fail `run`, `exec`, `resolve`, or the hook.
+- **No accounts.** A device proves who it is with a signing key, not an email and password.
+- **Never lose a value silently.** A conflicting edit is asked about, and the value that loses goes into the encrypted backup, as with `init` and `ks move`.
+
+**Non-goals for 0.3.0**
+
+- Sharing with other people. That is shared vaults (#20). The record format (§6) leaves room for it.
+- A hosted server run by the Kerstel project. See §13.
+- Syncing anything other than secrets (§5.3).
+- Real-time push. Devices pull when Kerstel runs (§8).
+
+## 3. Placement: why 0.3.0, before access gating
+
+Sync does not need access gating, and gating does not need sync:
+
+- The server holds only ciphertext, so the daemon's approval gate is not part of the server's protection.
+- Pairing a device needs a confirmation on a device the user already has (§7.1). That works without #16. Once #16 ships, the confirmation also asks for Touch ID or polkit.
+- §5.1 keeps the local data key out of sync. Each device keeps its own data key, so #54 can later bind that key to the Secure Enclave or TPM without changing the sync protocol.
+
+Shipping sync first also gives the Next release's audit log (#11) a clear rule: audit rows are local to the device and never sync (§5.3).
+
+The alternative was to keep sync in Later with shared vaults. It moved because single-user sync is a large, self-contained piece of work that users ask for on its own. Shared vaults build on it.
+
+## 4. What the server can and cannot see
+
+| The server sees | The server never sees |
+|---|---|
+| A random vault ID | Scope names, key names, values |
+| Each device's random ID and public keys | Device names and hostnames (sealed, §7) |
+| How many records a vault holds, their sizes, and when they change | Project paths, `.env` contents, backups |
+| Opaque record IDs, stable for one key epoch (§6.1) | Which record is which key |
+| The IP address of each request | The sync key or any data key |
+
+**What a hostile server can do,** and what stops it:
+
+| Attack | Result |
+|---|---|
+| Read or change a record | Fails. Records are AES-256-GCM with the vault ID, record ID and epoch as associated data (§6.2). A changed or moved blob fails to decrypt and is reported. |
+| Swap two records' blobs | Fails, for the same reason. This is why §6.2 binds the record ID, unlike the local vault, which seals values without associated data. |
+| Add a device of its own | Fails. Adding a device takes a signature from an existing device, and the sync key is sealed only to devices a user confirmed (§7.1). |
+| Serve an old copy of the vault (rollback) | Detected once a device has seen newer state. Each device stores the highest vault revision it has seen and refuses a lower one. |
+| Withhold changes from one device, or show two devices different histories | Not prevented. Sync stops making progress, and `doctor` shows when each device last synced. A fix needs signed device logs; it is later work. |
+| Delete the vault | Possible. Every device still has its full local vault, so nothing is lost. `kerstel sync setup` can upload it again to a new server. |
+
+## 5. Keys and what syncs
+
+### 5.1 Keys
+
+| Key | Where it lives | What it does |
+|---|---|---|
+| **Data key** (exists today) | OS credential store, one per device | Encrypts `vault.db` on that device. Never synced. A device's data key can differ from every other device's. |
+| **Sync key** (new, 256-bit, one per epoch) | `vault_meta`, sealed with the data key | Encrypts records on the server. Every device in the vault has it. Replaced on each device removal (§7.3). |
+| **Device encryption key** (new, X25519) | `vault_meta`, private half sealed with the data key | Receives the sync key, sealed to it by another device. |
+| **Device signing key** (new, Ed25519) | `vault_meta`, private half sealed with the data key | Signs every request to the server, and signs new devices into the vault. |
+
+All four use `node:crypto`. Bun 1.4.2 supports X25519, Ed25519, HKDF and AES-256-GCM, so the binary takes no new dependency.
+
+### 5.2 Sealing the sync key to a device
+
+`seal(syncKey, devicePublicKey)`: generate an ephemeral X25519 key, compute the shared secret with the device's public key, derive a 256-bit key with HKDF-SHA256 (info `kerstel sync-key v1`, salt = the vault ID), and encrypt the sync key with AES-256-GCM. The associated data is the vault ID, the device ID and the epoch. The server stores one sealed copy per device per epoch.
+
+### 5.3 What syncs and what stays local
+
+| Syncs | Stays on the device |
+|---|---|
+| Every secret, in every scope, including `global` | `projects` rows: checkout paths are machine-specific |
+| Deletions, as tombstones | `audit_log` |
+| | Backups in `~/.kerstel/backups/`, which hold original plaintext files |
+| | `vault_meta` rows such as `keychain_backend` |
+
+Excluding a scope from sync is an open question (§13).
+
+## 6. Records
+
+### 6.1 Record IDs
+
+A record ID is `HMAC-SHA256(idKey, scope || 0x00 || key)`, truncated to 16 bytes and encoded as base64url. `idKey` is derived from the epoch's sync key with HKDF (info `kerstel record-id v1`). The ID is stable for one key, so the server can do compare-and-swap on it, and it reveals nothing about the name. A new epoch gives every record a new ID.
+
+### 6.2 The encrypted payload
+
+```json
+{ "v": 1, "scope": "myapp", "key": "STRIPE_SECRET_KEY", "value": "…",
+  "deleted": false, "updatedAt": 1762560000000, "device": "<device id>" }
+```
+
+The JSON is padded to a multiple of 256 bytes, so the server cannot tell a short value from a long one within that bucket. It is encrypted with AES-256-GCM under the epoch's sync key, with a random 96-bit nonce. The associated data is `vaultId || recordId || epoch`.
+
+A deletion is the same payload with `deleted: true` and no value. The server keeps tombstones for 90 days after every device has pulled past them, then drops them. A device that has been offline longer than that does a full pull (§8.3).
+
+### 6.3 Local sync state
+
+Schema 4 adds one table and no columns to `secrets`, so a vault that never syncs is unchanged:
+
+```sql
+CREATE TABLE sync_state (
+  scope      TEXT    NOT NULL,
+  key        TEXT    NOT NULL,
+  base_rev   INTEGER NOT NULL,      -- server revision this copy is based on, 0 if never pushed
+  dirty      INTEGER NOT NULL,      -- 1 when changed here and not yet accepted by the server
+  conflict   BLOB,                  -- the other device's sealed payload while a conflict is open
+  PRIMARY KEY (scope, key)
+);
+```
+
+`setSecret` and `removeSecret` mark the row dirty in the same transaction as the write. Vault-level state (vault ID, server URL, device IDs, highest revision seen, last sync time and result) goes in `vault_meta`.
+
+## 7. Devices
+
+### 7.1 Setting up and pairing
+
+**First device:**
+
+```
+$ ks sync setup https://sync.example.com
+Kerstel sync, end-to-end encrypted. The server stores ciphertext only.
+  Vault        new, 214 secrets in 6 scopes
+  This device  ali-mbp (the name is sealed; the server never sees it)
+Upload the vault? (Y/n)
+✓ Synced 214 secrets. Add another device with: ks sync add-device
+```
+
+`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`.
+
+**Adding a device.** On a device that is already in the vault:
+
+```
+$ ks sync add-device
+On the new device, run:
+
+  ks sync join https://sync.example.com KS-7Q2M-XR4P-9DKT-BW3H-6YFN-CJ8A
+
+The code works once and expires in 10 minutes. Waiting for the new device…
+```
+
+On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys and sealed name to a pairing slot on the server. The code carries a pairing ID, which the server sees, and a 120-bit secret, which it never sees. The post is authenticated with an HMAC keyed by that secret.
+
+Back on the first device:
+
+```
+New device: ali-desktop (Linux), key fingerprint 4F2A 91C0 7B3E
+Add it? It will be able to read every secret in this vault. (y/N)
+```
+
+On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself. The new device then pulls the vault. The default answer is no, and `--yes` is refused for this question.
+
+The secret is long because the server could otherwise guess it offline from the pairing post. A short code would need a PAKE such as SPAKE2, which `node:crypto` does not provide. See §13.
+
+### 7.2 Listing devices
+
+`ks sync devices` lists each device's name, platform, fingerprint, when it was added, and when it last synced. Names are decrypted locally.
+
+### 7.3 Removing a device
+
+`ks sync remove-device <name>`:
+
+1. Generates a new sync key (a new epoch) and seals it to every remaining device.
+2. Re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
+3. Prints a reminder: the removed device already had every value, so rotate any secret it should no longer hold. Kerstel cannot do that for the user.
+
+`kerstel uninstall` on a synced device removes that device from the vault first. If it is the last device, it asks whether to delete the vault on the server too. The default is no.
+
+## 8. Sync
+
+### 8.1 When it runs
+
+- `ks sync` runs a pull and then a push in the foreground, and reports what changed.
+- After any command that writes the vault (`set`, `rm`, `init`, `move`), Kerstel starts a detached `kerstel sync --background`.
+- `run` and `exec` start a background pull when the last successful sync is more than five minutes old. The command never waits for it, so a value pulled after the app starts reaches the next run.
+- One lock file, `~/.kerstel/sync.lock`, keeps background syncs from overlapping.
+
+The daemon does not sync and opens no network connection. It reads `vault.db` on each resolve, so pulled values reach running apps on their next read. This keeps network code out of the process that holds the data key for every running app.
+
+### 8.2 Push
+
+For each dirty row, the client sends `(recordId, baseRev, sealedPayload)`. The server accepts a record when its current revision equals `baseRev`, or when `baseRev` is 0 and the record is new. Each accepted record gets the vault's next revision number. The client stores the new `base_rev` and clears `dirty`.
+
+### 8.3 Pull
+
+The client asks for every record with a revision higher than the highest it has seen. For each record:
+
+| Local row | Action |
+|---|---|
+| Clean, or missing | Apply the remote value or deletion. A local value that a remote deletion or change replaces is saved in a sync backup first (§8.5). |
+| Dirty, same value as remote | Adopt the remote revision and clear `dirty`. |
+| Dirty, different value | A conflict (§8.4). |
+
+A device whose last pull is older than the tombstone window pulls the whole vault and reconciles row by row, using the same table.
+
+### 8.4 Conflicts
+
+A background sync never chooses between two values. It keeps this device's value, stores the other device's payload in `sync_state.conflict`, and stops pushing that key. Every command then prints one line on stderr:
+
+```
+kerstel: 1 sync conflict. Run `ks sync` to choose which value stays.
+```
+
+`ks sync` in a terminal asks for each conflict, naming the other device and the time of its change. Neither value is printed; each is shown as its length, and `--reveal` shows both:
+
+```
+STRIPE_SECRET_KEY (myapp) was changed on two devices.
+  ● This device   changed 2 Nov, 14:03   (107 characters)
+  ○ ali-desktop   changed 2 Nov, 14:10   (107 characters)
+Which value stays?
+```
+
+The value that loses is saved in the sync backup. Without a terminal, `ks sync` lists the conflicts and exits 1. `ks sync --keep local|remote` settles them in scripts.
+
+### 8.5 The sync backup
+
+A value that a pull replaces or deletes, and the losing side of a conflict, go to `~/.kerstel/backups/sync/<timestamp>/`, encrypted with the data key in the same format as `init` backups. `uninstall`'s loss check reads these backups too, so it names any value that exists only there before deleting it.
+
+## 9. The server
+
+### 9.1 Shape
+
+- A new package, `packages/server`, compiled with `bun build --compile` to `kerstel-server`. It is a separate binary, so the CLI that runs on developer machines still contains no listening code.
+- Released alongside the CLI for Linux x64 and arm64, plus an image at `ghcr.io/alilibx/kerstel-server`.
+- Storage is one SQLite file. Settings: `--db`, `--listen`, and an optional `--enroll-token` that `sync setup` must present to create a vault. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one.
+- TLS is left to a reverse proxy (Caddy, nginx, or a platform's load balancer). The docs give a Caddy example.
+
+### 9.2 API
+
+JSON over HTTPS, versioned under `/v1`. Every request except `join` carries `Kerstel-Device`, `Kerstel-Timestamp` and an Ed25519 signature over the method, path, timestamp and body hash. The server rejects a timestamp more than five minutes off and a repeated signature.
+
+| Method and path | Purpose |
+|---|---|
+| `POST /v1/vaults` | Create a vault with its first device and sealed sync key |
+| `GET /v1/vaults/:id/records?since=<rev>` | Records newer than a revision, paged |
+| `POST /v1/vaults/:id/records` | Push a batch with compare-and-swap. Returns accepted revisions and conflicts. |
+| `GET /v1/vaults/:id/keys` | This device's sealed sync key for the current epoch |
+| `GET /v1/vaults/:id/devices` | Devices, with sealed names |
+| `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device) |
+| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, removed device, in one transaction |
+| `PUT /v1/pairings/:pairingId` and `GET` | The pairing slot of §7.1, deleted on use or after 10 minutes |
+| `DELETE /v1/vaults/:id` | Delete the vault, signed by a device in it |
+
+Limits per vault: 10,000 records, 64 KB per record, and 60 requests a minute per device.
+
+## 10. Commands
+
+| Command | Does |
+|---|---|
+| `ks sync setup <url>` | Turn sync on for this vault and upload it |
+| `ks sync add-device` | Show a one-time code and confirm the new device |
+| `ks sync join <url> <code>` | Join a synced vault from a new device |
+| `ks sync` | Pull, push, and settle conflicts |
+| `ks sync status` | Server, devices, last sync, pending changes, open conflicts |
+| `ks sync devices` | List devices |
+| `ks sync remove-device <name>` | Remove a device and rotate the sync key |
+| `ks sync off` | Stop syncing this device (removes it from the vault) |
+
+**`join` on a device whose vault already holds secrets.** The two vaults merge. Keys only one side has are added. A key both sides hold with different values is a conflict (§8.4). Nothing is overwritten without asking.
+
+`kerstel doctor` gains a Sync row: off; or the server, last successful sync, pending pushes, open conflicts, and a warning when the last sync is more than seven days old.
+
+## 11. Effects on existing copy
+
+When 0.3.0 ships, the following change in the same PR:
+
+- The product spec §2 and the README: "offline apart from the update check" becomes "offline apart from the update check, and sync if you turn it on".
+- The website security page gains a "Sync" section with the table in §4.
+- `docs/teams.md` stops saying Kerstel has no sync. It explains that sync is for one person's devices, and that teams still use the workflow on that page until shared vaults ship.
+- A new docs page, "Sync", covers setup, pairing, conflicts, and self-hosting the server.
+
+## 12. Testing
+
+- Crypto: sealing round trips; a changed or moved blob fails to decrypt; a record ID is stable within an epoch and changes across epochs.
+- Server: compare-and-swap, epoch rotation in one transaction, signature and timestamp checks, replay rejection, limits, and an expired or reused pairing slot.
+- Client against an in-process server: setup, join, push, pull, every row of the §8.3 table, conflicts in a terminal and without one, removal and rotation, rollback detection, and the full pull after the tombstone window.
+- Offline: with the server unreachable, `set`, `run`, `exec`, `resolve` and the hook work and print no sync error, and `doctor` shows the failure.
+- No test prints a value, and every temporary home and server database is removed.
+
+## 13. Open questions
+
+1. **A hosted server.** Should the project run one, such as `sync.kerstel.dev`? The protocol needs no accounts, so a hosted server would need abuse limits instead: a cap on vault creation per IP, quotas, and a privacy policy. Recommendation: ship self-hosting in 0.3.0 and decide on hosting separately. "No account, no cloud" stays true either way.
+2. **Short pairing codes.** A PAKE would allow a code of 6–8 characters. It needs an implementation outside `node:crypto`. Recommendation: ship the long code and revisit if users find it awkward.
+3. **Excluding scopes.** Should `ks sync setup` let a user leave a scope, such as a work project, off the server? It is simple to add to `sync_state` but changes the conflict and join rules.
+4. **Windows.** The server needs no Windows build. The client follows the CLI's Windows work (#17).
