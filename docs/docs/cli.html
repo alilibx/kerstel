@@ -185,6 +185,36 @@
 <td>Print one resolved value. Useful in scripts. The key is required here: there is no variable to take it from.</td>
 </tr>
 </tbody></table>
+</div><h2>Sync</h2>
+<p>End-to-end encrypted sync of the vault between your own devices, through a <code>kerstel-server</code> you run. The server stores ciphertext only: it never holds a key that opens a value, a key name, or a device name. Adding a second device (<code>ks sync add-device</code> and <code>ks sync join</code>) is coming next; until it lands, sync keeps one device&#39;s vault on the server.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel sync setup &lt;url&gt; [--yes]</code></td>
+<td>Turn sync on for this vault and upload every secret. The URL must be <code>https://</code>, or <code>http://</code> to this machine. It shows the server, how many secrets and scopes it will upload, and this device&#39;s name (sealed, so the server never sees it), then asks before uploading; without a terminal it needs <code>--yes</code>. A server that needs an enroll token reads it from <code>KERSTEL_SYNC_ENROLL_TOKEN</code>.</td>
+</tr>
+<tr>
+<td><code>kerstel sync [--keep local|remote] [--reveal]</code></td>
+<td>Pull what your other devices changed, then push what changed here. A value a pull replaces or deletes is saved first in an encrypted backup under <code>~/.kerstel/backups/_sync/</code>. A key changed both here and on another device is a conflict: this device keeps its value and stops pushing that key until you choose. In a terminal <code>kerstel sync</code> asks for each one, showing each side only as its length (<code>--reveal</code> shows both values); <code>--keep local</code> or <code>--keep remote</code> settles them all, and the value that loses goes to the backup. Without a terminal or <code>--keep</code>, it lists the conflicts by name and exits <code>1</code>.</td>
+</tr>
+<tr>
+<td><code>kerstel sync status</code></td>
+<td>The server, the last successful sync, how many changes wait to be pushed, open conflicts, and the last error. Works offline.</td>
+</tr>
+<tr>
+<td><code>kerstel sync devices</code></td>
+<td>Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced.</td>
+</tr>
+<tr>
+<td><code>kerstel sync off [--delete-vault]</code></td>
+<td>Stop syncing this device: it leaves the vault on the server, and its secrets stay here. On the vault&#39;s last device it refuses unless <code>--delete-vault</code>, which deletes the vault from the server too.</td>
+</tr>
+</tbody></table>
 </div><h2>Daemon and diagnostics</h2>
 <div class="table-wrap"><table>
 <thead>

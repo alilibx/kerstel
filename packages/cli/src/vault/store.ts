@@ -30,6 +30,45 @@ export interface AuditEntry {
   processName: string | null;
 }
 
+/** One key's sync bookkeeping. Sync spec §6.3. */
+export interface SyncRow {
+  scope: string;
+  key: string;
+  /** The server revision this copy is based on; 0 if it was never pushed. */
+  baseRev: number;
+  /** Changed here and not yet accepted by the server. */
+  dirty: boolean;
+  /** Raised by every local set or remove of this key. */
+  change: number;
+  /** The other device's record while a conflict is open. */
+  conflict: { rev: number; blob: string | null } | null;
+}
+
+/** Marks a vault as synced: present once `ks sync setup` or `join` has run. */
+export const SYNC_VAULT_META = "sync_vault_id";
+
+export interface SyncTable {
+  enabled(): boolean;
+  /** Turns tracking on: every stored secret becomes dirty, to be pushed. */
+  trackAll(): void;
+  rows(): SyncRow[];
+  row(ref: SecretRef): SyncRow | null;
+  /**
+   * Writes a pulled value, or deletes the secret for a pulled deletion,
+   * without marking it dirty, and records `rev`. Only if the key has not
+   * changed here since `expectedChange` was read: otherwise it does nothing
+   * and returns false, and the next sync sees the local change.
+   */
+  applyRemote(ref: SecretRef, value: string | null, rev: number, expectedChange: number): boolean;
+  /** The server holds `rev` for this key; clears `dirty` only if `change` is still `expectedChange`. */
+  adopt(ref: SecretRef, rev: number, expectedChange: number): void;
+  setConflict(ref: SecretRef, conflict: { rev: number; blob: string | null } | null): void;
+  /** Keep this device's value over an open conflict: based on the other device's revision, still dirty. */
+  keepLocal(ref: SecretRef, rev: number): void;
+  /** Forget every row: sync is off. */
+  clear(): void;
+}
+
 export interface Vault {
   setSecret(ref: SecretRef, value: string): void;
   getSecret(ref: SecretRef): string | null;
@@ -43,6 +82,11 @@ export interface Vault {
   getMeta(key: string): string | null;
   /** Writes a `vault_meta` row, replacing any existing value. */
   setMeta(key: string, value: string): void;
+  /** Removes a `vault_meta` row. */
+  deleteMeta(key: string): void;
+  /** Runs `work` in one SQLite transaction: every write in it lands, or none does. */
+  transaction<T>(work: () => T): T;
+  sync: SyncTable;
   close(): void;
 }
 
@@ -82,18 +126,117 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
 
   const now = (): number => Date.now();
 
-  return {
-    setSecret(ref: SecretRef, value: string): void {
-      const { ciphertext, nonce } = encrypt(value, dataKey);
-      const ts = now();
+  const syncOn = (): boolean =>
+    db.query<{ value: string }, [string]>("SELECT value FROM vault_meta WHERE key = ?").get(SYNC_VAULT_META) !== null;
+
+  /** Sync spec §6.3: a local write marks the key dirty and raises `change`, in the writer's transaction. */
+  const touch = (ref: SecretRef): void => {
+    if (!syncOn()) return;
+    db.query(
+      `INSERT INTO sync_state (scope, key, base_rev, dirty, change, conflict)
+       VALUES ($scope, $key, 0, 1, 1, NULL)
+       ON CONFLICT(scope, key) DO UPDATE SET dirty = 1, change = change + 1`,
+    ).run({ $scope: ref.scope, $key: ref.key });
+  };
+
+  const writeSecret = (ref: SecretRef, value: string): void => {
+    const { ciphertext, nonce } = encrypt(value, dataKey);
+    const ts = now();
+    db.query(
+      `INSERT INTO secrets (scope, key, value_ciphertext, nonce, environment, created_at, updated_at)
+       VALUES ($scope, $key, $ct, $nonce, NULL, $ts, $ts)
+       ON CONFLICT(scope, key) DO UPDATE SET
+         value_ciphertext = excluded.value_ciphertext,
+         nonce            = excluded.nonce,
+         updated_at       = excluded.updated_at`,
+    ).run({ $scope: ref.scope, $key: ref.key, $ct: ciphertext, $nonce: nonce, $ts: ts });
+  };
+
+  const deleteSecret = (ref: SecretRef): boolean =>
+    db.query("DELETE FROM secrets WHERE scope = $scope AND key = $key").run({ $scope: ref.scope, $key: ref.key })
+      .changes > 0;
+
+  type RawSyncRow = { scope: string; key: string; base_rev: number; dirty: number; change: number; conflict: string | Uint8Array | null };
+  const toRow = (r: RawSyncRow): SyncRow => ({
+    scope: r.scope,
+    key: r.key,
+    baseRev: r.base_rev,
+    dirty: r.dirty === 1,
+    change: r.change,
+    conflict: r.conflict === null ? null : JSON.parse(typeof r.conflict === "string" ? r.conflict : Buffer.from(r.conflict).toString("utf8")),
+  });
+
+  const sync: SyncTable = {
+    enabled: syncOn,
+    trackAll() {
+      db.transaction(() => {
+        db.exec(
+          `INSERT INTO sync_state (scope, key, base_rev, dirty, change, conflict)
+           SELECT scope, key, 0, 1, 1, NULL FROM secrets WHERE true
+           ON CONFLICT(scope, key) DO UPDATE SET dirty = 1, change = change + 1`,
+        );
+      })();
+    },
+    rows() {
+      return db
+        .query<RawSyncRow, []>("SELECT scope, key, base_rev, dirty, change, conflict FROM sync_state ORDER BY scope, key")
+        .all()
+        .map(toRow);
+    },
+    row(ref) {
+      const r = db
+        .query<RawSyncRow, { $scope: string; $key: string }>(
+          "SELECT scope, key, base_rev, dirty, change, conflict FROM sync_state WHERE scope = $scope AND key = $key",
+        )
+        .get({ $scope: ref.scope, $key: ref.key });
+      return r ? toRow(r) : null;
+    },
+    applyRemote(ref, value, rev, expectedChange) {
+      return db.transaction(() => {
+        const current = sync.row(ref);
+        if ((current?.change ?? 0) !== expectedChange) return false;
+        if (value === null) deleteSecret(ref);
+        else writeSecret(ref, value);
+        db.query(
+          `INSERT INTO sync_state (scope, key, base_rev, dirty, change, conflict)
+           VALUES ($scope, $key, $rev, 0, 0, NULL)
+           ON CONFLICT(scope, key) DO UPDATE SET base_rev = $rev, dirty = 0, conflict = NULL`,
+        ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+        return true;
+      })();
+    },
+    adopt(ref, rev, expectedChange) {
+      // One statement: a write that raised `change` meanwhile keeps the row dirty.
       db.query(
-        `INSERT INTO secrets (scope, key, value_ciphertext, nonce, environment, created_at, updated_at)
-         VALUES ($scope, $key, $ct, $nonce, NULL, $ts, $ts)
-         ON CONFLICT(scope, key) DO UPDATE SET
-           value_ciphertext = excluded.value_ciphertext,
-           nonce            = excluded.nonce,
-           updated_at       = excluded.updated_at`,
-      ).run({ $scope: ref.scope, $key: ref.key, $ct: ciphertext, $nonce: nonce, $ts: ts });
+        `UPDATE sync_state SET base_rev = $rev, dirty = CASE WHEN change = $change THEN 0 ELSE 1 END
+         WHERE scope = $scope AND key = $key`,
+      ).run({ $scope: ref.scope, $key: ref.key, $rev: rev, $change: expectedChange });
+    },
+    setConflict(ref, conflict) {
+      db.query("UPDATE sync_state SET conflict = $c WHERE scope = $scope AND key = $key").run({
+        $scope: ref.scope,
+        $key: ref.key,
+        $c: conflict === null ? null : JSON.stringify(conflict),
+      });
+    },
+    keepLocal(ref, rev) {
+      db.query(
+        "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
+      ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+    },
+    clear() {
+      db.exec("DELETE FROM sync_state");
+    },
+  };
+
+  return {
+    sync,
+
+    setSecret(ref: SecretRef, value: string): void {
+      db.transaction(() => {
+        writeSecret(ref, value);
+        touch(ref);
+      })();
     },
 
     getSecret(ref: SecretRef): string | null {
@@ -127,10 +270,12 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
     },
 
     removeSecret(ref: SecretRef): boolean {
-      const result = db
-        .query("DELETE FROM secrets WHERE scope = $scope AND key = $key")
-        .run({ $scope: ref.scope, $key: ref.key });
-      return result.changes > 0;
+      return db.transaction(() => {
+        const removed = deleteSecret(ref);
+        // A removal syncs as a deletion; removing nothing changes nothing.
+        if (removed) touch(ref);
+        return removed;
+      })();
     },
 
     registerProject(name: string, rootPath: string, packageName: string | null = null): void {
@@ -190,6 +335,14 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
         .query<{ value: string }, { $key: string }>("SELECT value FROM vault_meta WHERE key = $key")
         .get({ $key: key });
       return row?.value ?? null;
+    },
+
+    transaction<T>(work: () => T): T {
+      return db.transaction(work)();
+    },
+
+    deleteMeta(key: string): void {
+      db.query("DELETE FROM vault_meta WHERE key = $key").run({ $key: key });
     },
 
     setMeta(key: string, value: string): void {

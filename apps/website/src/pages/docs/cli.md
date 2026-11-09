@@ -66,6 +66,18 @@ When the same key appears in several files, the highest-precedence one is stored
 | `kerstel exec -- <command>` | Run the command with the hook wired in and the references left untouched, so each one resolves lazily on the read (under Bun, also once at startup, so `Bun.env` sees the value). See above. |
 | `kerstel resolve ks:<scope>/<KEY>` | Print one resolved value. Useful in scripts. The key is required here: there is no variable to take it from. |
 
+## Sync
+
+End-to-end encrypted sync of the vault between your own devices, through a `kerstel-server` you run. The server stores ciphertext only: it never holds a key that opens a value, a key name, or a device name. Adding a second device (`ks sync add-device` and `ks sync join`) is coming next; until it lands, sync keeps one device's vault on the server.
+
+| Command | What it does |
+| --- | --- |
+| `kerstel sync setup <url> [--yes]` | Turn sync on for this vault and upload every secret. The URL must be `https://`, or `http://` to this machine. It shows the server, how many secrets and scopes it will upload, and this device's name (sealed, so the server never sees it), then asks before uploading; without a terminal it needs `--yes`. A server that needs an enroll token reads it from `KERSTEL_SYNC_ENROLL_TOKEN`. |
+| `kerstel sync [--keep local\|remote] [--reveal]` | Pull what your other devices changed, then push what changed here. A value a pull replaces or deletes is saved first in an encrypted backup under `~/.kerstel/backups/_sync/`. A key changed both here and on another device is a conflict: this device keeps its value and stops pushing that key until you choose. In a terminal `kerstel sync` asks for each one, showing each side only as its length (`--reveal` shows both values); `--keep local` or `--keep remote` settles them all, and the value that loses goes to the backup. Without a terminal or `--keep`, it lists the conflicts by name and exits `1`. |
+| `kerstel sync status` | The server, the last successful sync, how many changes wait to be pushed, open conflicts, and the last error. Works offline. |
+| `kerstel sync devices` | Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced. |
+| `kerstel sync off [--delete-vault]` | Stop syncing this device: it leaves the vault on the server, and its secrets stay here. On the vault's last device it refuses unless `--delete-vault`, which deletes the vault from the server too. |
+
 ## Daemon and diagnostics
 
 | Command | What it does |

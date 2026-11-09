@@ -169,8 +169,8 @@ test("a version-2 vault upgrades with every project row intact", () => {
   }
 });
 
-test("the schema is at version 3", () => {
-  expect(SCHEMA_VERSION).toBe(3);
+test("the schema is at version 4", () => {
+  expect(SCHEMA_VERSION).toBe(4);
 });
 
 test("audit entries are stored newest-first and hold no values", () => {

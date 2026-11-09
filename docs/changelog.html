@@ -53,9 +53,14 @@
 <h2 class="release-version"><a href="#0.2.1">0.2.1</a></h2>
 <span class="release-date release-unreleased">In development</span>
 </div>
+<details class="release-details">
+<summary><span class="release-count">1 change</span></summary>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
+<li><code>kerstel sync</code>, the first part of end-to-end encrypted sync between your own devices through a <code>kerstel-server</code> you run: <code>sync setup &lt;url&gt;</code> uploads the vault, encrypted on this device with a key the server never sees; <code>sync</code> pulls and pushes changes, keeps a value changed on two devices as a conflict until you choose (<code>--keep local|remote</code>), and backs up any value it replaces; <code>sync status</code>, <code>sync devices</code> and <code>sync off</code> report on and leave the vault. Pairing a second device comes next.</li>
+</ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.2.0">
 <span class="release-marker" aria-hidden="true"></span>
