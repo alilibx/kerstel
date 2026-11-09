@@ -143,7 +143,8 @@ The public, tick-box version of this roadmap is the repo-root `ROADMAP.md`, publ
 - **0.1.2 — security hardening:** Kerstel's settings never come from the project's env files, the session token leaves every environment, the daemon runs with a scrubbed environment, credential-store helpers run only from system directories, and `init` refuses a shadowed `kerstel` in `node_modules/.bin`.
 - **0.2.0 — terminal UI and monorepos:** `kerstel ui` as described in §9, `kerstel refs`, `init` at a workspace root, one registration per checkout, the shorter `ks:` references, and `kerstel scan`.
 - **Next — access gating:** audit rows for every write with `kerstel audit` and the Audit screen, daemon approval prompts per unknown process/key, allowlists, proof of user presence for sensitive ops (Touch ID, polkit, Windows Hello, with the data key bound to presence where the platform allows), and vault lock/unlock once unlock can ask for one of those.
-- **Later — optional sync & teams:** E2E-encrypted sync (client-side keys only), environments, shared vaults.
+- **0.3.0 — sync between your devices:** opt-in, end-to-end encrypted sync of one user's vault through a self-hostable server that stores only ciphertext, device pairing, and conflicts asked about. See the [sync spec](2026-11-08-sync-between-devices-design.md).
+- **Later — teams, environments, and Windows:** environments, shared vaults (built on sync), Windows binaries.
 
 ## 11. Repo & open source
 

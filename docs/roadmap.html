@@ -75,6 +75,12 @@
 <li><input disabled="" type="checkbox"> Shorter references: <code>KEY=ks:&lt;scope&gt;</code> when the variable and the vault key share a name, <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code> otherwise, with <code>kerstel://</code> still accepted (<a href="https://github.com/alilibx/kerstel/issues/36">#36</a>)</li>
 <li><input disabled="" type="checkbox"> <code>kerstel scan</code>: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value (<a href="https://github.com/alilibx/kerstel/issues/52">#52</a>)</li>
 </ul>
+<h2>0.3.0: sync between your devices</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Optional end-to-end encrypted sync of the vault between your own devices with <code>ks sync</code>, with keys that stay on your devices and conflicts asked about, never overwritten (<a href="https://github.com/alilibx/kerstel/issues/18">#18</a>)</li>
+<li><input disabled="" type="checkbox"> <code>kerstel-server</code>: a self-hostable sync server, as a binary and a Docker image, that stores only ciphertext (<a href="https://github.com/alilibx/kerstel/issues/81">#81</a>)</li>
+<li><input disabled="" type="checkbox"> Pair a new device with a one-time code confirmed on a device you already have, and remove a device, which replaces the sync key (<a href="https://github.com/alilibx/kerstel/issues/82">#82</a>)</li>
+</ul>
 <h2>Next: access gating</h2>
 <ul>
 <li><input disabled="" type="checkbox"> Audit log of every resolve, run, reveal, set, and remove, with <code>kerstel audit</code> and an Audit screen in the UI (<a href="https://github.com/alilibx/kerstel/issues/11">#11</a>)</li>
@@ -84,10 +90,9 @@
 <li><input disabled="" type="checkbox"> Bind the vault data key to user presence through the Secure Enclave on macOS and the TPM on Windows, so bypassing the daemon there yields nothing (<a href="https://github.com/alilibx/kerstel/issues/54">#54</a>)</li>
 <li><input disabled="" type="checkbox"> Lock and unlock the vault, once unlock can ask for proof of presence (<a href="https://github.com/alilibx/kerstel/issues/12">#12</a>)</li>
 </ul>
-<h2>Later: sync and teams</h2>
+<h2>Later: teams, environments, and Windows</h2>
 <ul>
 <li><input disabled="" type="checkbox"> Windows binaries and a PowerShell installer (<a href="https://github.com/alilibx/kerstel/issues/17">#17</a>)</li>
-<li><input disabled="" type="checkbox"> Optional end-to-end encrypted sync, with keys that stay on your devices (<a href="https://github.com/alilibx/kerstel/issues/18">#18</a>)</li>
 <li><input disabled="" type="checkbox"> Environments (dev, staging, prod) (<a href="https://github.com/alilibx/kerstel/issues/19">#19</a>)</li>
 <li><input disabled="" type="checkbox"> Shared vaults (<a href="https://github.com/alilibx/kerstel/issues/20">#20</a>)</li>
 </ul>

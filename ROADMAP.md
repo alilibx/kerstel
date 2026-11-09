@@ -43,6 +43,12 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))
 - [ ] `kerstel scan`: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value ([#52](https://github.com/alilibx/kerstel/issues/52))
 
+## 0.3.0: sync between your devices
+
+- [ ] Optional end-to-end encrypted sync of the vault between your own devices with `ks sync`, with keys that stay on your devices and conflicts asked about, never overwritten ([#18](https://github.com/alilibx/kerstel/issues/18))
+- [ ] `kerstel-server`: a self-hostable sync server, as a binary and a Docker image, that stores only ciphertext ([#81](https://github.com/alilibx/kerstel/issues/81))
+- [ ] Pair a new device with a one-time code confirmed on a device you already have, and remove a device, which replaces the sync key ([#82](https://github.com/alilibx/kerstel/issues/82))
+
 ## Next: access gating
 
 - [ ] Audit log of every resolve, run, reveal, set, and remove, with `kerstel audit` and an Audit screen in the UI ([#11](https://github.com/alilibx/kerstel/issues/11))
@@ -52,9 +58,8 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] Bind the vault data key to user presence through the Secure Enclave on macOS and the TPM on Windows, so bypassing the daemon there yields nothing ([#54](https://github.com/alilibx/kerstel/issues/54))
 - [ ] Lock and unlock the vault, once unlock can ask for proof of presence ([#12](https://github.com/alilibx/kerstel/issues/12))
 
-## Later: sync and teams
+## Later: teams, environments, and Windows
 
 - [ ] Windows binaries and a PowerShell installer ([#17](https://github.com/alilibx/kerstel/issues/17))
-- [ ] Optional end-to-end encrypted sync, with keys that stay on your devices ([#18](https://github.com/alilibx/kerstel/issues/18))
 - [ ] Environments (dev, staging, prod) ([#19](https://github.com/alilibx/kerstel/issues/19))
 - [ ] Shared vaults ([#20](https://github.com/alilibx/kerstel/issues/20))
