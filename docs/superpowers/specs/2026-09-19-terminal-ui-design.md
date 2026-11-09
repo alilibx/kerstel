@@ -90,7 +90,7 @@ Filters combine. `--action` accepts `resolve`, `run`, `reveal`, `set`, or `remov
 
 `kerstel ui` opens the vault once through `openContext()`, exactly as `kerstel set` does, and holds it for the session. The daemon keeps serving beside it: SQLite's WAL mode and the 5-second busy timeout already cover a `daemon serve` writing audit rows while the UI writes a secret. The UI never talks to the daemon.
 
-Without a TTY on stdin and stdout it exits `2` with one line: `kerstel ui needs an interactive terminal. Use kerstel ls, kerstel refs, and kerstel audit in a pipe.` A terminal smaller than 60 columns by 16 rows shows one centred line, `Terminal too small (60×16 minimum)`, until it is resized.
+Without a TTY on stdin and stdout it exits `2` with one line: `kerstel ui needs an interactive terminal. Use kerstel ls and kerstel refs in a pipe.` (`kerstel audit` joins the sentence when it ships in Next.) A terminal smaller than 60 columns by 16 rows shows one centred line, `Terminal too small (60×16 minimum)`, until it is resized.
 
 ### 4.2 Screen layer
 
@@ -104,7 +104,7 @@ A small module tree in `packages/cli/src/tui/`, with no new dependency. Renderin
 | `widgets/` | Pure renderers: `list` (rows, a cursor, a filter line, a scroll window), `input` (single line, with a masked mode that echoes dots), `confirm` (a one-line yes or no), `statusbar` (keys for the current screen). |
 | `app.ts` | The state type and `update(state, event)`, a pure reducer that returns the next state and a list of effects. Effects are `reload`, `store`, `remove`, and `reveal`. The loop applies effects against `data.ts` and feeds the results back as events. |
 | `screens/secrets.ts`, `screens/references.ts`, `screens/audit.ts` | One renderer and one sub-reducer per screen. |
-| `data.ts` | The adapter over `Vault` and the `project-refs` scan. It is the only place a value is decrypted. |
+| `data.ts` | The adapter over `Vault` and the `project-refs` scan. It is the only place a value is decrypted. The first release (#8) decrypts nothing: reveal, add, edit and delete arrive with #9. |
 
 Each frame is a full redraw: cursor home, every row written and cleared to the end of line. No diffing. A frame is written only after an event, so an idle UI costs nothing.
 
@@ -116,7 +116,7 @@ Three screens on tabs across the top: `Secrets`, `References`, and `Audit` (Next
 
 | Key | Everywhere |
 | --- | --- |
-| `Tab`, `Shift-Tab`, `1` `2` `3` | Switch screen |
+| `Tab`, `Shift-Tab`, `1` `2` `3` | Switch screen (`3` once the Audit screen ships) |
 | `j` `k`, `↑` `↓`, `PageUp` `PageDown`, `g` `G` | Move |
 | `/` | Filter the list; `Esc` clears |
 | `?` | Show the keys for this screen |

@@ -40,7 +40,7 @@ const MAX_VALUE_COLUMNS = 40;
  * The masked column (`•••• N chars`) never renders the value, so it needs none
  * of this.
  */
-const UNSAFE_CHARACTERS =
+export const UNSAFE_CHARACTERS =
   /[\u0000-\u001f\u007f-\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 /**
