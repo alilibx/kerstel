@@ -73,7 +73,7 @@ The hook's own copy in `packages/hook/src/protocol.js` changes the same way. `RE
 
 What this spec does about it:
 
-- **`init` and `ks move` write the full form for any variable that an expansion in the same project's env files uses.** Both already read every env file they change, so they can see `${A}` and `$A`. Both writers need the check: if `move` shortened `A=kerstel://old/A` to `A=ks:new` and left `B=${A}` alone, `B` would look up `new/B`. That covers the common case, which is a Next.js or Compose project.
+- **`init` and `ks move` write the full form for any variable that an expansion in the same project's env files uses.** Both already read every env file they change, so they can see `${A}` and `$A`. `init` also writes out the key of a shorthand an earlier run wrote, if a line added since copies it; a `kerstel://` line already names its key and is left alone. Both writers need the check: if `move` shortened `A=kerstel://old/A` to `A=ks:new` and left `B=${A}` alone, `B` would look up `new/B`. That covers the common case, which is a Next.js or Compose project.
 - The `not_found` error for a shorthand names both the variable and the key it looked for: `B is ks:global, so Kerstel looked for global/B. If B was copied from another variable, write ks:global/<KEY>.`
 - The docs say it once, on the references page: copy a reference with its key (`ks:global/A`), never the shorthand.
 
@@ -104,4 +104,4 @@ A plain value such as `ks:prod` now parses as a reference. Under the full-match 
 1. **Existing `kerstel://` lines are not shortened.** Re-running `init` leaves them as they are. Both forms work forever, and rewriting committed files makes diffs for no change in behaviour. `ks move` shortens any line it rewrites anyway.
 2. **No `--long` flag for `init`.** The full form `ks:<scope>/<KEY>` is always valid to write by hand, and a flag would add a second output format to test.
 3. **`ks ls` shows `ks:scope/KEY`,** matching §4.
-4. **`doctor` counts each form on the References line:** `9 of 9 resolve (6 ks:, 3 kerstel://)`. The counts appear only when every reference resolves; a failing line names what can't be found instead.
+4. **`doctor` counts each form on the References line:** `9 of 9 resolve (6 ks:, 3 kerstel://)`. It counts env file lines across every file, not the winning value per key, so a `ks:` line that another file overrides still shows. The counts appear only when every reference resolves; a failing line names what can't be found instead.

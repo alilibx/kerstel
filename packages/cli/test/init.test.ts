@@ -1469,3 +1469,35 @@ test("a re-run of init leaves a kerstel:// line from Kerstel 0.1 as it is", asyn
   expect(env).toContain("LEGACY_TOKEN=kerstel://demo-app/LEGACY_TOKEN\n");
   expect(env).toMatch(/^NEW_TOKEN=ks:[a-z-]+$/m);
 });
+
+test("a re-run writes out the key of an existing shorthand that a newer line expands", async () => {
+  isolateEnv({ prefix: "init-expand-existing" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => {
+    vault.setSecret({ scope: "global", key: "OPENAI_API_KEY" }, "sk-existing");
+    vault.setSecret({ scope: "demo-app", key: "LEGACY" }, "legacy");
+  });
+
+  // An earlier init wrote the shorthand; OPENAI_KEY=${OPENAI_API_KEY} came later.
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    "package-lock.json": "{}",
+    ".env": [
+      "OPENAI_API_KEY=ks:global",
+      "OPENAI_KEY=${OPENAI_API_KEY}",
+      "LEGACY=kerstel://demo-app/LEGACY",
+      "LEGACY_COPY=${LEGACY}",
+      "",
+    ].join("\n"),
+  });
+
+  expect(
+    await runInit(options(root, ["--yes", "--non-interactive", "--keep", "OPENAI_KEY,LEGACY_COPY"]), new DefaultsPrompter()),
+  ).toBe(0);
+
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("OPENAI_API_KEY=ks:global/OPENAI_API_KEY\n");
+  expect(env).toContain("OPENAI_KEY=${OPENAI_API_KEY}\n");
+  // A kerstel:// line already names its key, so it stays as it is.
+  expect(env).toContain("LEGACY=kerstel://demo-app/LEGACY\n");
+});

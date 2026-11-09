@@ -81,7 +81,7 @@ test("projectStatus reports an unwired project", () => {
   expect(status?.scope).toBe("site");
   expect(status?.runtime).toBe("node");
   expect(status?.scripts).toEqual({ wrappable: 1, wired: 0, oldForm: [], partlyWired: [], skipped: [] });
-  expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [], long: 0 });
+  expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [], short: 0, long: 0 });
   expect(status?.envFiles).toEqual([".env"]);
 });
 
@@ -255,4 +255,27 @@ test("projectStatus does not call a different package sharing the scope another 
 
   const sharedOnly = rows.filter((row) => row.rootPath !== "/wt/api");
   expect(projectStatus(root, { getSecret: () => null, listProjects: () => sharedOnly })?.otherCheckouts).toEqual([]);
+});
+
+test("projectStatus counts every line by spelling, not only the value that wins", async () => {
+  isolateEnv({ prefix: "status-forms" });
+  await runCli(["set", "site/A", "--value", "a"]);
+
+  // .env.local wins for A, but every machine that loads .env still reads ks:site.
+  const root = makeProject({
+    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
+    ".env.local": "A=kerstel://site/A\n",
+    ".env": "A=ks:site\nPLAIN=still-plain\n",
+  });
+
+  const { key } = await loadOrCreateDataKey();
+  const vault = openVault(key);
+  try {
+    const status = projectStatus(root, vault);
+    expect(status?.references.total).toBe(1);
+    expect(status?.references.short).toBe(1);
+    expect(status?.references.long).toBe(1);
+  } finally {
+    vault.close();
+  }
 });

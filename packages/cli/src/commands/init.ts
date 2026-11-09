@@ -23,7 +23,15 @@ import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, planLauncher } from "../init/laun
 import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import { expandedNames } from "../expansions";
-import { GLOBAL_SCOPE, formatEnvReference, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
+import {
+  GLOBAL_SCOPE,
+  formatEnvReference,
+  formatReference,
+  isShorthand,
+  isValidScope,
+  parseReference,
+  type SecretRef,
+} from "../reference";
 import { vaultPath } from "../paths";
 import { printBanner } from "../ui/banner";
 import { cliName } from "../ui/cli-name";
@@ -887,7 +895,13 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     for (const key of referenced) {
       // Already-migrated keys keep their existing reference, which the
       // rewrite planner needs so an unchanged file is detected as unchanged.
-      references.set(key.key, key.value);
+      // The one exception is a shorthand that a line added since now copies
+      // with `${NAME}`: it gets its key written out, for the same reason as
+      // above. A `kerstel://` line already names its key and stays as it is.
+      const ref = key.reference!;
+      const value =
+        isShorthand(key.value) && expanded.has(key.key) ? formatEnvReference(key.key, ref.scope, ref.key, true) : key.value;
+      references.set(key.key, value);
     }
 
     // --- Plan -----------------------------------------------------------------
