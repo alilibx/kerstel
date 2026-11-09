@@ -108,6 +108,13 @@ function switchTo(state: State, screen: ScreenName): State {
 type Result = { state: State; effects: Effect[] };
 const done = (state: State, effects: Effect[] = []): Result => ({ state, effects });
 
+/** Spec §4.5: the References scan runs on entering the screen, so files changed meanwhile show. */
+function enter(state: State, screen: ScreenName): Result {
+  if (screen === state.screen) return done(state);
+  const next = switchTo(state, screen);
+  return screen === "references" ? done({ ...next, loading: true }, [{ type: "reload" }]) : done(next);
+}
+
 export function update(state: State, event: Event): Result {
   switch (event.type) {
     case "resize": {
@@ -144,13 +151,13 @@ function onKey(state: State, key: Key): Result {
 
   if (isChar(key, "q")) return done({ ...state, quit: true });
   if (isChar(key, "?")) return done({ ...state, help: true });
-  if (isNamed(key, "tab")) return done(switchTo(state, SCREENS[(SCREENS.indexOf(state.screen) + 1) % SCREENS.length]!));
+  if (isNamed(key, "tab")) return enter(state, SCREENS[(SCREENS.indexOf(state.screen) + 1) % SCREENS.length]!);
   if (isNamed(key, "backtab")) {
-    return done(switchTo(state, SCREENS[(SCREENS.indexOf(state.screen) + SCREENS.length - 1) % SCREENS.length]!));
+    return enter(state, SCREENS[(SCREENS.indexOf(state.screen) + SCREENS.length - 1) % SCREENS.length]!);
   }
   if (key.kind === "char" && /^[1-9]$/.test(key.char)) {
     const screen = SCREENS[Number(key.char) - 1];
-    return done(screen ? switchTo(state, screen) : state);
+    return screen ? enter(state, screen) : done(state);
   }
   if (isChar(key, "j") || isNamed(key, "down")) return done(move(state, 1));
   if (isChar(key, "k") || isNamed(key, "up")) return done(move(state, -1));

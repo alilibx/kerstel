@@ -220,9 +220,11 @@ test("a terminal under 60x16 shows one centred line until it grows", () => {
 
 test("a filter that matches nothing, and an empty vault, say so", () => {
   expect(render(press(loaded(), char("/"), char("z"), char("z")), plain).join("\n")).toContain('Nothing matches "zz".');
-  const empty = update(initialState(80, 20), { type: "loaded", secrets: [], refs: { ...refs, checkouts: [], unreachable: [], unused: [], unresolvable: [] } }).state;
+  const nothing: Event = { type: "loaded", secrets: [], refs: { ...refs, checkouts: [], unreachable: [], unused: [], unresolvable: [] } };
+  const empty = update(initialState(80, 20), nothing).state;
   expect(render(empty, plain).join("\n")).toContain("No secrets yet.");
-  expect(render(press(empty, char("2")), plain).join("\n")).toContain("No project is set up yet.");
+  // Entering References rescans; once that lands, the empty state shows.
+  expect(render(press(empty, char("2"), nothing), plain).join("\n")).toContain("No project is set up yet.");
 });
 
 // --- terminal loop ----------------------------------------------------------
@@ -321,4 +323,50 @@ test("kerstel ui refuses without an interactive terminal, and takes no arguments
     console.log = log;
   }
   expect(printed.join("\n")).toContain("ui needs an interactive terminal. Use kerstel ls and kerstel refs in a pipe.");
+});
+
+test("control characters in a file name never reach the terminal", () => {
+  expect(fit("a\x1b[2Jb\u202e", 8)).toBe("a[2Jb   ");
+  const hostile: ProjectRefs = {
+    ...refs,
+    checkouts: [
+      {
+        scope: "web",
+        rootPath: "/src/\x1b]0;owned\x07web",
+        files: [{ path: "/src/web/.env.\x1b[2J", name: ".env.\x1b[?1049l", original: "", references: [ref("web", "DATABASE_URL")] }],
+      },
+    ],
+  };
+  const s = press(update(initialState(100, 20), { type: "loaded", secrets, refs: hostile }).state, char("2"));
+  const text = frameText(render(update(s, { type: "loaded", secrets, refs: hostile }).state, plain));
+  // The only escapes are the frame's own: cursor home, clear to end of line, clear below.
+  expect(text.replace(/\x1b\[(H|K|J)/g, "")).not.toContain("\x1b");
+  expect(text).not.toContain("\x07");
+});
+
+test("a long reference shrinks to leave the mask and the time on the row", () => {
+  const long = "ks:a-very-long-project-scope-name/" + "A_VERY_LONG_KEY_NAME_".repeat(3);
+  const s = update(initialState(60, 16), {
+    type: "loaded",
+    secrets: [{ scope: "x", key: "K", reference: long, updatedAt: Date.UTC(2026, 10, 9, 12) }],
+    refs,
+  }).state;
+  const row = render(s, plain)[2]!;
+  expect(Bun.stringWidth(row)).toBe(60);
+  expect(row).toContain("•".repeat(12));
+  expect(row).toMatch(/20\d\d-\d\d-\d\d \d\d:\d\d/);
+  expect(row).toContain("…");
+  const widths = columnWidths([[long, "x".repeat(12), "y".repeat(16)]], 58);
+  expect(widths[0]! + widths[1]! + widths[2]! + 4).toBe(58);
+});
+
+test("entering References scans again; leaving it does not", () => {
+  const into = update(loaded(), char("2"));
+  expect(into.effects).toEqual([{ type: "reload" }]);
+  expect(into.state.loading).toBe(true);
+  expect(update(loaded(), named("tab")).effects).toEqual([{ type: "reload" }]);
+  const back = update(press(loaded(), char("2"), { type: "loaded", secrets, refs }), char("1"));
+  expect(back.effects).toEqual([]);
+  // Pressing the key for the screen you are on is not a new entry.
+  expect(update(press(loaded(), char("2"), { type: "loaded", secrets, refs }), char("2")).effects).toEqual([]);
 });

@@ -19,10 +19,26 @@ export interface Terminal {
 export const ENTER = "\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J";
 export const LEAVE = "\x1b[?25h\x1b[?1049l";
 
+/** Signals that end the process from outside; each restores the terminal first. */
+const SIGNALS: [NodeJS.Signals, number][] = [
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+  ["SIGINT", 130],
+];
+
 export function processTerminal(): Terminal {
   const stdin = process.stdin;
   const stdout = process.stdout;
   let started = false;
+  const onSignal = new Map<NodeJS.Signals, () => void>(
+    SIGNALS.map(([signal, code]) => [
+      signal,
+      () => {
+        restore();
+        process.exit(code);
+      },
+    ]),
+  );
   const dataListeners: ((chunk: string) => void)[] = [];
   const resizeListeners: (() => void)[] = [];
   const onData = (chunk: Buffer | string) => {
@@ -38,6 +54,7 @@ export function processTerminal(): Terminal {
     stdin.off("data", onData);
     stdout.off("resize", onResize);
     process.off("exit", restore);
+    for (const [signal, handler] of onSignal) process.off(signal, handler);
     try {
       stdin.setRawMode?.(false);
     } catch {
@@ -58,7 +75,11 @@ export function processTerminal(): Terminal {
       if (started) return;
       started = true;
       process.on("exit", restore);
+      for (const [signal, handler] of onSignal) process.on(signal, handler);
       stdin.setRawMode?.(true);
+      // Decoded as a stream, so a character whose bytes arrive in two reads
+      // is one character, not two replacement marks.
+      stdin.setEncoding("utf8");
       stdin.resume();
       stdin.on("data", onData);
       stdout.on("resize", onResize);
