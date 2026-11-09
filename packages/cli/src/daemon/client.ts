@@ -211,10 +211,18 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
  */
 export async function stopDaemonIfRunning(): Promise<boolean> {
   if (!(await isDaemonRunning())) return false;
+  const token = readToken();
   const client = await connectDaemon();
   await client.shutdown();
   client.close();
   for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
+    await Bun.sleep(100);
+  }
+  // The socket goes first; the daemon then closes the vault, which can still
+  // write SQLite's journal files, and clears its token last. Wait for that
+  // too, or `uninstall` deleting the home races those writes and can leave
+  // the folder behind.
+  for (let waited = 0; waited < 5000 && token !== null && readToken() === token; waited += 100) {
     await Bun.sleep(100);
   }
   return true;

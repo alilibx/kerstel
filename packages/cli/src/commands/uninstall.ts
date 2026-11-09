@@ -1,4 +1,4 @@
-import { accessSync, constants, lstatSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
@@ -379,7 +379,14 @@ export async function uninstallCommand(
   // every re-run if the key delete happened first and this one failed after.
   if (await stopDaemonIfRunning()) ok("Stopped the Kerstel daemon.");
   const home = kerstelHome();
-  rmSync(home, { recursive: true, force: true });
+  // Retried: a process that still had a file open in the home (a daemon
+  // stopped by hand a moment ago, an editor) can make one pass fail with
+  // ENOTEMPTY or EBUSY. Checked: `force` would otherwise hide that.
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  if (existsSync(home)) {
+    fail(`Could not delete ${home}: something still has files open in it. Close it, then run uninstall again.`);
+    return 1;
+  }
   ok(`Deleted ${home}.`);
   if (existing.vault && !ownsKey) {
     info(
