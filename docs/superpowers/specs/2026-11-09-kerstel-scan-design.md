@@ -44,11 +44,11 @@ In a template only the certain signals count, since `STRIPE_SECRET_KEY=sk_test_x
 - a URL with a credential in its query (`SECRET_QUERY`, as `explain()` uses it),
 - a PEM block (below),
 
-and, for the first three, only when the credential part (the text after the prefix, the password, or the query parameter's value) looks real: 16 or more characters, mixing letters and digits, with no run of three or more `x`, `X`, `*` or `0`, and none of the words `your`, `here`, `replace`, `example`, `changeme` in any case. So `sk_test_xxx`, `ghp_your_token_here` and `postgres:postgres@` are placeholders, and `?token=8f3kQ2...` is not. Everything else in a template is config.
+and, for the first three, only when the credential (the whole token, the password, or the query parameter's value) looks real: 16 or more characters, mixing letters and digits, with no run of three or more `x`, `X`, `*` or `0`, and none of the words `your`, `here`, `replace`, `example`, `changeme` in any case. So `sk_test_xxx`, `ghp_your_token_here`, AWS's documented `AKIAIOSFODNN7EXAMPLE` and `postgres:postgres@` are placeholders, and `?token=8f3kQ2...` is not. Everything else in a template is config.
 
 `parseDotenv` puts a value it can't read in `unsupported` and never hands its text on, on purpose: inspecting it would mean reading key material. `scan` judges those entries without their values:
 
-- **A PEM block is a secret.** The parser already recognises an unquoted one by its `-----BEGIN ...-----` header. This PR has it also recognise a quoted value whose first line is a PEM header (`KEY="-----BEGIN PRIVATE KEY-----`, then the body), and mark both entries `pem: true` on `UnsupportedValue`. The judgement reads that flag, so the body is never inspected. This applies in templates too.
+- **A PEM block is a secret.** The parser already recognises an unquoted one by its `-----BEGIN ...-----` header. This PR has it also recognise a quoted value whose first line is a PEM header (`KEY="-----BEGIN PRIVATE KEY-----`, then the body), and tag both entries `kind: "pem"` on `UnsupportedValue`. The judgement reads that tag, so the body is never inspected. This applies in templates too.
 - **Any other value that spans lines** is judged by its key's name alone: a name that announces a credential (`SECRET_KEYS`) makes it a secret, any other name makes it unclear.
 - **A line that is not `KEY=value`** is listed as an unreadable line with its line number, not judged.
 
@@ -147,6 +147,7 @@ One object on stdout, for CI and scripts. It always includes key names and line 
   "projects": [
     {
       "path": "/Users/ali/src/shop/apps/web",
+      "name": "@shop/web",
       "workspace": "/Users/ali/src/shop",
       "packageJson": true,
       "scope": null,
@@ -154,6 +155,7 @@ One object on stdout, for CI and scripts. It always includes key names and line 
         {
           "name": ".env",
           "kind": "env",
+          "read": true,
           "git": "tracked",
           "secrets": [{ "key": "STRIPE_SECRET_KEY", "line": 3 }],
           "unclear": [],
@@ -167,7 +169,7 @@ One object on stdout, for CI and scripts. It always includes key names and line 
 }
 ```
 
-`ref` is always the full `ks:<scope>/<KEY>` form, even when the line has the shorthand. `git` is `null` outside a repository. The shape is documented on the CLI page and covered by a test, so changing it is a breaking change.
+A file's `name` is relative to its project (`docker/.env` for a nested one). `read` is false for a swap file or a file that could not be read. `ref` is always the full `ks:<scope>/<KEY>` form, even when the line has the shorthand. `git` is `null` outside a repository. The shape is documented on the CLI page and covered by a test, so changing it is a breaking change.
 
 ## 6. Exit codes
 
@@ -190,10 +192,10 @@ So `kerstel scan` works as a CI step or a cron job as it is. An unresolved refer
 ## 8. Changes by area
 
 - **`packages/cli/src/scan/`** (new): `walk.ts` (the walk and skip list), `report.ts` (per-file judgement, projects, git), `render.ts` (terminal and JSON).
-- **`init/workspace.ts`** (new): `detectWorkspace()`, monorepo spec §3.
+- **`init/workspace.ts`** (new): `detectWorkspace()`, monorepo spec §3, plus a `members` list of every member folder, with or without env files, which `scan` needs to group a nested file.
 - **`init/classify.ts`:** `judge(key, value)` and `isTemplateSecret(value)`, next to `explain()`.
 - **`init/detect.ts`:** exports the template test (`isTemplateEnvFileName`), and moves the `.swp`/`.swo` names into a helper so `scan` knows not to read them.
-- **`init/dotenv-file.ts`:** `UnsupportedValue` gains `pem?: true`, set for an unquoted PEM block and for a quoted value whose first line is a PEM header. `init`'s messages don't change.
+- **`init/dotenv-file.ts`:** `UnsupportedValue` gains `kind`: `pem` (an unquoted PEM block, or a quoted value whose first line is a PEM header), `multiline`, `bad-key`, or `not-a-pair`. `init`'s messages don't change.
 - **`move/git.ts`:** a batched `gitStatuses(repo, files)` beside `gitFileStatus`, which `move` keeps using.
 - **`commands/scan.ts`** and **`index.ts`:** the command, its flags (`--keys`, `--all`, `--json`, `--verbose`), and the `--help` line.
 - **Copy:** the CLI docs page (command row, the JSON shape, the macOS prompt note), getting started (a "Find what's left" step), the security page (scan as an audit), and the README command list.

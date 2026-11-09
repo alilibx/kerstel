@@ -26,9 +26,10 @@ A new module, `packages/cli/src/init/workspace.ts`:
 export interface Workspace {
   root: string;
   source: "package.json" | "pnpm-workspace.yaml";
+  members: string[];             // every member folder, by path, env files or not
   packages: DetectedProject[];   // root first when it has env files, then members by path
 }
-export function detectWorkspace(dir: string): Workspace | null;
+export function detectWorkspace(dir: string, warn?: (message: string) => void): Workspace | null;
 ```
 
 - Globs expand with `Bun.Glob` relative to the root, directories only.
