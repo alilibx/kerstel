@@ -59,7 +59,7 @@ The alternative was to keep sync in Later with shared vaults. It moved because s
 | Read or change a record | Fails. Records are AES-256-GCM with the vault ID, record ID and epoch as associated data (§6.2). A changed or moved blob fails to decrypt and is reported. |
 | Swap two records' blobs | Fails, for the same reason. This is why §6.2 binds the record ID, unlike the local vault, which seals values without associated data. |
 | Add a device of its own | Fails. Adding a device takes a signature from an existing device, and the sync key is sealed only to devices a user confirmed (§7.1). |
-| Serve an old copy of the vault (rollback) | Detected once a device has seen newer state. Each device stores the highest vault revision it has seen and refuses a lower one. |
+| Serve an old copy of the vault (rollback) | Partly detected. Each device stores the highest vault revision it has seen and refuses a lower one. The server assigns revisions, though, and nothing in a payload binds one, so it can resend an older blob for a record under a new, higher revision. That blob still decrypts and replaces a clean local value, with the old one kept in the sync backup (§8.5). Signed device logs would close this; they are later work. |
 | Withhold changes from one device, or show two devices different histories | Not prevented. Sync stops making progress, and `doctor` shows when each device last synced. A fix needs signed device logs; it is later work. |
 | Delete the vault | Possible. Every device still has its full local vault, so nothing is lost. `kerstel sync setup` can upload it again to a new server. |
 
@@ -118,12 +118,13 @@ CREATE TABLE sync_state (
   key        TEXT    NOT NULL,
   base_rev   INTEGER NOT NULL,      -- server revision this copy is based on, 0 if never pushed
   dirty      INTEGER NOT NULL,      -- 1 when changed here and not yet accepted by the server
+  change     INTEGER NOT NULL,      -- local write counter, raised by every set or remove of this key
   conflict   BLOB,                  -- the other device's sealed payload while a conflict is open
   PRIMARY KEY (scope, key)
 );
 ```
 
-`setSecret` and `removeSecret` mark the row dirty in the same transaction as the write. Vault-level state (vault ID, server URL, device IDs, highest revision seen, last sync time and result) goes in `vault_meta`.
+`setSecret` and `removeSecret` mark the row dirty and raise `change` in the same transaction as the write. Vault-level state (vault ID, server URL, device IDs, highest revision seen, last sync time and result) goes in `vault_meta`.
 
 ## 7. Devices
 
@@ -162,7 +163,9 @@ New device: ali-desktop (Linux), key fingerprint 4F2A 91C0 7B3E
 Add it? It will be able to read every secret in this vault. (y/N)
 ```
 
-On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself. The new device then pulls the vault. The default answer is no, and `--yes` is refused for this question.
+On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself. The default answer is no, and `--yes` is refused for this question.
+
+The new device must also know that the sealed key came from the first device and not the server, which can seal a key of its own choosing to any public key. So with the registration, the first device stores a confirmation on the pairing slot: `HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ newDeviceId ‖ epoch ‖ sealedKey)`. The new device fetches its sealed key, checks the confirmation against it, and refuses to join if it doesn't match. Only then does it pull the vault, and only then does it merge and push any secrets it already held (§10). Without this check, a hostile server could hand a joining device a key it chose and an empty vault, and read the secrets the device uploads.
 
 The secret is long because the server could otherwise guess it offline from the pairing post. A short code would need a PAKE such as SPAKE2, which `node:crypto` does not provide. See §13.
 
@@ -175,7 +178,7 @@ The secret is long because the server could otherwise guess it offline from the 
 `ks sync remove-device <name>`:
 
 1. Generates a new sync key (a new epoch) and seals it to every remaining device.
-2. Re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
+2. Pulls, then re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The request names the vault revision it was prepared from. The server rejects it if the vault has moved past that revision, because another device pushed in the meantime and its change would be lost. The client then pulls and prepares the rotation again. Otherwise the server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
 3. Prints a reminder: the removed device already had every value, so rotate any secret it should no longer hold. Kerstel cannot do that for the user.
 
 `kerstel uninstall` on a synced device removes that device from the vault first. If it is the last device, it asks whether to delete the vault on the server too. The default is no.
@@ -189,11 +192,11 @@ The secret is long because the server could otherwise guess it offline from the 
 - `run` and `exec` start a background pull when the last successful sync is more than five minutes old. The command never waits for it, so a value pulled after the app starts reaches the next run.
 - One lock file, `~/.kerstel/sync.lock`, keeps background syncs from overlapping.
 
-The daemon does not sync and opens no network connection. It reads `vault.db` on each resolve, so pulled values reach running apps on their next read. This keeps network code out of the process that holds the data key for every running app.
+The daemon does not sync and opens no network connection. It reads `vault.db` on each resolve, but a running app keeps the values it already has: the hook caches each resolved value for the life of the process, and under Bun it writes every value into `Bun.env` at startup. A pulled value reaches an app when the app restarts, or when it reads a key it hasn't read yet. This keeps network code out of the process that holds the data key for every running app.
 
 ### 8.2 Push
 
-For each dirty row, the client sends `(recordId, baseRev, sealedPayload)`. The server accepts a record when its current revision equals `baseRev`, or when `baseRev` is 0 and the record is new. Each accepted record gets the vault's next revision number. The client stores the new `base_rev` and clears `dirty`.
+For each dirty row, the client sends `(recordId, baseRev, sealedPayload)`. The server accepts a record when its current revision equals `baseRev`, or when `baseRev` is 0 and the record is new. Each accepted record gets the vault's next revision number. The client stores the new `base_rev`, and clears `dirty` only if `change` still equals the value it read when it built the push. That check and the write happen in one statement. If the key changed while the request was in flight, the row stays dirty, now based on the new revision, and the next push sends the newer value.
 
 ### 8.3 Pull
 
@@ -250,9 +253,9 @@ JSON over HTTPS, versioned under `/v1`. Every request except `join` carries `Ker
 | `POST /v1/vaults/:id/records` | Push a batch with compare-and-swap. Returns accepted revisions and conflicts. |
 | `GET /v1/vaults/:id/keys` | This device's sealed sync key for the current epoch |
 | `GET /v1/vaults/:id/devices` | Devices, with sealed names |
-| `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device) |
-| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, removed device, in one transaction |
-| `PUT /v1/pairings/:pairingId` and `GET` | The pairing slot of §7.1, deleted on use or after 10 minutes |
+| `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device), with the pairing confirmation of §7.1 |
+| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, removed device, in one transaction. Rejected if the vault has moved past the revision the request names. |
+| `PUT /v1/pairings/:pairingId` and `GET` | The pairing slot of §7.1, deleted on use or after 10 minutes. `GET` returns the confirmation once the first device accepts. |
 | `DELETE /v1/vaults/:id` | Delete the vault, signed by a device in it |
 
 Limits per vault: 10,000 records, 64 KB per record, and 60 requests a minute per device.
@@ -287,7 +290,7 @@ When 0.3.0 ships, the following change in the same PR:
 
 - Crypto: sealing round trips; a changed or moved blob fails to decrypt; a record ID is stable within an epoch and changes across epochs.
 - Server: compare-and-swap, epoch rotation in one transaction, signature and timestamp checks, replay rejection, limits, and an expired or reused pairing slot.
-- Client against an in-process server: setup, join, push, pull, every row of the §8.3 table, conflicts in a terminal and without one, removal and rotation, rollback detection, and the full pull after the tombstone window.
+- Client against an in-process server: setup, join, push, pull, every row of the §8.3 table, conflicts in a terminal and without one, removal and rotation, a rotation rejected because another device pushed first, a key changed while its push is in flight, a join refused when the pairing confirmation doesn't match the sealed key, a lower vault revision refused, and the full pull after the tombstone window.
 - Offline: with the server unreachable, `set`, `run`, `exec`, `resolve` and the hook work and print no sync error, and `doctor` shows the failure.
 - No test prints a value, and every temporary home and server database is removed.
 
