@@ -40,6 +40,23 @@ test("the workspaces array finds members, skipping node_modules and dot folders"
   expect(ws.packages.map((p) => relative(root, p.root))).toEqual(["apps/web"]);
 });
 
+test("a ** glob finds nested members without entering node_modules or dot folders", () => {
+  const root = tree({
+    "package.json": pkg({ workspaces: ["packages/**", "./tools/*/"] }),
+    "packages/group/a/package.json": pkg(),
+    "packages/b/package.json": pkg(),
+    "packages/b/node_modules/c/package.json": pkg(),
+    "packages/.cache/d/package.json": pkg(),
+    "tools/cli/package.json": pkg(),
+    "tools/cli/deep/package.json": pkg(),
+  });
+  expect(detectWorkspace(root)!.members.map((m) => relative(root, m))).toEqual([
+    "packages/b",
+    "packages/group/a",
+    "tools/cli",
+  ]);
+});
+
 test("the object form, a negation, and a root with env files of its own", () => {
   const root = tree({
     "package.json": pkg({ workspaces: { packages: ["apps/*", "!apps/legacy"] } }),

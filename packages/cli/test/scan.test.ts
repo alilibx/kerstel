@@ -373,3 +373,28 @@ test("a complete PEM file, quoted or not, in an env file or a template, fails th
     expect(out).not.toContain("MARKER_PEM");
   }
 });
+
+test("a symlinked scan root is scanned as its target folder", () => {
+  const target = tree({ "app/.env": `TOKEN=${MARKERS[0]}\n` });
+  const link = join(temp("link"), "code");
+  symlinkSync(target, link);
+  const walked = walk(link, { home: temp("home") });
+  expect(walked.files.map((f) => relative(link, f.path))).toEqual(["app/.env"]);
+});
+
+test("a missing reference gets init advice only in a file init reads", async () => {
+  const root = tree({
+    "app/package.json": pkg(),
+    "app/.env": "OPENAI_API_KEY=ks:global\n",
+    "app/docker/.env": "DB=ks:app/DB\n",
+    "loose/.env": "X=ks:global/X\n",
+  });
+  const { code, out } = await run([root]);
+  expect(code).toBe(0);
+  expect(out).toContain("1 reference isn't in this vault. Run kerstel init in the project to add its value:");
+  expect(out).toContain(`     ${join(root, "app")}\n`);
+  expect(out).toContain("2 references in files kerstel init doesn't read aren't in this vault");
+  expect(out).toContain("with kerstel set <scope>/<KEY> (--keys names them):");
+  expect(out).toContain(join(root, "app/docker/.env"));
+  expect(out).toContain(join(root, "loose/.env"));
+});

@@ -228,13 +228,18 @@ function summary(report: ScanReport, options: RenderOptions, theme: Theme, home:
     other: [],
   };
   let unclear = 0;
-  let missing = 0;
+  // References `init` can fill in, by project, and the files it can't reach.
+  const missingInit = new Map<string, number>();
+  const missingOther: FileReport[] = [];
   for (const project of report.projects) {
     for (const file of project.files) {
       const group = adviceFor(file);
       if (group) by[group].push({ file, project });
       unclear += file.unclear.length;
-      missing += missingRefs(file);
+      const missing = missingRefs(file);
+      if (missing === 0) continue;
+      if (file.initReads) missingInit.set(project.path, (missingInit.get(project.path) ?? 0) + missing);
+      else missingOther.push(file);
     }
   }
   const red = `${theme.red(SYMBOLS.problem)}  `;
@@ -278,10 +283,20 @@ function summary(report: ScanReport, options: RenderOptions, theme: Theme, home:
       ),
     );
   }
-  if (missing > 0) {
+  if (missingInit.size > 0) {
+    const n = [...missingInit.values()].reduce((a, b) => a + b, 0);
     out.push(
-      `${warn}${plural(missing, "reference")} ${missing === 1 ? "isn't" : "aren't"} in this vault. Run ${options.cli} init in the project to add ${missing === 1 ? "its value" : "their values"}.`,
+      `${warn}${plural(n, "reference")} ${n === 1 ? "isn't" : "aren't"} in this vault. Run ${options.cli} init in ${missingInit.size === 1 ? "the project" : "each project"} to add ${n === 1 ? "its value" : "their values"}:`,
     );
+    out.push(...list([...missingInit.keys()].map((p) => tilde(p, home))));
+  }
+  if (missingOther.length > 0) {
+    const n = missingOther.reduce((sum, file) => sum + missingRefs(file), 0);
+    out.push(
+      `${warn}${plural(n, "reference")} in files ${options.cli} init doesn't read ${n === 1 ? "isn't" : "aren't"} in this vault. Store each value`,
+    );
+    out.push(`   with ${options.cli} set <scope>/<KEY>${options.keys ? "" : " (--keys names them)"}:`);
+    out.push(...list(missingOther.map((file) => tilde(file.path, home))));
   }
   if (!hasSecrets(report)) out.push(`${theme.green(SYMBOLS.pass)}  No secrets in plain text.`);
   if (unclear > 0) {

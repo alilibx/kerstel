@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { detectProject, readPackageJson, type DetectedProject } from "./detect";
 
@@ -63,25 +63,55 @@ function normalise(glob: string): string {
   return glob.replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
+const GLOB_CHARS = /[*?[\]{}!]/;
+
+/**
+ * Folders under `root` a glob could match, relative and with forward slashes.
+ * Walks by hand rather than with `Bun.Glob.scanSync` so `node_modules` and
+ * dot folders are never entered at all: `packages/**` would otherwise search
+ * every dependency before the result was filtered. It starts at the glob's
+ * literal prefix and stops at its depth unless the glob has `**`.
+ */
+function candidateDirs(root: string, glob: string): string[] {
+  const segments = glob.split("/");
+  const literal: string[] = [];
+  for (const segment of segments) {
+    if (GLOB_CHARS.test(segment)) break;
+    literal.push(segment);
+  }
+  const maxDepth = segments.includes("**") ? Infinity : segments.length;
+  const out: string[] = [];
+  const stack: Array<{ rel: string; depth: number }> = [{ rel: literal.join("/"), depth: literal.length }];
+  while (stack.length > 0) {
+    const { rel, depth } = stack.pop()!;
+    if (rel !== "") out.push(rel);
+    if (depth >= maxDepth) continue;
+    let entries;
+    try {
+      entries = readdirSync(rel === "" ? root : join(root, rel), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      stack.push({ rel: rel === "" ? entry.name : `${rel}/${entry.name}`, depth: depth + 1 });
+    }
+  }
+  return out;
+}
+
 /** Member folders matched by the globs, relative to the root, sorted. */
 function expandMembers(root: string, globs: string[]): string[] {
   const positive = globs.filter((g) => !g.startsWith("!")).map(normalise);
   const negative = globs.filter((g) => g.startsWith("!")).map((g) => new Bun.Glob(normalise(g.slice(1))));
   const found = new Set<string>();
   for (const glob of positive) {
-    if (glob === "" || glob === ".") continue;
-    let matches: Iterable<string>;
-    try {
-      matches = new Bun.Glob(`${glob}/package.json`).scanSync({ cwd: root, onlyFiles: true, dot: false });
-    } catch {
-      continue;
-    }
-    for (const match of matches) {
-      const dir = match.replace(/\\/g, "/").replace(/\/package\.json$/, "");
-      const segments = dir.split("/");
-      if (segments.some((s) => s === "node_modules" || s.startsWith("."))) continue;
+    if (glob === "" || glob === "." || glob.split("/").includes("..")) continue;
+    const matcher = new Bun.Glob(glob);
+    for (const dir of candidateDirs(root, glob)) {
+      if (!matcher.match(dir)) continue;
       if (negative.some((neg) => neg.match(dir))) continue;
-      found.add(dir);
+      if (existsSync(join(root, dir, "package.json"))) found.add(dir);
     }
   }
   return [...found].sort();

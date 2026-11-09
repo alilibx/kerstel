@@ -82,7 +82,9 @@ export interface WalkOptions {
 export function walk(root: string, options: WalkOptions = {}): WalkResult {
   const home = options.home ?? homedir();
   const macLibrary = (options.platform ?? process.platform) === "darwin" ? join(home, "Library") : null;
-  const device = lstatSync(root).dev;
+  // The folder's own device, through a symlink if the root is one: `scan ~/code`
+  // where ~/code links to another disk must compare against that disk.
+  const device = statSync(root).dev;
 
   const result: WalkResult = {
     root,
