@@ -26,9 +26,9 @@ export function runEffect(effect: Effect, data: UiData): Event {
     case "reload":
       return { type: "loaded", ...data.load() };
     case "reveal":
-      return { type: "revealed", reference: reference(effect.ref), value: data.reveal(effect.ref) };
+      return { type: "revealed", id: effect.id, reference: reference(effect.ref), value: data.reveal(effect.ref) };
     case "store":
-      data.store(effect.ref, effect.value);
+      if (!data.store(effect.ref, effect.value, effect.replace)) return { type: "conflict", reference: reference(effect.ref) };
       return { type: "stored", reference: reference(effect.ref) };
     case "remove":
       return { type: "removed", reference: reference(effect.ref), existed: data.remove(effect.ref) };
@@ -52,6 +52,9 @@ export async function runUi(terminal: Terminal, data: UiData, theme: Theme): Pro
         // After the frame that says "Loading…" or "Scanning…" is on screen.
         setTimeout(() => {
           if (finished) return;
+          // A reveal cancelled by a key that arrived in the same read never
+          // decrypts, so it never writes an audit row for a value not shown.
+          if (effect.type === "reveal" && state.pendingReveal?.id !== effect.id) return;
           let event: Event;
           try {
             event = runEffect(effect, data);
@@ -79,7 +82,9 @@ export async function runUi(terminal: Terminal, data: UiData, theme: Theme): Pro
         }
       };
       terminal.onData((chunk) => {
-        for (const key of parser.feed(chunk)) dispatch({ type: "key", key });
+        for (const input of parser.feed(chunk)) {
+          dispatch(input.kind === "paste" ? { type: "paste", text: input.text } : { type: "key", key: input });
+        }
       });
       terminal.onResize(() => dispatch({ type: "resize", width: terminal.width, height: terminal.height }));
       try {

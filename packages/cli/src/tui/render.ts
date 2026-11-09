@@ -76,7 +76,14 @@ function statusBar(state: State, theme: Theme): string {
   const error = state.modal?.kind === "input" ? state.modal.error : null;
   if (error) return theme.red(fit(error, state.width));
   if (state.modal) {
-    const keys = state.modal.kind === "confirm" ? "y yes   n no   Esc cancel" : state.modal.kind === "pick-scope" ? "Enter choose   Esc cancel" : "Enter next   Esc cancel";
+    const keys =
+      state.modal.kind === "confirm"
+        ? state.modal.defaultYes
+          ? "y yes (Enter)  n no  Esc cancel"
+          : "y yes  n no (Enter)  Esc cancel"
+        : state.modal.kind === "pick-scope"
+          ? "Enter choose  Esc cancel"
+          : "Enter next  Esc cancel";
     return theme.dim(fit(keys, state.width));
   }
   if (state.status) {
@@ -90,7 +97,9 @@ function statusBar(state: State, theme: Theme): string {
 
 /** The prompt line of an input or a confirm, where the filter line usually is. */
 function modalLine(modal: Modal, width: number, theme: Theme): string | null {
-  if (modal.kind === "confirm") return theme.bold(fit(`${modal.question} ${modal.defaultYes ? "Y/n" : "y/N"}`, width));
+  // The question alone, so the name it asks about fits; the context goes on
+  // the row above and the choices, with the default, on the status bar.
+  if (modal.kind === "confirm") return theme.bold(fit(modal.question, width));
   if (modal.kind !== "input") return null;
   if (modal.field === "scope") return fit(`New scope: ${modal.text}▏`, width);
   if (modal.field === "key") return fit(`Key in ${modal.scope}: ${modal.text}▏`, width);
@@ -161,6 +170,9 @@ export function render(state: State, theme: Theme): Frame {
       theme,
     );
     if (!header) middle = [" ".repeat(width), ...middle];
+  }
+  if (state.modal?.kind === "confirm" && state.modal.detail) {
+    middle = [...middle.slice(0, -1), theme.yellow(fit(state.modal.detail, width))];
   }
   return [tabs(state, theme), ...middle, filterLine(state, theme), statusBar(state, theme)];
 }

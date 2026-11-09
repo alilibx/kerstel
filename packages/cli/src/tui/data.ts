@@ -25,7 +25,12 @@ export interface UiData {
   load(): Loaded;
   /** The value, after writing the `reveal` audit row; null when the secret is gone. */
   reveal(ref: SecretRef): string | null;
-  store(ref: SecretRef, value: string): void;
+  /**
+   * Stores the value and returns true, unless `replace` is false and the
+   * secret exists: one created elsewhere since the list loaded is never
+   * overwritten without the replace question. Then it stores nothing.
+   */
+  store(ref: SecretRef, value: string, replace: boolean): boolean;
   /** Whether there was a secret to remove. */
   remove(ref: SecretRef): boolean;
 }
@@ -70,8 +75,11 @@ export function vaultData(vault: Vault): UiData {
       });
       return vault.getSecret(ref);
     },
-    store(ref, value) {
+    store(ref, value, replace) {
+      // By name, without decrypting anything.
+      if (!replace && vault.listSecrets(ref.scope).some((s) => s.key === ref.key)) return false;
       vault.setSecret(ref, value);
+      return true;
     },
     remove(ref) {
       return vault.removeSecret(ref);

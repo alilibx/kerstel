@@ -16,8 +16,9 @@ export interface Terminal {
   restore(): void;
 }
 
-export const ENTER = "\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J";
-export const LEAVE = "\x1b[?25h\x1b[?1049l";
+/** Alternate screen, hidden cursor, and bracketed paste, so pasted text arrives marked as text. */
+export const ENTER = "\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[H\x1b[2J";
+export const LEAVE = "\x1b[?2004l\x1b[?25h\x1b[?1049l";
 
 /** Signals that end the process from outside; each restores the terminal first. */
 const SIGNALS: [NodeJS.Signals, number][] = [

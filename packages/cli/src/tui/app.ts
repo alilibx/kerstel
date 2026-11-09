@@ -43,6 +43,14 @@ export interface State {
    * dots until the next key, and lives nowhere else in the state.
    */
   revealed: { reference: string; value: string } | null;
+  /**
+   * The reveal asked for and not yet answered. Any key cancels it, so a key
+   * that arrives in the same read as `r` (`rj`) is never followed by the value
+   * appearing anyway; a result for any other request is dropped.
+   */
+  pendingReveal: { id: number; reference: string } | null;
+  /** Numbers each reveal request. */
+  nextReveal: number;
   /** An add, edit or delete in progress. While one is open, every key goes to it. */
   modal: Modal | null;
   /** A secret to put the cursor on once the next load lands: the one just stored. */
@@ -74,24 +82,30 @@ export type Modal =
       action: "store" | "remove";
       ref: SecretRef;
       value: string;
+      /** A line of context above the question, such as how many files use the secret. */
+      detail: string | null;
       question: string;
       defaultYes: boolean;
+      /** A store that may replace an existing value. Without it, a secret created elsewhere meanwhile is refused. */
+      replace: boolean;
     };
 
 export type Event =
   | { type: "key"; key: Key }
+  | { type: "paste"; text: string }
   | { type: "resize"; width: number; height: number }
   | ({ type: "loaded" } & Loaded)
   | { type: "error"; message: string }
-  | { type: "revealed"; reference: string; value: string | null }
+  | { type: "revealed"; id: number; reference: string; value: string | null }
   | { type: "stored"; reference: string }
+  | { type: "conflict"; reference: string }
   | { type: "removed"; reference: string; existed: boolean };
 
 /** Spec §4.2: the loop runs these against `data.ts` and feeds the result back as an event. */
 export type Effect =
   | { type: "reload" }
-  | { type: "reveal"; ref: SecretRef }
-  | { type: "store"; ref: SecretRef; value: string }
+  | { type: "reveal"; id: number; ref: SecretRef }
+  | { type: "store"; ref: SecretRef; value: string; replace: boolean }
   | { type: "remove"; ref: SecretRef };
 
 export function initialState(width: number, height: number): State {
@@ -110,6 +124,8 @@ export function initialState(width: number, height: number): State {
     status: null,
     quit: false,
     revealed: null,
+    pendingReveal: null,
+    nextReveal: 1,
     modal: null,
     select: null,
   };
@@ -176,6 +192,10 @@ export function update(state: State, event: Event): Result {
       let next: State = { ...state, secrets: event.secrets, refs: event.refs, loading: false, select: null };
       next = SCREENS.reduce<State>((s, screen) => withList(s, screen, {}), next);
       if (state.select) {
+        // A filter that hides the secret just stored is cleared, so the cursor can land on it.
+        if (!rowsFor(next, "secrets").some((r) => r.reference === state.select)) {
+          next = withList(next, "secrets", { filter: "", cursor: 0, top: 0 });
+        }
         const index = rowsFor(next, "secrets").findIndex((r) => r.reference === state.select);
         if (index !== -1) next = withList(next, "secrets", { cursor: index });
       }
@@ -184,6 +204,9 @@ export function update(state: State, event: Event): Result {
     case "error":
       return done({ ...state, loading: false, status: { text: event.message, tone: "problem" } });
     case "revealed":
+      // Cancelled by a key since, or an answer to an older request: never shown.
+      if (state.pendingReveal?.id !== event.id) return done(state);
+      state = { ...state, pendingReveal: null };
       if (event.value === null) {
         return done({ ...state, status: { text: `No secret at ${event.reference}. It was removed elsewhere.`, tone: "problem" } }, [
           { type: "reload" },
@@ -193,6 +216,18 @@ export function update(state: State, event: Event): Result {
     case "stored":
       return done(
         { ...state, loading: true, select: event.reference, status: { text: `Stored ${event.reference}`, tone: "info" } },
+        [{ type: "reload" }],
+      );
+    case "conflict":
+      return done(
+        {
+          ...state,
+          loading: true,
+          status: {
+            text: `${event.reference} was created elsewhere since this list loaded. Nothing was stored; add it again to replace it.`,
+            tone: "problem",
+          },
+        },
         [{ type: "reload" }],
       );
     case "removed":
@@ -208,7 +243,13 @@ export function update(state: State, event: Event): Result {
       );
     case "key":
       // Any key hides a revealed value: it shows only until you move. Spec §4.4.
-      return onKey({ ...state, status: null, revealed: null }, event.key, state.revealed);
+      return onKey(
+        { ...state, status: null, revealed: null, pendingReveal: null },
+        event.key,
+        state.revealed?.reference ?? state.pendingReveal?.reference ?? null,
+      );
+    case "paste":
+      return onPaste({ ...state, status: null, revealed: null, pendingReveal: null }, event.text);
   }
 }
 
@@ -265,7 +306,9 @@ function onModal(state: State, modal: Modal, key: Key): Result {
     if (no) return close();
     if (!yes) return done(state);
     const effect: Effect =
-      modal.action === "store" ? { type: "store", ref: modal.ref, value: modal.value } : { type: "remove", ref: modal.ref };
+      modal.action === "store"
+        ? { type: "store", ref: modal.ref, value: modal.value, replace: modal.replace }
+        : { type: "remove", ref: modal.ref };
     return done({ ...state, modal: null }, [effect]);
   }
 
@@ -295,12 +338,7 @@ function onModal(state: State, modal: Modal, key: Key): Result {
   const reference = formatReference(modal.scope, modal.key);
   const exists = state.secrets.some((s) => s.reference === reference);
   // An add that lands on an existing secret replaces it: say so, and default to No.
-  const question =
-    modal.mode === "edit"
-      ? `Replace the value of ${reference}?`
-      : exists
-        ? `${reference} already exists. Replace its value?`
-        : `Store ${reference}?`;
+  const replacing = modal.mode === "edit" || exists;
   return done({
     ...state,
     modal: {
@@ -308,21 +346,27 @@ function onModal(state: State, modal: Modal, key: Key): Result {
       action: "store",
       ref: { scope: modal.scope, key: modal.key },
       value: modal.text,
-      question,
+      detail: modal.mode === "add" && exists ? `${reference} already exists.` : null,
+      question: replacing ? `Replace the value of ${reference}?` : `Store ${reference}?`,
+      // An add that lands on an existing secret replaces it: say so, and default to No.
       defaultYes: modal.mode === "edit" || !exists,
+      replace: replacing,
     },
   });
 }
 
-function onSecretsAction(state: State, key: Key, revealed: State["revealed"]): Result | null {
+function onSecretsAction(state: State, key: Key, shown: string | null): Result | null {
   if (isChar(key, "a")) return done({ ...state, modal: { kind: "pick-scope", choices: scopesForAdd(state), cursor: 0 } });
   const secret = currentSecret(state);
   if (!secret) return null;
   const ref = { scope: secret.scope, key: secret.key };
   if (isChar(key, "r")) {
-    // r again on the row it revealed hides it, as any key does.
-    if (revealed?.reference === secret.reference) return done(state);
-    return done(state, [{ type: "reveal", ref }]);
+    // r again on the row it revealed, or is revealing, hides it, as any key does.
+    if (shown === secret.reference) return done(state);
+    const id = state.nextReveal;
+    return done({ ...state, pendingReveal: { id, reference: secret.reference }, nextReveal: id + 1 }, [
+      { type: "reveal", id, ref },
+    ]);
   }
   if (isChar(key, "e")) {
     return done({
@@ -341,15 +385,33 @@ function onSecretsAction(state: State, key: Key, revealed: State["revealed"]): R
         action: "remove",
         ref,
         value: "",
-        question: `${used}${partial ? " that could be read" : ""}. Delete ${secret.reference}?`,
+        detail: `${used}${partial ? " that could be read" : ""}.`,
+        question: `Delete ${secret.reference}?`,
         defaultYes: false,
+        replace: false,
       },
     });
   }
   return null;
 }
 
-function onKey(state: State, key: Key, revealed: State["revealed"] = null): Result {
+/**
+ * Pasted text, from the terminal's bracketed paste. It goes into an open input
+ * as text, newlines and tabs included, so a pasted multi-line secret is stored
+ * whole and its newlines can never press Enter. Anywhere else it is ignored.
+ */
+function onPaste(state: State, text: string): Result {
+  if (state.modal?.kind === "input") {
+    return done({ ...state, modal: { ...state.modal, text: state.modal.text + text, error: null } });
+  }
+  if (state.filtering) {
+    const list = state.lists[state.screen];
+    return done(withList(state, state.screen, { filter: list.filter + text.replace(/[\r\n\t]+/g, " "), cursor: 0, top: 0 }));
+  }
+  return done(state);
+}
+
+function onKey(state: State, key: Key, shown: string | null = null): Result {
   if (key.kind === "ctrl" && key.char === "c") return done({ ...state, quit: true });
   if (state.modal) return onModal(state, state.modal, key);
 
@@ -387,7 +449,7 @@ function onKey(state: State, key: Key, revealed: State["revealed"] = null): Resu
   if (isNamed(key, "esc")) return done(withList(state, state.screen, { filter: "" }));
 
   if (state.screen === "secrets") {
-    const action = onSecretsAction(state, key, revealed);
+    const action = onSecretsAction(state, key, shown);
     if (action) return action;
   }
 

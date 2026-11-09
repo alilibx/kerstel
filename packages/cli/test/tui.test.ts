@@ -264,7 +264,7 @@ class FakeTerminal implements Terminal {
 
 const unused = {
   reveal: () => null,
-  store: () => {},
+  store: () => true,
   remove: () => false,
 };
 const data: UiData = { load: () => ({ secrets, refs }), ...unused };
@@ -377,4 +377,19 @@ test("entering References scans again; leaving it does not", () => {
   expect(back.effects).toEqual([]);
   // Pressing the key for the screen you are on is not a new entry.
   expect(update(press(loaded(), char("2"), { type: "loaded", secrets, refs }), char("2")).effects).toEqual([]);
+});
+
+test("a reveal cancelled in the same read never decrypts, so it writes no audit row", async () => {
+  const term = new FakeTerminal();
+  let reveals = 0;
+  const done = runUi(term, { ...data, reveal: () => ((reveals += 1), "sk-never-shown") }, plain);
+  await tick();
+  term.send("rj");
+  await tick();
+  expect(reveals).toBe(0);
+  term.send("r");
+  await tick();
+  expect(reveals).toBe(1);
+  term.send("q");
+  await done;
 });
