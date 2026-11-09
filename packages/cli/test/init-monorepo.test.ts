@@ -302,3 +302,74 @@ test("--from-stdin values may nest by package path, or stay flat for every packa
   expect(suppliedValue(json, ".", "ROOT_ONLY")).toBe("root");
   expect(suppliedValue(json, "apps/web", "MISSING")).toBeUndefined();
 });
+
+test("a key two packages hold with different values stays with each package", async () => {
+  isolateEnv({ prefix: "mono-differ" });
+  await bootLocalDaemon();
+  const root = makeTree({
+    "package.json": pkg("shop", { workspaces: ["apps/*"] }),
+    "apps/web/package.json": pkg("@shop/web"),
+    "apps/web/.env": "STRIPE_SECRET_KEY=web-stripe-account-1\n",
+    "apps/api/package.json": pkg("@shop/api"),
+    "apps/api/.env": "STRIPE_SECRET_KEY=api-stripe-account-2\n",
+  });
+  const log = captureLog();
+  try {
+    expect(await runInit(options(root, ["--yes"]), new DefaultsPrompter())).toBe(0);
+  } finally {
+    log.restore();
+  }
+  expect(log.text()).toContain("different values in apps/api and apps/web");
+  await withVault((vault) => {
+    expect(vault.getSecret({ scope: "web", key: "STRIPE_SECRET_KEY" })).toBe("web-stripe-account-1");
+    expect(vault.getSecret({ scope: "api", key: "STRIPE_SECRET_KEY" })).toBe("api-stripe-account-2");
+    expect(vault.getSecret({ scope: "global", key: "STRIPE_SECRET_KEY" })).toBeNull();
+  });
+});
+
+test("two packages storing different values in one reference stop the run before any write", async () => {
+  isolateEnv({ prefix: "mono-clash" });
+  const root = makeTree({
+    "package.json": pkg("shop", { workspaces: ["apps/*"] }),
+    "apps/web/package.json": pkg("@shop/web"),
+    "apps/web/.env": "STRIPE_SECRET_KEY=web-stripe-account-1\n",
+    "apps/api/package.json": pkg("@shop/api"),
+    "apps/api/.env": "STRIPE_SECRET_KEY=api-stripe-account-2\n",
+  });
+  const log = captureLog();
+  try {
+    expect(await runInit(options(root, ["--yes", "--global", "STRIPE_SECRET_KEY"]), new DefaultsPrompter())).toBe(2);
+  } finally {
+    log.restore();
+  }
+  expect(log.text()).toContain(
+    "apps/api and apps/web would store different values in ks:global/STRIPE_SECRET_KEY",
+  );
+  expect(log.text()).not.toContain("web-stripe-account-1");
+  expect(readFileSync(join(root, "apps/web/.env"), "utf8")).toBe("STRIPE_SECRET_KEY=web-stripe-account-1\n");
+  await withVault((vault) => expect(vault.getSecret({ scope: "global", key: "STRIPE_SECRET_KEY" })).toBeNull());
+});
+
+test("the .gitignore question counts plaintext in packages and files this run leaves alone", async () => {
+  isolateEnv({ prefix: "mono-ignore" });
+  await bootLocalDaemon();
+  const root = shop();
+  writeFileSync(join(root, ".gitignore"), ".env\n.env.*\n");
+  writeFileSync(join(root, "apps/web/.env.bak"), "OLD_TOKEN=stale-value-1\n");
+  mkdirSync(join(root, "apps/web/docker"));
+  writeFileSync(join(root, "apps/web/docker/.env"), "DB_PASSWORD=nested-value-1\n");
+  const prompter = new ScriptedPrompter([[join(root, "apps/web")], "accept", "keep", "apply"]);
+  const log = captureLog();
+  try {
+    expect(await runInit(options(root), prompter)).toBe(0);
+  } finally {
+    log.restore();
+  }
+  const warning = log.lines.find((line) => line.includes("committing these files would expose them"))!;
+  expect(warning).toContain(".env: TURBO_TOKEN");
+  expect(warning).toContain("apps/api/.env: SESSION_SECRET");
+  expect(warning).toContain("apps/web/.env.bak: OLD_TOKEN");
+  expect(warning).toContain("apps/web/docker/.env: DB_PASSWORD");
+  expect(warning).not.toContain("stale-value-1");
+  expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(".env\n.env.*\n");
+});

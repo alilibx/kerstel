@@ -6,12 +6,16 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Added
 
-- `kerstel init` at a monorepo root (a `package.json` with `workspaces`, or a `pnpm-workspace.yaml`) sets up every package with `.env` files in one run. It asks which packages to include, shows one overview with a section per package, asks **Look right?** and the `.gitignore` question once, and applies package by package. A key two packages hold with the same value is suggested for the shared vault. `--from-stdin` accepts values nested by package path.
+- `kerstel init` at a monorepo root (a `package.json` with `workspaces`, or a `pnpm-workspace.yaml`) sets up every package with `.env` files in one run. It asks which packages to include, shows one overview with a section per package, asks **Look right?** and the `.gitignore` question once, and applies package by package. A key two packages hold with the same value is suggested for the shared vault; one they hold with different values stays with each package, and `init` stops before writing anything if two packages would store different values under one reference. `--from-stdin` accepts values nested by package path.
 - `kerstel scan [path]` finds every env file under a folder, a monorepo, or your home folder (`kerstel scan ~`), and reports what each holds without printing a value: secrets still in plain text, lines it can't classify, references this vault lacks, backup copies like `.env.bak`, templates like `.env.example` with real keys in them, and files git tracks. The summary says what to do with each, `--keys` names the keys and line numbers, `--json` gives scripts the same report, and it exits `1` when it finds a secret, so it can run in CI.
 
 ### Changed
 
 - References are shorter. `kerstel init` and `ks move` now write `OPENAI_API_KEY=ks:global` when the variable and the vault key share a name, and `ks:global/OPENAI_API_KEY` when they don't, or when another line of your env files copies the variable with `${OPENAI_API_KEY}`. References in the `kerstel://global/OPENAI_API_KEY` form keep working everywhere and are never rewritten for you. Messages show references as `ks:<scope>/<KEY>`, and `ks get`, `set`, `rm` and `resolve` accept every form. A project with `ks:` references needs this version of Kerstel on every machine that runs it, because older versions pass `ks:global` to the app as text; `kerstel doctor` shows how many references a project has in each form. If a short reference reaches a variable with another name and finds nothing, the error says which key it looked for and how to write the line.
+
+### Fixed
+
+- Before offering to remove the `.env` lines from `.gitignore`, `kerstel init` now also names the plaintext keys in env files those lines hide but `init` doesn't rewrite, such as a nested `docker/.env` or a `.env.bak` backup, so the question no longer calls the files safe to commit when they aren't.
 
 ## 0.1.5 (2026-11-08)
 

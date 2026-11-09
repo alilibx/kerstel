@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative, sep } from "node:path";
 import { openContext, type CliContext } from "../context";
 import { cliCommand, isCompiledBinary } from "../daemon/spawn";
 import { DESTINATION_CHOICES, explain, isSafeToDisplay, type Suggestion } from "../init/classify";
 import { collectKeys, loadEnvFiles, type CollectedKey, type LoadedEnvFile } from "../init/collect";
 import { createBackup, type BackupVaultValue } from "../init/backup";
-import { detectProject, type DetectedProject } from "../init/detect";
+import { detectProject, isBinaryBackupName, type DetectedProject } from "../init/detect";
+import { walk } from "../scan/walk";
 import { detectWorkspace } from "../init/workspace";
 import { entries, parseDotenv, serializeDotenv, setValue, type UnsupportedValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
@@ -331,26 +332,30 @@ function labelled(label: string, text: string): string {
 }
 
 /**
- * Monorepo spec §4 step 5: the labels of the packages where KEY holds this
- * same value, when there are two or more of them. Such a key is most likely
- * one account used by several packages, so the shared vault is suggested.
+ * Monorepo spec §4 step 5: how KEY in this package compares with the same KEY
+ * in the other selected packages. `same` when every package holding it has
+ * this value, which is most likely one account several packages use, so the
+ * shared vault is suggested. `differs` when any holds another value: there is
+ * one shared copy per key, so suggesting it would hand some package another
+ * package's credential, and the key stays with each package instead.
  */
-function sharedAcrossPackages(packages: DecideInput[]): Map<DecideInput, Map<string, string[]>> {
-  const byKeyValue = new Map<string, string[]>();
+function acrossPackages(
+  packages: DecideInput[],
+): Map<DecideInput, Map<string, { kind: "same" | "differs"; labels: string[] }>> {
+  const byKey = new Map<string, { label: string; value: string }[]>();
   for (const input of packages) {
-    for (const key of input.keys) {
-      const id = JSON.stringify([key.key, key.value]);
-      byKeyValue.set(id, [...(byKeyValue.get(id) ?? []), input.label]);
-    }
+    for (const key of input.keys) byKey.set(key.key, [...(byKey.get(key.key) ?? []), { label: input.label, value: key.value }]);
   }
-  const out = new Map<DecideInput, Map<string, string[]>>();
+  const out = new Map<DecideInput, Map<string, { kind: "same" | "differs"; labels: string[] }>>();
   for (const input of packages) {
-    const shared = new Map<string, string[]>();
+    const found = new Map<string, { kind: "same" | "differs"; labels: string[] }>();
     for (const key of input.keys) {
-      const labels = byKeyValue.get(JSON.stringify([key.key, key.value]))!;
-      if (labels.length >= 2) shared.set(key.key, labels);
+      const holders = byKey.get(key.key)!;
+      if (holders.length < 2) continue;
+      const labels = holders.map((h) => h.label);
+      found.set(key.key, { kind: holders.every((h) => h.value === key.value) ? "same" : "differs", labels });
     }
-    out.set(input, shared);
+    out.set(input, found);
   }
   return out;
 }
@@ -381,7 +386,7 @@ async function decideTargets(
     if (!vault.canCompare) return "unknown";
     return vault.value(ref) === key.value ? "same" : "differs";
   };
-  const sameValue = sharedAcrossPackages(packages);
+  const across = acrossPackages(packages);
   const decisions: Decision[] = packages.flatMap((input) =>
     input.keys.map((key): Decision => {
       const { scope, label } = input;
@@ -405,10 +410,13 @@ async function decideTargets(
           sharedDiffers: true,
         };
       }
-      const across = sameValue.get(input)!.get(key.key);
-      if (across && suggestion !== "plaintext") {
-        const others = across.join(" and ");
-        return { ...base, suggestion: "global", target: "global", reason: `same value in ${others}`, fixed: false };
+      const elsewhere = across.get(input)!.get(key.key);
+      if (elsewhere && suggestion !== "plaintext") {
+        const where = elsewhere.labels.join(" and ");
+        if (elsewhere.kind === "same") {
+          return { ...base, suggestion: "global", target: "global", reason: `same value in ${where}`, fixed: false };
+        }
+        return { ...base, suggestion: "project", target: "project", reason: `different values in ${where}`, fixed: false };
       }
       return { ...base, target: suggestion, reason, fixed: false };
     }),
@@ -433,7 +441,8 @@ async function decideTargets(
           ? "in the vault"
           : d.sharedDiffers && d.target !== "plaintext"
             ? "differs from the shared vault"
-            : d.reason.startsWith("same value in ") && d.target === "global"
+            : (d.reason.startsWith("same value in ") && d.target === "global") ||
+                (d.reason.startsWith("different values in ") && d.target === "project")
               ? d.reason
               : undefined;
 
@@ -602,6 +611,27 @@ function plaintextKeysRemaining(files: { name: string; contents: string }[]): st
 }
 
 /**
+ * Env files below `root` that this run does not rewrite, with the keys each
+ * still holds in plain text. Backup copies count: `.env.*` hides `.env.bak`.
+ * Found with `kerstel scan`'s walk, so `node_modules` is never entered.
+ */
+function plaintextOutside(root: string, rewritten: Set<string>): { path: string; keys: string[] }[] {
+  const out: { path: string; keys: string[] }[] = [];
+  for (const found of walk(root).files) {
+    if (found.kind === "template" || rewritten.has(found.path) || isBinaryBackupName(found.name)) continue;
+    let contents: string;
+    try {
+      contents = readFileSync(found.path, "utf8");
+    } catch {
+      continue;
+    }
+    const keys = plaintextKeysRemaining([{ name: found.name, contents }]);
+    if (keys.length > 0) out.push({ path: found.path, keys });
+  }
+  return out;
+}
+
+/**
  * How an unsupported line is named in a list: by its key when the parser found
  * one, otherwise by file and line (`.env line 4`), so two files' fourth lines
  * do not collapse into one entry and the user knows which file to open.
@@ -645,7 +675,8 @@ interface GitignoreChange {
  */
 async function planGitignores(
   folders: { root: string; label: string }[],
-  plaintext: string[],
+  /** Keys left in plain text that removing the lines in these folders' .gitignore files would expose. */
+  plaintextUnder: (roots: string[]) => string[],
   prompter: Prompter,
 ): Promise<GitignoreChange[]> {
   const found: { root: string; label: string; path: string; source: string; parts: string[]; hidden: string[] }[] = [];
@@ -662,6 +693,7 @@ async function planGitignores(
     if (hidden.length > 0) found.push({ root, label, path, source, parts, hidden });
   }
   if (found.length === 0) return [];
+  const plaintext = plaintextUnder(found.map((file) => file.root));
 
   console.log("");
   for (const file of found) {
@@ -1143,6 +1175,32 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
       ? await decideTargets(inputs, options, prompter, lookup)
       : [];
 
+    // One reference holds one value. Two packages writing different values to
+    // the same one -- both choosing the shared vault, `--global` over values
+    // that differ, or nested `--from-stdin` -- would leave whichever applied
+    // last, silently, and hand the other package the wrong credential.
+    const writes = new Map<string, { label: string; value: string }[]>();
+    const write = (ref: SecretRef, label: string, value: string): void => {
+      const id = formatReference(ref.scope, ref.key);
+      writes.set(id, [...(writes.get(id) ?? []), { label, value }]);
+    };
+    for (const run of runs) for (const { ref, value } of supplied.get(run)!) write(ref, run.label, value);
+    for (const d of allDecisions) {
+      if (d.target === "plaintext" || d.keepVault) continue;
+      write({ scope: d.target === "global" ? GLOBAL_SCOPE : d.scope, key: d.key.key }, d.label, d.key.value);
+    }
+    const clashes = [...writes].filter(([, ws]) => new Set(ws.map((w) => w.value)).size > 1);
+    if (clashes.length > 0) {
+      for (const [ref, ws] of clashes) {
+        fail(
+          `${[...new Set(ws.map((w) => w.label))].join(" and ")} would store different values in ${ref}, ` +
+            "so one package would read the other's. Keep the key with each package, or give them the same value.",
+        );
+      }
+      info("Nothing was changed.");
+      return 2;
+    }
+
     // --- Plan -----------------------------------------------------------------
     const plans: PackagePlan[] = runs.map((run) => {
       const at = (text: string) => labelled(run.label, text);
@@ -1235,13 +1293,26 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     const plaintext = plans.flatMap((plan) =>
       plaintextKeysRemaining(plan.plannedFiles).map((key) => labelled(plan.run.label, key)),
     );
+    // A `.env` line in .gitignore hides every env file below it, not only the
+    // ones this run rewrites: a package left unselected, a nested
+    // `docker/.env`, a `.env.bak`. Their plaintext counts too.
+    const rewritten = new Set(runs.flatMap((run) => run.loaded.map((entry) => entry.info.path)));
+    const base = workspace?.root ?? runs[0]!.detected.root;
+    const untouchedFiles = plaintextOutside(base, rewritten);
 
     // --- .gitignore: asked now, written during apply --------------------------
     const gitignoreFolders = runs.map((run) => ({ root: run.detected.root, label: run.label }));
     if (workspace && !runs.some((run) => run.detected.root === workspace.root)) {
       gitignoreFolders.unshift({ root: workspace.root, label: "(root)" });
     }
-    const gitignores = options.dryRun ? [] : await planGitignores(gitignoreFolders, plaintext, prompter);
+    const gitignores = options.dryRun
+      ? []
+      : await planGitignores(gitignoreFolders, (roots) => [
+          ...plaintext,
+          ...untouchedFiles
+            .filter((file) => roots.some((root) => file.path.startsWith(`${root}${sep}`)))
+            .flatMap((file) => file.keys.map((key) => `${relative(base, file.path)}: ${key}`)),
+        ], prompter);
 
     // --- What will change -------------------------------------------------------
     step(
