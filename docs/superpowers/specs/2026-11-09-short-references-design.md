@@ -54,7 +54,7 @@ The hook's own copy in `packages/hook/src/protocol.js` changes the same way. `RE
 | Writer | Writes |
 |---|---|
 | `init`, for a key stored in the vault | `ks:<scope>` when the variable and vault key share a name, otherwise `ks:<scope>/<KEY>`. The one exception is in §5.1. |
-| `ks move` between scopes | The same rule. A line `move` rewrites switches to the short form, including a `kerstel://` line. |
+| `ks move` between scopes | The same rule, with the same exception (§5.1). A line `move` rewrites switches to the short form, including a `kerstel://` line. |
 | Messages that show a reference on its own (`set`, `rm`, `resolve`, the daemon's `not_found`, `init`'s summary, `uninstall`'s plan, `doctor`) | `ks:<scope>/<KEY>`, which still means the same thing when copied somewhere else |
 | `uninstall` | Restores the plain value in place of either form |
 
@@ -73,7 +73,7 @@ The hook's own copy in `packages/hook/src/protocol.js` changes the same way. `RE
 
 What this spec does about it:
 
-- **`init` writes the full form for any variable that an expansion in the same project's env files uses.** `init` already reads every env file it migrates, so it can see `${A}` and `$A`. That covers the common case, which is a Next.js or Compose project.
+- **`init` and `ks move` write the full form for any variable that an expansion in the same project's env files uses.** Both already read every env file they change, so they can see `${A}` and `$A`. Both writers need the check: if `move` shortened `A=kerstel://old/A` to `A=ks:new` and left `B=${A}` alone, `B` would look up `new/B`. That covers the common case, which is a Next.js or Compose project.
 - The `not_found` error for a shorthand names both the variable and the key it looked for: `B is ks:global, so Kerstel looked for global/B. If B was copied from another variable, write ks:global/<KEY>.`
 - The docs say it once, on the references page: copy a reference with its key (`ks:global/A`), never the shorthand.
 
@@ -94,10 +94,10 @@ A plain value such as `ks:prod` now parses as a reference. Under the full-match 
 - **`packages/cli/src/reference.ts`**: `parseReference(value, name?)`, a `formatEnvReference(name, scope, key)` for lines, and `formatReference` returning `ks:<scope>/<KEY>`. `REFERENCE_PROTOCOL` becomes a list of accepted prefixes.
 - **`packages/hook/src/protocol.js`**: mirrors the parser. `preload.js` passes the property name, which it already has in the `get` trap and in the Bun startup pass.
 - **`init`**: writes the short forms, and checks expansions (§5.1).
-- **`move`**: writes the short forms. Its row IDs use the canonical `scope/KEY` pair, not the text in the file, so a `kerstel://` line and a `ks:` line for the same key are one row.
+- **`move`**: writes the short forms, and checks expansions the same way `init` does. Its row IDs use the canonical `scope/KEY` pair, not the text in the file, so a `kerstel://` line and a `ks:` line for the same key are one row.
 - **`run`, `uninstall`, `doctor`**: pass the variable name. `doctor`'s ".env holds only kerstel:// references" line becomes "only references", and it gains a line counting each form.
 - **Copy**: README, the website pages that show references (getting started, how it works, CLI, deploying, teams, security, the home page), the hero animation, and `kerstel --help`.
-- **Tests**: the fixtures table with names; the hook-vs-CLI parity test; `init` writing each form and the expansion case; `uninstall` restoring a shorthand line; `run` and the hook resolving all three forms; `resolve` refusing a bare shorthand with the hint.
+- **Tests**: the fixtures table with names; the hook-vs-CLI parity test; `init` and `move` each writing both forms, and each writing the full form for a variable another line expands; `uninstall` restoring a shorthand line; `run` and the hook resolving all three forms; `resolve` refusing a bare shorthand with the hint.
 
 ## 7. Open questions
 
