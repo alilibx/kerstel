@@ -37,7 +37,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 ## 0.2.0: terminal UI and monorepos
 
 - [x] `kerstel ui`: a full-screen view of the vault in the terminal, with no network listener ([#8](https://github.com/alilibx/kerstel/issues/8))
-- [ ] Manage global and project secrets in the UI, with masked values and audited reveal ([#9](https://github.com/alilibx/kerstel/issues/9))
+- [x] Manage global and project secrets in the UI, with masked values and audited reveal ([#9](https://github.com/alilibx/kerstel/issues/9))
 - [x] See which project files reference which keys, in the UI and with `kerstel refs` ([#10](https://github.com/alilibx/kerstel/issues/10))
 - [x] `kerstel init` at a monorepo root sets up every package with `.env` files in one run ([#34](https://github.com/alilibx/kerstel/issues/34))
 - [x] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))

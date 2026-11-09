@@ -1,6 +1,6 @@
 import { cliName } from "../ui/cli-name";
 import type { Theme } from "../ui/theme";
-import { SCREENS, listHeight, rowsFor, type ScreenName, type State } from "./app";
+import { NEW_SCOPE, SCREENS, listHeight, rowsFor, type Modal, type ScreenName, type State } from "./app";
 import { centre, fit, type Frame } from "./frame";
 import { SECRETS_HEADER } from "./screens/secrets";
 import { inverse, renderList } from "./widgets/list";
@@ -16,9 +16,13 @@ export const MIN_HEIGHT = 16;
 const TITLES: Record<ScreenName, string> = { secrets: "Secrets", references: "References" };
 
 const KEYS: Record<ScreenName, [string, string][]> = {
+  // Fits the 60-column minimum; Tab is listed under ?.
   secrets: [
+    ["r", "reveal"],
+    ["a", "add"],
+    ["e", "edit"],
+    ["d", "delete"],
     ["/", "filter"],
-    ["Tab", "switch screen"],
     ["?", "keys"],
     ["q", "quit"],
   ],
@@ -34,7 +38,12 @@ const KEYS: Record<ScreenName, [string, string][]> = {
 };
 
 const HELP: Record<ScreenName, [string, string][]> = {
-  secrets: [],
+  secrets: [
+    ["r", "Reveal the value on this row until the next key (recorded in the audit log)"],
+    ["a", "Add a secret: pick a scope, type the key, then the value"],
+    ["e", "Edit the value on this row"],
+    ["d", "Delete this row, after saying how many project files use it"],
+  ],
   references: [
     ["Enter", "Go to the secret on this row, on the Secrets screen"],
     ["b", "Group by key instead of by project"],
@@ -64,13 +73,44 @@ function tabs(state: State, theme: Theme): string {
 }
 
 function statusBar(state: State, theme: Theme): string {
-  if (state.status) return theme.red(fit(state.status, state.width));
+  const error = state.modal?.kind === "input" ? state.modal.error : null;
+  if (error) return theme.red(fit(error, state.width));
+  if (state.modal) {
+    const keys =
+      state.modal.kind === "confirm"
+        ? state.modal.defaultYes
+          ? "y yes (Enter)  n no  Esc cancel"
+          : "y yes  n no (Enter)  Esc cancel"
+        : state.modal.kind === "pick-scope"
+          ? "Enter choose  Esc cancel"
+          : "Enter next  Esc cancel";
+    return theme.dim(fit(keys, state.width));
+  }
+  if (state.status) {
+    const text = fit(state.status.text, state.width);
+    return state.status.tone === "problem" ? theme.red(text) : theme.green(text);
+  }
   if (state.loading) return theme.dim(fit(state.screen === "references" ? "Scanning project files…" : "Loading…", state.width));
   const keys = state.help ? [["any key", "close"] as [string, string]] : KEYS[state.screen];
-  return theme.dim(fit(keys.map(([k, what]) => `${k} ${what}`).join("   "), state.width));
+  return theme.dim(fit(keys.map(([k, what]) => `${k} ${what}`).join("  "), state.width));
+}
+
+/** The prompt line of an input or a confirm, where the filter line usually is. */
+function modalLine(modal: Modal, width: number, theme: Theme): string | null {
+  // The question alone, so the name it asks about fits; the context goes on
+  // the row above and the choices, with the default, on the status bar.
+  if (modal.kind === "confirm") return theme.bold(fit(modal.question, width));
+  if (modal.kind !== "input") return null;
+  if (modal.field === "scope") return fit(`New scope: ${modal.text}▏`, width);
+  if (modal.field === "key") return fit(`Key in ${modal.scope}: ${modal.text}▏`, width);
+  if (modal.field !== "value") return null;
+  // Masked: one dot per character typed, never the characters.
+  return fit(`Value for ks:${modal.scope}/${modal.key}: ${"•".repeat([...modal.text].length)}▏`, width);
 }
 
 function filterLine(state: State, theme: Theme): string {
+  const prompt = state.modal ? modalLine(state.modal, state.width, theme) : null;
+  if (prompt) return prompt;
   const { filter } = state.lists[state.screen];
   if (state.filtering) return fit(`/${filter}▏`, state.width);
   if (filter) return theme.dim(fit(`Filter: ${filter}   Esc clears`, state.width));
@@ -95,7 +135,18 @@ export function render(state: State, theme: Theme): Frame {
 
   const body = listHeight(state) + 1; // the header row and the list
   let middle: string[];
-  if (state.help) {
+  if (state.modal?.kind === "pick-scope") {
+    const modal = state.modal;
+    middle = [
+      theme.bold(fit("  Store a secret in which scope?", width)),
+      ...renderList(
+        modal.choices.map((choice) => ({ cells: [choice], tone: choice === NEW_SCOPE ? "dim" : "normal" })),
+        null,
+        { width, height: body - 1, cursor: modal.cursor, top: Math.max(0, modal.cursor - (body - 2)), empty: "" },
+        theme,
+      ),
+    ];
+  } else if (state.help) {
     middle = helpLines(state, theme);
     while (middle.length < body) middle.push(" ".repeat(width));
     middle = middle.slice(0, body);
@@ -119,6 +170,9 @@ export function render(state: State, theme: Theme): Frame {
       theme,
     );
     if (!header) middle = [" ".repeat(width), ...middle];
+  }
+  if (state.modal?.kind === "confirm" && state.modal.detail) {
+    middle = [...middle.slice(0, -1), theme.yellow(fit(state.modal.detail, width))];
   }
   return [tabs(state, theme), ...middle, filterLine(state, theme), statusBar(state, theme)];
 }

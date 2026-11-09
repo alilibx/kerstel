@@ -1,3 +1,4 @@
+import { formatReference } from "../reference";
 import type { Theme } from "../ui/theme";
 import { initialState, update, type Effect, type Event, type State } from "./app";
 import type { UiData } from "./data";
@@ -18,6 +19,22 @@ export function frameText(frame: Frame): string {
   return `\x1b[H${frame.map((row) => `${row}\x1b[K`).join("\r\n")}\x1b[J`;
 }
 
+/** One effect against the data, as the event it produces. */
+export function runEffect(effect: Effect, data: UiData): Event {
+  const reference = (ref: { scope: string; key: string }) => formatReference(ref.scope, ref.key);
+  switch (effect.type) {
+    case "reload":
+      return { type: "loaded", ...data.load() };
+    case "reveal":
+      return { type: "revealed", id: effect.id, reference: reference(effect.ref), value: data.reveal(effect.ref) };
+    case "store":
+      if (!data.store(effect.ref, effect.value, effect.replace)) return { type: "conflict", reference: reference(effect.ref) };
+      return { type: "stored", reference: reference(effect.ref) };
+    case "remove":
+      return { type: "removed", reference: reference(effect.ref), existed: data.remove(effect.ref) };
+  }
+}
+
 export async function runUi(terminal: Terminal, data: UiData, theme: Theme): Promise<void> {
   let state: State = initialState(terminal.width, terminal.height);
   const parser = new KeyParser();
@@ -35,16 +52,17 @@ export async function runUi(terminal: Terminal, data: UiData, theme: Theme): Pro
         // After the frame that says "Loading…" or "Scanning…" is on screen.
         setTimeout(() => {
           if (finished) return;
-          if (effect.type === "reload") {
-            let event: Event;
-            try {
-              event = { type: "loaded", ...data.load() };
-            } catch (error) {
-              // The store's own message: paths and errno text, never a value. Spec §4.7.
-              event = { type: "error", message: (error as Error).message };
-            }
-            dispatch(event);
+          // A reveal cancelled by a key that arrived in the same read never
+          // decrypts, so it never writes an audit row for a value not shown.
+          if (effect.type === "reveal" && state.pendingReveal?.id !== effect.id) return;
+          let event: Event;
+          try {
+            event = runEffect(effect, data);
+          } catch (error) {
+            // The store's own message: paths and errno text, never a value. Spec §4.7.
+            event = { type: "error", message: (error as Error).message };
           }
+          dispatch(event);
         }, 0);
       };
       const dispatch = (event: Event) => {
@@ -64,7 +82,9 @@ export async function runUi(terminal: Terminal, data: UiData, theme: Theme): Pro
         }
       };
       terminal.onData((chunk) => {
-        for (const key of parser.feed(chunk)) dispatch({ type: "key", key });
+        for (const input of parser.feed(chunk)) {
+          dispatch(input.kind === "paste" ? { type: "paste", text: input.text } : { type: "key", key: input });
+        }
       });
       terminal.onResize(() => dispatch({ type: "resize", width: terminal.width, height: terminal.height }));
       try {

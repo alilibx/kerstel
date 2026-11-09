@@ -31,7 +31,7 @@ const COMMANDS = `Usage:
   ${cliName()} get <scope>/<KEY> [--reveal]          Read a secret
   ${cliName()} ls [--scope <scope>]                  List stored references
   ${cliName()} refs [--by-key]                       Show which project files reference which secrets
-  ${cliName()} ui                                    Browse the vault and its references full screen
+  ${cliName()} ui                                    Browse and manage the vault full screen
   ${cliName()} rm <scope>/<KEY> --yes                Remove a secret
   ${cliName()} run -- <command>                      Run a command with references resolved
   ${cliName()} exec -- <command>                     Run a command with the hook wired in

@@ -185,7 +185,7 @@ test("? shows the keys until the next key; q and Ctrl-C quit; an error shows unt
   expect(press(loaded(), char("q")).quit).toBe(true);
   expect(press(loaded(), { type: "key", key: { kind: "ctrl", char: "c" } }).quit).toBe(true);
   s = press(loaded(), { type: "error", message: "database is locked" });
-  expect(s.status).toBe("database is locked");
+  expect(s.status).toEqual({ text: "database is locked", tone: "problem" });
   expect(press(s, char("j")).status).toBeNull();
 });
 
@@ -199,7 +199,7 @@ test("every frame line is the terminal's width, and the mask never shows a lengt
   expect(frame[0]).toMatch(/^ 1 Secrets {3}2 References +kerstel ui$/);
   expect(frame[1]).toMatch(/^ {2}Reference +Value +Updated/);
   expect(frame[2]).toMatch(/^› ks:global\/OPENAI_API_KEY +•{12} /);
-  expect(frame[15]).toMatch(/^\/ filter {3}Tab switch screen {3}\? keys {3}q quit/);
+  expect(frame[15]).toMatch(/^r reveal {2}a add {2}e edit {2}d delete {2}\/ filter {2}\? keys {2}q quit/);
 });
 
 test("the References screen draws the tree, with unresolvable, unreachable and unused rows", () => {
@@ -262,7 +262,12 @@ class FakeTerminal implements Terminal {
   }
 }
 
-const data: UiData = { load: () => ({ secrets, refs }) };
+const unused = {
+  reveal: () => null,
+  store: () => true,
+  remove: () => false,
+};
+const data: UiData = { load: () => ({ secrets, refs }), ...unused };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 test("the loop draws after loading, redraws on keys and resizes, and restores on quit", async () => {
@@ -291,7 +296,10 @@ test("Ctrl-C quits and restores the terminal", async () => {
 
 test("a thrown error restores the terminal, then rethrows", async () => {
   const term = new FakeTerminal();
-  const broken: UiData = { load: () => ({ secrets, refs: { ...refs, checkouts: null as unknown as ProjectRefs["checkouts"] } }) };
+  const broken: UiData = {
+    load: () => ({ secrets, refs: { ...refs, checkouts: null as unknown as ProjectRefs["checkouts"] } }),
+    ...unused,
+  };
   // Loading builds every screen's rows, which reads refs.checkouts and throws.
   const outcome = runUi(term, broken, plain).then(
     () => null,
@@ -304,7 +312,7 @@ test("a thrown error restores the terminal, then rethrows", async () => {
 
 test("a failed load shows the store's message in the status bar and keeps running", async () => {
   const term = new FakeTerminal();
-  const done = runUi(term, { load: () => { throw new Error("database is locked"); } }, plain);
+  const done = runUi(term, { load: () => { throw new Error("database is locked"); }, ...unused }, plain);
   await tick();
   expect(term.written.at(-1)).toContain("database is locked");
   term.send("q");
@@ -369,4 +377,19 @@ test("entering References scans again; leaving it does not", () => {
   expect(back.effects).toEqual([]);
   // Pressing the key for the screen you are on is not a new entry.
   expect(update(press(loaded(), char("2"), { type: "loaded", secrets, refs }), char("2")).effects).toEqual([]);
+});
+
+test("a reveal cancelled in the same read never decrypts, so it writes no audit row", async () => {
+  const term = new FakeTerminal();
+  let reveals = 0;
+  const done = runUi(term, { ...data, reveal: () => ((reveals += 1), "sk-never-shown") }, plain);
+  await tick();
+  term.send("rj");
+  await tick();
+  expect(reveals).toBe(0);
+  term.send("r");
+  await tick();
+  expect(reveals).toBe(1);
+  term.send("q");
+  await done;
 });
