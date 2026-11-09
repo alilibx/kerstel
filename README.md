@@ -46,6 +46,7 @@ ks move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tr
 ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
 ks get <scope>/<KEY> [--reveal]                   # Read a secret
 ks ls [--scope <scope>]                           # List stored references
+ks refs [--by-key]                                # Show which project files reference which secrets
 ks rm <scope>/<KEY> --yes                         # Remove a secret
 ks run -- <command>                               # Run a command with references resolved
 ks exec -- <command>                              # Run a command with the hook wired in

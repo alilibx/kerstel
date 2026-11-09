@@ -36,7 +36,8 @@ Every screen in the UI has a plain command for pipes and scripts: `ls` for Secre
 Lists which project files reference which secrets, and which secrets nothing references.
 
 - For every registered checkout (one `projects` row each, see the monorepo spec), it runs `detectProject(root)` and `loadEnvFiles`, parses each `.env*` file with `parseDotenv`, and collects every reference value, `kerstel://` and the shorter `ks:` form that ships in the same release ([#36](https://github.com/alilibx/kerstel/issues/36)). The scan lives in a new module, `packages/cli/src/project-refs.ts`, which `uninstall`'s planner also calls for its `unresolvable` and `unused` lists, so the two cannot drift.
-- Existence comes from `listSecrets()`, so `refs` never decrypts a value. It reads project files and never writes them.
+- Existence is judged by name: `refs` reads the vault's `projects` rows and stored `scope/KEY` pairs without the data key (`readProjectRows`, `readStoredReferences`), the way `init --dry-run` does, so it never decrypts a value, never shows a Keychain prompt, and with no vault says so and creates nothing. `uninstall`'s planner passes the same pairs from `listSecrets()` on its open vault. It reads project files and never writes them.
+- A checkout is unreachable for the reasons `uninstall` gives (`unreachableReason` in `project-refs.ts`): its folder is gone, or it has no readable `package.json`. Unused secrets are listed by scope, then key, as `ks ls` lists them.
 - Default output groups by scope, then by checkout root, then by file:
 
   ```
@@ -56,7 +57,8 @@ Lists which project files reference which secrets, and which secrets nothing ref
   ```
 
 - `--by-key` inverts it: each secret, then the files that reference it, then the unresolvable references at the end.
-- Exit code `0` always. An unresolvable reference is information, not a failure; `doctor` is the tool that judges.
+- Exit code `0` whatever the scan finds. An unresolvable reference is information, not a failure; `doctor` is the tool that judges. The one exception is a vault whose names cannot be read (corrupt, or permission denied): that exits `1` naming the problem, rather than passing for an empty vault.
+- An env file in a reachable checkout that cannot be read is listed under "Could not read" and the scan goes on with the rest. While any checkout or file could not be read, the unused list is headed "Referenced by no project that could be read" with a note to check those first, since a secret on it may be used there. `uninstall` stops on an unreadable env file, since it cannot restore it, and restores from the same bytes the scan read, so its used and unused lists describe exactly the files it rewrites.
 
 ### 3.2 Audit rows (Next)
 

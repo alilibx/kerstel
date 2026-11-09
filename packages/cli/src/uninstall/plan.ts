@@ -2,12 +2,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isKerstelLauncher, launcherPath } from "../init/launcher";
 import { listBackups, readBackup, readBackupVault, type BackupVaultValue } from "../init/backup";
-import { collectKeys, loadEnvFiles, type LoadedEnvFile } from "../init/collect";
-import { detectProject, envFileRank } from "../init/detect";
+import { collectKeys, type LoadedEnvFile } from "../init/collect";
+import { envFileRank } from "../init/detect";
 import { maskForDisplay } from "../init/display";
 import { entries, parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
+import { scanProjectRefs, unreachableReason } from "../project-refs";
 import { backupsDir } from "../paths";
-import { formatReference, parseReference } from "../reference";
+import { parseReference } from "../reference";
 import type { Vault } from "../vault/store";
 import { restoreGitignore, unwirePackageJson } from "./unwire";
 
@@ -235,26 +236,39 @@ function collapsedValues(
  */
 export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   const plan = emptyPlan();
-  const used = new Set<string>();
+  const projects = vault.listProjects();
+  // Unresolvable and unused come from the same scan `kerstel refs` shows, so
+  // the two can never disagree about what is referenced. Terminal UI spec §3.1.
+  const refs = scanProjectRefs(
+    projects,
+    new Set(vault.listSecrets().map((secret) => `${secret.scope}/${secret.key}`)),
+  );
+  // Uninstall rewrites every env file of every checkout. One it cannot read
+  // is one it cannot restore, and its references are unknown: stop, as
+  // reading it here always has, rather than call a secret it uses unused.
+  if (refs.unreadable.length > 0) {
+    const first = refs.unreadable[0]!;
+    throw new Error(`Cannot read ${first.file}: ${first.reason}. Fix it, then run uninstall again.`);
+  }
+  plan.unresolvable = refs.unresolvable.map((u) => ({ project: u.scope, file: u.file, reference: u.reference }));
+  plan.unused = refs.unused;
+  const scanned = new Map(refs.checkouts.map((checkout) => [checkout.rootPath, checkout]));
   // Every checkout of a scope shares its backups, so they are scanned once per
   // scope, after all its checkouts are restored. Insertion order is row order.
   const restoredByScope = new Map<string, Map<string, string>[]>();
   const registeredScopes = new Set<string>();
 
-  for (const project of vault.listProjects()) {
+  for (const project of projects) {
     registeredScopes.add(project.name);
     const root = project.rootPath;
     const unreachable = (reason: string) => plan.unreachable.push({ name: project.name, rootPath: root, reason });
 
-    if (!existsSync(root)) {
-      unreachable("the folder no longer exists");
+    const checkout = scanned.get(root);
+    if (!checkout) {
+      unreachable(refs.unreachable.find((u) => u.rootPath === root)?.reason ?? unreachableReason(root) ?? "it could not be read");
       continue;
     }
     const packagePath = join(root, "package.json");
-    if (!existsSync(packagePath)) {
-      unreachable("it has no package.json");
-      continue;
-    }
     const packageSource = readFileSync(packagePath, "utf8");
     let unwired: ReturnType<typeof unwirePackageJson>;
     try {
@@ -266,31 +280,24 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
 
     const restoredEnvFiles: string[] = [];
     const restoredContents = new Map<string, string>();
-    for (const loaded of loadEnvFiles(detectProject(root).envFiles)) {
-      const copy = parseDotenv(loaded.original);
-      for (let i = 0; i < copy.lines.length; i += 1) {
-        const line = copy.lines[i];
-        if (!line || line.kind !== "pair") continue;
-        const ref = parseReference(line.value, line.key);
-        if (!ref) continue;
-        const reference = formatReference(ref.scope, ref.key);
-        const value = vault.getSecret(ref);
-        if (value === null) {
-          plan.unresolvable.push({ project: project.name, file: loaded.info.path, reference });
-          continue;
-        }
-        used.add(reference);
-        restoreLineValue(copy, i, value);
+    // The bytes the scan above read, so the used and unused lists describe
+    // exactly the files this plan restores.
+    for (const file of checkout.files) {
+      const copy = parseDotenv(file.original);
+      for (const line of file.references) {
+        // A secret the vault lacks is already in `plan.unresolvable`.
+        const value = vault.getSecret(line.ref);
+        if (value !== null) restoreLineValue(copy, line.index, value);
       }
       const after = serializeDotenv(copy);
-      restoredContents.set(loaded.info.name, after);
-      if (after === loaded.original) continue;
-      restoredEnvFiles.push(loaded.info.name);
+      restoredContents.set(file.name, after);
+      if (after === file.original) continue;
+      restoredEnvFiles.push(file.name);
       plan.files.push({
-        path: loaded.info.path,
-        label: `${project.name}: ${loaded.info.name}`,
+        path: file.path,
+        label: `${project.name}: ${file.name}`,
         after,
-        diffBefore: maskForDisplay(loaded.original),
+        diffBefore: maskForDisplay(file.original),
         diffAfter: maskForDisplay(after),
       });
     }
@@ -352,11 +359,6 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   // against everything the restore puts back.
   const everyRestored = [...restoredByScope.values()].flat();
   for (const scope of orphanBackupScopes(registeredScopes)) scan(scope, everyRestored);
-
-  plan.unused = vault
-    .listSecrets()
-    .map((secret) => formatReference(secret.scope, secret.key))
-    .filter((reference) => !used.has(reference));
 
   return plan;
 }

@@ -76,6 +76,26 @@ export function readStoredReferences(file: string): Set<string> {
   }
 }
 
+/**
+ * Why the vault's names cannot be read without the key, or null when they
+ * can. `readStoredReferences` and `readProjectRows` answer "empty" for an
+ * unreadable file, which is right for their callers' defaults but would let a
+ * corrupt or permission-denied vault pass for an empty one.
+ */
+export function vaultReadError(file: string): string | null {
+  let db: Database | null = null;
+  try {
+    db = new Database(file, { readonly: true });
+    db.query("SELECT count(*) FROM secrets").get();
+    db.query("SELECT count(*) FROM projects").get();
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  } finally {
+    db?.close();
+  }
+}
+
 /** Seals the key-check constant for storage in `vault_meta`. */
 export function sealKeyCheck(dataKey: Buffer): string {
   const { ciphertext, nonce } = encrypt(KEY_CHECK_PLAINTEXT, dataKey);

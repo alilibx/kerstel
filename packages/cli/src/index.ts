@@ -3,6 +3,7 @@ import { doctorCommand } from "./commands/doctor";
 import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
 import { moveCommand } from "./commands/move";
+import { refsCommand } from "./commands/refs";
 import { runCommand } from "./commands/run";
 import { scanCommand } from "./commands/scan";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
@@ -28,6 +29,7 @@ const COMMANDS = `Usage:
                                                 shell history and in \`ps\` output
   ${cliName()} get <scope>/<KEY> [--reveal]          Read a secret
   ${cliName()} ls [--scope <scope>]                  List stored references
+  ${cliName()} refs [--by-key]                       Show which project files reference which secrets
   ${cliName()} rm <scope>/<KEY> --yes                Remove a secret
   ${cliName()} run -- <command>                      Run a command with references resolved
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
@@ -103,6 +105,8 @@ export async function runCli(argv: string[]): Promise<number> {
       case "ls":
       case "list":
         return await lsCommand(args);
+      case "refs":
+        return await refsCommand(args);
       case "rm":
       case "remove":
         return await rmCommand(args);
