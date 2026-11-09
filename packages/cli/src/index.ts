@@ -20,7 +20,7 @@ import { VERSION } from "./version";
 const HEADER = `${bold("kerstel")} — local-first secrets for your projects`;
 
 const COMMANDS = `Usage:
-  ${cliName()} init [--yes] [--dry-run]              Migrate this project's .env files
+  ${cliName()} init [--yes] [--dry-run]              Migrate this project's .env files, or a monorepo's
   ${cliName()} move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tracked]
                                                 Move keys between the vault and plain text
   ... | ${cliName()} set <scope>/<KEY>               Store a secret piped on stdin

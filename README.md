@@ -40,7 +40,7 @@ A reference names exactly one scope — `global`, or a project name — with no 
 ## Usage
 
 ```bash
-ks init [--yes] [--dry-run]                       # Migrate this project's .env files
+ks init [--yes] [--dry-run]                       # Migrate this project's .env files, or a monorepo's
 ks move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tracked]
                                                   # Move keys between the vault and plain text
 ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
@@ -103,7 +103,7 @@ Useful flags:
 | `--non-interactive` | Never asks a question. Applies the suggested plan like `--yes`, but fails with exit 2 naming the flag on any question no flag can answer — a missing secret value, for instance. Pair it with `--from-stdin` in scripts. |
 | `--from-stdin` | Reads `{"KEY": "value"}` JSON for keys this machine is missing. |
 
-`ks init` is idempotent: run it again after adding a key and it migrates only what is new.
+`ks init` is idempotent: run it again after adding a key and it migrates only what is new. At a monorepo root it sets up every package with `.env` files in one run: it asks which packages to include, shows one overview with a section per package, suggests the shared vault for a value several packages share, and applies package by package.
 
 ### Finding what's left
 
