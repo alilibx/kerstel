@@ -169,6 +169,7 @@ interface PairingRow {
   vault_id: string;
   payload: string | null;
   accepted_device: string | null;
+  confirmation: string | null;
   expires_at: number;
 }
 
@@ -204,7 +205,7 @@ export function createApp(options: AppOptions): App {
 
   const getPairing = (pairingId: string): PairingRow | null => {
     const row = db
-      .query<PairingRow, [string]>("SELECT id, vault_id, payload, accepted_device, expires_at FROM pairings WHERE id = ?")
+      .query<PairingRow, [string]>("SELECT id, vault_id, payload, accepted_device, confirmation, expires_at FROM pairings WHERE id = ?")
       .get(pairingId);
     return row && row.expires_at > now() ? row : null;
   };
@@ -361,6 +362,12 @@ export function createApp(options: AppOptions): App {
     const epoch = count(body.epoch, "epoch");
     const sealedKey = sealed(body.sealedKey, "sealedKey", LIMITS.sealedBytes);
     const pairingId = body.pairingId === undefined ? null : id(body.pairingId, "pairingId");
+    // The confirmation the new device checks before it trusts the sealed key.
+    // The server stores it and hands it on; it has no key to make one.
+    const confirmation = pairingId === null ? null : sealed(body.confirmation, "confirmation", 32);
+    if (confirmation !== null && base64urlBytes(confirmation) !== 32) {
+      fail(400, "bad_request", "confirmation must be a 32-byte HMAC, base64url.");
+    }
     const vaultId = caller.vault_id;
 
     const row = db.transaction(() => {
@@ -376,7 +383,7 @@ export function createApp(options: AppOptions): App {
         if (!slot || slot.vault_id !== vaultId) fail(404, "not_found", "The pairing code expired or does not exist.");
         if (slot!.accepted_device !== null) fail(409, "pairing_used", "That pairing code was already used.");
         if (slot!.payload === null) fail(409, "bad_request", "The new device has not answered the pairing code yet.");
-        db.query("UPDATE pairings SET accepted_device = ? WHERE id = ?").run(added.id, pairingId);
+        db.query("UPDATE pairings SET accepted_device = ?, confirmation = ? WHERE id = ?").run(added.id, confirmation, pairingId);
       }
       const t = now();
       db.query(
@@ -408,6 +415,7 @@ export function createApp(options: AppOptions): App {
 
   function rotate(caller: DeviceRow, body: Json): Response {
     const epoch = count(body.epoch, "epoch");
+    const baseRevision = count(body.baseRevision, "baseRevision");
     const removeDevices = array(body.removeDevices, "removeDevices", LIMITS.devicesPerVault).map((v, i) => id(v, `removeDevices[${i}]`));
     unique(removeDevices, "removeDevices");
     const sealedKeys = object(body.sealedKeys, "sealedKeys");
@@ -435,6 +443,11 @@ export function createApp(options: AppOptions): App {
     const out = db.transaction(() => {
       const vault = requireVault(vaultId);
       if (epoch !== vault.epoch + 1) fail(409, "epoch_mismatch", `The next key epoch is ${vault.epoch + 1}.`);
+      // A rotation replaces every record with the caller's copy. One based on
+      // an older head would silently drop whatever another device pushed since.
+      if (baseRevision !== vault.head) {
+        fail(409, "vault_moved", `The vault is at revision ${vault.head}, not ${baseRevision}. Pull, then rotate again.`);
+      }
       const current = new Set(listDevices(vaultId).map((d) => d.id));
       for (const r of removeDevices) if (!current.has(r)) fail(404, "not_found", `Device ${r} is not in this vault.`);
       const remaining = [...current].filter((d) => !removeDevices.includes(d)).sort();
@@ -511,7 +524,12 @@ export function createApp(options: AppOptions): App {
   function pairingState(pairingId: string, ip: string): Response {
     limiter.hit(`pairing:${ip}`, RATE.pairingPerIp.limit, RATE.pairingPerIp.windowMs);
     const slot = getPairing(pairingId) ?? fail(404, "not_found", "The pairing code expired, or the other device said no.");
-    return json(200, slot.accepted_device === null ? { state: "waiting" } : { state: "accepted", vaultId: slot.vault_id });
+    return json(
+      200,
+      slot.accepted_device === null
+        ? { state: "waiting" }
+        : { state: "accepted", vaultId: slot.vault_id, confirmation: slot.confirmation },
+    );
   }
 
   function deleteVault(caller: DeviceRow): Response {

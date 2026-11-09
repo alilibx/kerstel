@@ -64,6 +64,10 @@ const MIGRATIONS: string[] = [
     created_by       TEXT    NOT NULL,
     payload          TEXT,
     accepted_device  TEXT,
+    -- HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ deviceId ‖ epoch ‖ sealedKey),
+    -- from the device that accepted. The server cannot compute or check it;
+    -- the new device checks it before trusting the sealed key. Spec §7.1.
+    confirmation     TEXT,
     expires_at       INTEGER NOT NULL
   );
 

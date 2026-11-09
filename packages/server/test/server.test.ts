@@ -292,6 +292,7 @@ describe("rotation", () => {
     const { a, b, c } = await setup();
     const fresh = [newId(), newId()];
     const res = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
       epoch: 2,
       removeDevices: [c.id],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
@@ -320,6 +321,7 @@ describe("rotation", () => {
   test("needs a key for exactly the devices that stay", async () => {
     const { a, b } = await setup();
     const res = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
       epoch: 2,
       removeDevices: [],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
@@ -332,6 +334,7 @@ describe("rotation", () => {
   test("must name the next epoch, and cannot remove the caller", async () => {
     const { a, b, c } = await setup();
     const skip = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
       epoch: 3,
       removeDevices: [c.id],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
@@ -339,6 +342,7 @@ describe("rotation", () => {
     });
     expect(skip.status).toBe(409);
     const self = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
       epoch: 2,
       removeDevices: [a.id],
       sealedKeys: { [b.id]: blob(80), [c.id]: blob(80) },
@@ -347,9 +351,31 @@ describe("rotation", () => {
     expect(self.status).toBe(403);
   });
 
+  test("a rotation based on an older head is refused, so a record pushed since is never dropped", async () => {
+    const { a, b, c } = await setup();
+    // b pushes after a pulled at revision 2.
+    await b.call("POST", records(b), { epoch: 1, records: [{ id: newId(), baseRev: 0, blob: blob() }] });
+    const stale = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
+      epoch: 2,
+      removeDevices: [c.id],
+      sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      records: [{ id: newId(), blob: blob() }],
+    });
+    expect(stale.status).toBe(409);
+    expect((await body(stale)).error).toBe("vault_moved");
+    // Nothing changed: still epoch 1, all three records, c still in.
+    const full = await body(await a.call("GET", `${records(a)}?since=0`));
+    expect(full.epoch).toBe(1);
+    expect(full.records.length).toBe(3);
+    expect((await c.call("GET", records(c))).status).toBe(200);
+    expect((await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, { epoch: 2, removeDevices: [], sealedKeys: {}, records: [] })).status).toBe(400);
+  });
+
   test("a failed rotation changes nothing", async () => {
     const { a, b, c } = await setup();
     const res = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
       epoch: 2,
       removeDevices: [c.id, newId()],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
@@ -378,9 +404,31 @@ describe("pairing", () => {
     expect((await body(await a.call("GET", `/v1/vaults/${a.vaultId}/pairings/${pairingId}`))).payload).toBe(payload);
 
     const b = new Device(h, a.vaultId);
-    const added = await a.call("POST", `/v1/vaults/${a.vaultId}/devices`, { device: b.input(), epoch: 1, sealedKey: blob(80), pairingId });
+    // Accepting a pairing must carry the confirmation the new device will check.
+    const unconfirmed = await a.call("POST", `/v1/vaults/${a.vaultId}/devices`, { device: b.input(), epoch: 1, sealedKey: blob(80), pairingId });
+    expect(unconfirmed.status).toBe(400);
+    const short = await a.call("POST", `/v1/vaults/${a.vaultId}/devices`, {
+      device: b.input(),
+      epoch: 1,
+      sealedKey: blob(80),
+      pairingId,
+      confirmation: blob(16),
+    });
+    expect(short.status).toBe(400);
+    const confirmation = blob(32);
+    const added = await a.call("POST", `/v1/vaults/${a.vaultId}/devices`, {
+      device: b.input(),
+      epoch: 1,
+      sealedKey: blob(80),
+      pairingId,
+      confirmation,
+    });
     expect(added.status).toBe(201);
-    expect(await body(await anonymous(h, "GET", `/v1/pairings/${pairingId}`))).toEqual({ state: "accepted", vaultId: a.vaultId });
+    expect(await body(await anonymous(h, "GET", `/v1/pairings/${pairingId}`))).toEqual({
+      state: "accepted",
+      vaultId: a.vaultId,
+      confirmation,
+    });
     expect((await b.call("GET", `/v1/vaults/${b.vaultId}/keys`)).status).toBe(200);
 
     const reuse = await a.call("POST", `/v1/vaults/${a.vaultId}/devices`, {
@@ -388,6 +436,7 @@ describe("pairing", () => {
       epoch: 1,
       sealedKey: blob(80),
       pairingId,
+      confirmation: blob(32),
     });
     expect(reuse.status).toBe(409);
   });

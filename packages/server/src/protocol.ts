@@ -52,6 +52,7 @@ export type ErrorCode =
   | "not_found"
   | "exists"
   | "epoch_mismatch"
+  | "vault_moved"
   | "full_pull_required"
   | "last_device"
   | "pairing_used"
@@ -189,6 +190,13 @@ export interface AddDeviceBody {
   sealedKey: string;
   /** The pairing slot this device answered, which is marked accepted. */
   pairingId?: string;
+  /**
+   * Required with `pairingId`: the 32-byte HMAC, keyed by the pairing secret,
+   * over "kerstel pairing-confirm v1" ‖ vaultId ‖ device.id ‖ epoch ‖ sealedKey.
+   * The new device checks it, so a server that sealed a key of its own to the
+   * new device is caught before the device trusts it. Spec §7.1.
+   */
+  confirmation?: string;
 }
 
 export interface DeviceOut {
@@ -203,6 +211,12 @@ export interface DeviceOut {
 
 export interface RotateBody {
   epoch: number;
+  /**
+   * The vault head the rotating device pulled up to. A rotation re-uploads
+   * every record, so one based on an older head would drop whatever was pushed
+   * since: the server refuses it with 409 `vault_moved`.
+   */
+  baseRevision: number;
   removeDevices: string[];
   /** The new sync key, sealed to every device that stays, keyed by device ID. */
   sealedKeys: Record<string, string>;
@@ -215,4 +229,6 @@ export interface PairingSlotOut {
   expiresAt: number;
 }
 
-export type PairingStateOut = { state: "waiting" } | { state: "accepted"; vaultId: string };
+export type PairingStateOut =
+  | { state: "waiting" }
+  | { state: "accepted"; vaultId: string; /** See AddDeviceBody.confirmation. */ confirmation: string };
