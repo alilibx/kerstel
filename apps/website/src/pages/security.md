@@ -74,6 +74,10 @@ Plaintext leaves the vault in five places:
 
 Plaintext never appears in log output, error messages, or audit rows. One exception exists in `kerstel init`: its overview prints values it classifies as configuration, such as `PORT=3000`. A name that says it is a credential wins over a `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_` prefix, and a value with a known token prefix (`sk_`, `AIza`, `ghp_`, a JWT) is never printed, whatever its key is called. Neither is a URL with a password in it, a query parameter named like a credential (`token=`, `api_key=`, `sig=`, `auth=`), or a long path segment that mixes letters and digits, as webhook tokens do. Everything else is shown only as its length.
 
+## Auditing a machine
+
+`kerstel scan ~` lists every env file in your home folder and what it still holds in plain text: secrets in projects you haven't set up, backup copies left from before `init`, templates with real keys in them, and files git tracks. It reads each file to judge it but prints only counts, key names and line numbers, and it checks references against the vault by name, without the vault key. Its exit code is `1` when it finds a secret, so it can run on a schedule or in CI.
+
 ## Out of scope
 
 Kerstel does not defend against an attacker with root, a compromised OS credential store, code running as your user account, or malicious code running after it has been granted a secret.

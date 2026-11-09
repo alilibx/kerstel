@@ -93,6 +93,44 @@
 </tr>
 </tbody></table>
 </div><p>When the same key appears in several files, the highest-precedence one is stored: <code>.env.&lt;x&gt;.local</code>, then <code>.env.local</code>, then <code>.env.&lt;x&gt;</code>, then <code>.env</code>. Every occurrence points at that single reference.</p>
+<h2>Finding secrets</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel scan [path] [--keys] [--all] [--json] [--verbose]</code></td>
+<td>Find every env file under a folder (the current one by default; <code>kerstel scan ~</code> covers your home folder) and report what each one holds, without printing a value or changing anything. It reads env files (<code>.env</code>, <code>.env.local</code>, <code>.env.production</code>, ...), backup copies (<code>.env.bak</code>, <code>.env~</code>, swap files, which are listed but not read), and templates (<code>.env.example</code>, <code>.env.sample</code>, ...). Each line is a <strong>reference</strong> (any of the three forms, checked against this vault by name, so there&#39;s no Keychain prompt and no <code>~/.kerstel</code> is created), a <strong>secret</strong> (what <code>init</code> would store because of the key&#39;s name, a URL with a password or a token in it, a known token prefix like <code>sk_live_</code> under any name, or a private key), <strong>unclear</strong> (<code>init</code> would store it only because it can&#39;t tell), or <strong>config</strong>. In a template only a real-looking token, URL password, query token or private key counts; <code>sk_test_xxx</code> and <code>postgres:postgres@localhost</code> are placeholders. Inside a git repository it says whether a file with secrets is tracked by git (flagged first, with the advice to rotate the keys, since they stay in history) or not ignored. Files are grouped by project (the nearest folder with a <code>package.json</code>) and monorepo, and the summary says what to do with each: run <code>kerstel init</code> in a project, delete a backup, or store the value of a nested env file <code>init</code> doesn&#39;t read with <code>kerstel set</code>. It never enters <code>node_modules</code>, <code>.git</code>, package manager caches, <code>~/.kerstel</code>, or <code>~/Library</code> on macOS, never follows a symlinked folder, and stays on one disk. On macOS, scanning <code>~</code> reads Desktop, Documents and Downloads, so the system may ask once whether your terminal can access them; folders you don&#39;t allow are counted as unreadable. Exits <code>1</code> when any secret is in plain text, <code>0</code> otherwise, and <code>2</code> for a folder that doesn&#39;t exist; unclear lines and unresolved references don&#39;t change the exit code, so it can run in CI or a cron job.</td>
+</tr>
+</tbody></table>
+</div><div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--keys</code></td>
+<td>Name each finding&#39;s key and line number under its file. Values are never shown.</td>
+</tr>
+<tr>
+<td><code>--all</code></td>
+<td>List projects with nothing to do too. By default they&#39;re counted in one line.</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>Print one JSON object, described below, instead of the report. It always includes key names and line numbers.</td>
+</tr>
+<tr>
+<td><code>--verbose</code></td>
+<td>List the folders that could not be read.</td>
+</tr>
+</tbody></table>
+</div><p><code>--json</code> prints <code>{ root, folders, unreadable, git, projects }</code>. <code>git</code> is false when git isn&#39;t installed. Each project has <code>path</code>, <code>name</code>, <code>workspace</code> (its monorepo root, or <code>null</code>), <code>packageJson</code>, <code>scope</code> (the scope it&#39;s set up under, or <code>null</code>), and <code>files</code>. Each file has <code>name</code> (relative to the project, such as <code>docker/.env</code>), <code>kind</code> (<code>env</code>, <code>template</code>, or <code>backup</code>), <code>read</code>, <code>git</code> (<code>tracked</code>, <code>not-ignored</code>, <code>ignored</code>, or <code>null</code> outside a repository), <code>secrets</code> and <code>unclear</code> (lists of <code>{ key, line }</code>), <code>config</code> (a count), <code>references</code> (lists of <code>{ key, line, ref, inVault }</code>, with <code>ref</code> always in the full <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code> form), and <code>unreadableLines</code> (line numbers). A change to this shape is a breaking change.</p>
 <h2>Secrets</h2>
 <div class="table-wrap"><table>
 <thead>

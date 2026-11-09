@@ -103,6 +103,10 @@ If the same key appears in more than one file with different values, the highest
 
 Afterwards, `npm run dev` is still `npm run dev`. Run `ks doctor` in the project to confirm the wiring. Commit `.kerstel/exec.cjs` along with `package.json`: it is what lets the same scripts run on a deploy host that has no Kerstel. See [Deploying](/docs/deploying).
 
+### Finding what's left
+
+`ks scan` walks a folder and lists every env file in it, so you can see which projects still hold secrets in plain text. Run `ks scan ~` to cover your whole home folder. For each file it counts secrets, unclear lines and references, and it names the backup copies (`.env.bak`) and templates (`.env.example`) that hold real keys, and the files git tracks. The summary says what to do: run `ks init` in a project, delete a backup, or untrack a file and rotate its keys. It never prints a value. `--keys` adds key names and line numbers. See the [CLI reference](/docs/cli) for every flag and the `--json` shape.
+
 ### Changing your mind
 
 `init` asks once where each key goes. To change that later, run `ks move`: pick keys, pick where each goes (this project's vault, the shared vault, or plain text), check the preview, and apply. `ks move STRIPE_KEY --to global --yes` does the same without menus. The files are backed up first, and a value that leaves the vault is saved in that backup.

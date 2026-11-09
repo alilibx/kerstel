@@ -54,8 +54,11 @@
 <span class="release-date release-unreleased">In development</span>
 </div>
 <details class="release-details">
-<summary><span class="release-count">1 change</span></summary>
+<summary><span class="release-count">2 changes</span></summary>
 <div class="release-body">
+<section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
+<li><code>kerstel scan [path]</code> finds every env file under a folder, a monorepo, or your home folder (<code>kerstel scan ~</code>), and reports what each holds without printing a value: secrets still in plain text, lines it can&#39;t classify, references this vault lacks, backup copies like <code>.env.bak</code>, templates like <code>.env.example</code> with real keys in them, and files git tracks. The summary says what to do with each, <code>--keys</code> names the keys and line numbers, <code>--json</code> gives scripts the same report, and it exits <code>1</code> when it finds a secret, so it can run in CI.</li>
+</ul></section>
 <section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
 <li>References are shorter. <code>kerstel init</code> and <code>ks move</code> now write <code>OPENAI_API_KEY=ks:global</code> when the variable and the vault key share a name, and <code>ks:global/OPENAI_API_KEY</code> when they don&#39;t, or when another line of your env files copies the variable with <code>${OPENAI_API_KEY}</code>. References in the <code>kerstel://global/OPENAI_API_KEY</code> form keep working everywhere and are never rewritten for you. Messages show references as <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code>, and <code>ks get</code>, <code>set</code>, <code>rm</code> and <code>resolve</code> accept every form. A project with <code>ks:</code> references needs this version of Kerstel on every machine that runs it, because older versions pass <code>ks:global</code> to the app as text; <code>kerstel doctor</code> shows how many references a project has in each form. If a short reference reaches a variable with another name and finds nothing, the error says which key it looked for and how to write the line.</li>
 </ul></section>

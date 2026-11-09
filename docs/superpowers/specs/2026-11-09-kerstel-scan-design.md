@@ -73,7 +73,7 @@ A reference-only file that git tracks is fine; `init` suggests committing one. G
 `kerstel scan` with no path scans the current directory. `kerstel scan ~` scans the home directory.
 
 - **Never descends into:** `node_modules`, `.git`, `.hg`, `.svn`, `.kerstel` (its backups are encrypted), package manager and tool caches (`.cache`, `.npm`, `.pnpm-store`, `.yarn`, `.bun`, `.nvm`, `.cargo`, `.rustup`, `.gradle`, `.m2`, `.venv`, `__pycache__`, `.tox`), `.Trash`, and on macOS `~/Library`. The list is one constant in the scan module.
-- **Never follows a symlinked directory,** and never crosses into another filesystem (the device number changes), the same rule as `find -xdev`. That keeps it out of network mounts, `/Volumes`, and `/proc`. A symlinked env file is read, as `init` reads one.
+- **Never follows a symlinked directory below the root,** and never crosses into another filesystem (the device number changes from the root folder's, read through the link when the root itself is one), the same rule as `find -xdev`. That keeps it out of network mounts, `/Volumes`, and `/proc`. A symlinked env file is read, as `init` reads one.
 - **Unreadable directories** are counted, and listed with `--verbose`. They never stop the walk and never change the exit code.
 - **No depth limit.** The skip list is what keeps a home directory fast. On a terminal, a progress line on stderr shows the folder count and is cleared when the walk ends. Ctrl-C stops the walk and prints nothing more.
 - **macOS privacy prompts.** Scanning `~` reads Desktop, Documents and Downloads, so macOS may ask once whether the terminal can access them. Answering Don't Allow makes them unreadable folders. The CLI docs say so.
@@ -131,6 +131,7 @@ scripts  ~/src/scripts  no package.json
 - A project with nothing to do (only references that resolve, config, and templates without secrets) collapses into the "more projects" line. `--all` lists it.
 - A workspace with plaintext gets one `kerstel init` line at its root, which #34 makes set up every package. (Between this PR and #34 landing, the line names each package folder instead.)
 - Each file with secrets is named in exactly one advice group, checked in this order: tracked by git, template (replace the value with a placeholder and rotate the key), backup copy (delete it), a file `init` reads (run `init` in the project, or at its workspace root), and any other file (§4: a nested env file, or one outside any Node or Bun project).
+- A reference this vault lacks gets the same split: in a file `init` reads, run `init` in the project, whose teammate flow asks for the value; anywhere else, store it with `kerstel set <scope>/<KEY>`.
 - The ✗ marks are reserved for secrets git tracks and secrets in templates, since those are likely already shared. `!` is everything else that needs action.
 - Nothing found at all: `No env files under ~/src.` and exit `0`.
 

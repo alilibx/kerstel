@@ -4,6 +4,7 @@ import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
 import { moveCommand } from "./commands/move";
 import { runCommand } from "./commands/run";
+import { scanCommand } from "./commands/scan";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
 import { updateCommand, versionCommand } from "./commands/update";
@@ -33,6 +34,8 @@ const COMMANDS = `Usage:
   ${cliName()} resolve ks:<scope>/<KEY>             Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
+  ${cliName()} scan [path] [--keys] [--all] [--json]
+                                                Find env files that still hold secrets
   ${cliName()} update [--check]                      Install the latest release
   ${cliName()} uninstall [--dry-run] [--yes] [--force]
                                                 Restore every project and remove Kerstel
@@ -113,6 +116,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await daemonCommand(args);
       case "doctor":
         return await doctorCommand(args);
+      case "scan":
+        return await scanCommand(args);
       case "uninstall":
         return await uninstallCommand(args);
       case "update":

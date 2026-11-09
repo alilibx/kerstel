@@ -41,6 +41,12 @@ export interface UnsupportedValue {
   /** 1-based line number, for a message that points the user at the line. */
   line: number;
   reason: string;
+  /**
+   * What the parser refused, so `scan` can judge the entry without its text:
+   * a PEM block, another value spanning lines, a key Kerstel can't name, or
+   * a line that is not `KEY=value` at all.
+   */
+  kind: "pem" | "multiline" | "bad-key" | "not-a-pair";
 }
 
 export interface DotenvFile {
@@ -201,9 +207,15 @@ function parseLine(
           key: candidate,
           line: lineNumber,
           reason: "the key contains characters Kerstel does not support",
+          kind: "bad-key",
         });
       } else {
-        unsupported.push({ key: lineLabel(lineNumber), line: lineNumber, reason: "the line is not KEY=value" });
+        unsupported.push({
+          key: lineLabel(lineNumber),
+          line: lineNumber,
+          reason: "the line is not KEY=value",
+          kind: "not-a-pair",
+        });
       }
     }
     return raw;
@@ -218,6 +230,7 @@ function parseLine(
       key: lineLabel(lineNumber),
       line: lineNumber,
       reason: "the text before = does not look like a variable name",
+      kind: "not-a-pair",
     });
     return raw;
   }
@@ -232,10 +245,13 @@ function parseLine(
       // A multi-line quoted value. Refusing to parse it means refusing to
       // rewrite it, which is the safe half of the choice: the key keeps its
       // plaintext and `init` says so, rather than writing a mangled file.
+      // The body is never read, but the first line is the header when a PEM
+      // block was pasted between quotes, and that one line says what it is.
       unsupported.push({
         key,
         line: lineNumber,
         reason: "the value opens a quote that does not close on the same line",
+        kind: PEM_BEGIN.test(rest.slice(i + 1).trim()) ? "pem" : "multiline",
       });
       return { line: { kind: "raw", text, eol }, openQuote: head };
     }
@@ -329,6 +345,7 @@ export function parseDotenv(source: string): DotenvFile {
         reason:
           "the value is a PEM block spanning several lines; store it with `kerstel set` " +
           "(pipe the file in) and reference it, or put it on one line in double quotes with \\n",
+        kind: "pem",
       };
       unsupported.push(pemEntry);
       lines.push({ kind: "raw", text, eol });

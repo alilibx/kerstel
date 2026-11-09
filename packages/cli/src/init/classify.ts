@@ -1,3 +1,4 @@
+import { parseReference } from "../reference";
 import type { Choice } from "./prompts";
 
 /**
@@ -104,6 +105,7 @@ function urlAuthority(value: string): string | null {
 }
 
 const SHARED = "You probably use this account in every project";
+const UNSURE = "Might be a secret, so it's safer in the vault";
 
 function stored(key: string, reason: string): Explanation {
   return GLOBAL_KEYS.includes(key) ? { suggestion: "global", reason: SHARED } : { suggestion: "project", reason };
@@ -150,7 +152,7 @@ export function explain(key: string, value: string): Explanation {
   if (trimmed.length < 8 && SINGLE_LOWERCASE_WORD.test(trimmed)) {
     return { suggestion: "plaintext", reason: "A short word, like a mode or a name" };
   }
-  return stored(key, "Might be a secret, so it's safer in the vault");
+  return stored(key, UNSURE);
 }
 
 /**
@@ -200,4 +202,81 @@ export function DESTINATION_CHOICES(scope: string): Choice<Suggestion>[] {
     { value: "global", label: "Vault, shared by all your projects", hint: "For accounts you use everywhere, like an OpenAI key" },
     { value: "plaintext", label: "Keep as plain text", hint: "Stays in the file. For settings, not secrets" },
   ];
+}
+
+/**
+ * `kerstel scan`'s verdict on one line. Spec `2026-11-09-kerstel-scan-design.md` §2.2.
+ *
+ * Built on `explain()`, so `scan` and `init` cannot disagree about what is a
+ * credential. The one difference is `unclear`: `explain()` sends a value it
+ * cannot place to the vault, which is the right default when migrating, but a
+ * scan that failed on `APP_NAME=Northwind Traders` would fail forever.
+ */
+export type Verdict = "reference" | "secret" | "unclear" | "config";
+
+/** A PEM private key pasted on one line, with `\n` escapes. */
+const PEM_PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
+
+export function judge(key: string, value: string): Verdict {
+  if (parseReference(value, key)) return "reference";
+  const trimmed = value.trim();
+  // A token prefix is evidence whatever the key is called:
+  // NEXT_PUBLIC_STRIPE_KEY=sk_live_... is a live key behind a bundler prefix.
+  if (TOKEN_PREFIX.test(trimmed) || PEM_PRIVATE_KEY.test(trimmed)) return "secret";
+  const { suggestion, reason } = explain(key, value);
+  if (suggestion === "plaintext") return "config";
+  return reason === UNSURE ? "unclear" : "secret";
+}
+
+/** Does the key's name alone say it holds a credential? For a value `scan` cannot read. */
+export function namesCredential(key: string): boolean {
+  return SECRET_KEYS.test(key) && !PLAINTEXT_KEYS.test(key);
+}
+
+/** Query parameters that carry a credential, with their values. Same names as `SECRET_QUERY`. */
+const SECRET_QUERY_VALUES =
+  /[?&](?:(?:[^=&#]*[-_.])?(?:key|token|secret|password|sig|signature)|apikey|auth)=([^&#]*)/gi;
+const PLACEHOLDER_RUN = /[xX]{3,}|\*{3,}|0{3,}/;
+const PLACEHOLDER_WORD = /your|here|replace|example|changeme/i;
+
+/**
+ * Does a credential in a template look real rather than like a placeholder?
+ * Scan spec §2.2: 16 or more characters mixing letters and digits, with no run
+ * of x, * or 0 and none of the words starters use in placeholders.
+ */
+export function looksReal(credential: string): boolean {
+  return (
+    credential.length >= 16 &&
+    /[A-Za-z]/.test(credential) &&
+    /\d/.test(credential) &&
+    !PLACEHOLDER_RUN.test(credential) &&
+    !PLACEHOLDER_WORD.test(credential)
+  );
+}
+
+/**
+ * A value in `.env.example` and friends that is certainly a real credential.
+ * Templates are full of `STRIPE_SECRET_KEY=sk_test_xxx` and
+ * `postgres://postgres:postgres@localhost`, so key names and weak signals
+ * don't count here: only a real-looking token, URL password, or query
+ * credential, or a private key.
+ */
+export function isTemplateSecret(value: string): boolean {
+  const trimmed = value.trim();
+  if (PEM_PRIVATE_KEY.test(trimmed)) return true;
+  if (TOKEN_PREFIX.test(trimmed) && looksReal(trimmed)) return true;
+  const head = URL_HEAD.exec(trimmed);
+  if (head) {
+    const authority = head[2] ?? "";
+    const at = authority.lastIndexOf("@");
+    if (at !== -1) {
+      const userinfo = authority.slice(0, at);
+      const colon = userinfo.indexOf(":");
+      if (colon !== -1 && looksReal(userinfo.slice(colon + 1))) return true;
+    }
+    for (const match of trimmed.matchAll(SECRET_QUERY_VALUES)) {
+      if (looksReal(match[1] ?? "")) return true;
+    }
+  }
+  return false;
 }
