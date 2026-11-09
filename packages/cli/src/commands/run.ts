@@ -1,6 +1,6 @@
 import { openContext } from "../context";
 import { fail } from "../output";
-import { parseReference } from "../reference";
+import { formatReference, isShorthand, parseReference } from "../reference";
 import { cliName } from "../ui/cli-name";
 import { refuseMissingExecutable, spawnChild } from "./spawn";
 
@@ -27,14 +27,20 @@ export async function runCommand(args: string[]): Promise<number> {
   try {
     for (const [name, value] of Object.entries(process.env)) {
       if (typeof value !== "string") continue;
-      const ref = parseReference(value);
+      const ref = parseReference(value, name);
       if (!ref) {
         env[name] = value;
         continue;
       }
       const resolved = ctx.vault.getSecret(ref);
       if (resolved === null) {
-        fail(`No secret at kerstel://${ref.scope}/${ref.key} (referenced by ${name})`);
+        fail(
+          `No secret at ${formatReference(ref.scope, ref.key)} (referenced by ${name})` +
+            (isShorthand(value)
+              ? `. ${name} is ${value}, so Kerstel looked for ${ref.scope}/${name}. ` +
+                `If ${name} was copied from another variable, write ${value}/<KEY>.`
+              : ""),
+        );
         return 1;
       }
       // One row per reference resolved. This path hands plaintext to a child

@@ -36,9 +36,9 @@
 <p class="lede">The committed <code>.env</code> is the contract. Each machine holds its own vault.</p><h2>Commit the references</h2>
 <p>Once every value in <code>.env</code> is a reference, the file contains nothing sensitive. Commit it. It doubles as a living <code>.env.example</code> that can never drift from what the app reads, because it is what the app reads.</p>
 <pre><code class="language-bash"># .env, committed
-DATABASE_URL=kerstel://myapp/DATABASE_URL
-OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
-STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
+DATABASE_URL=ks:myapp
+OPENAI_API_KEY=ks:global
+STRIPE_SECRET_KEY=ks:myapp
 </code></pre>
 <p>If <code>.env</code> is in <code>.gitignore</code>, remove it there only after every value is a reference. <code>kerstel init</code> offers to do exactly that at the end of a migration — it defaults to no, and it names any key that still holds a plaintext value instead of calling the files safe to commit. <code>git grep &quot;=sk-&quot;</code> and similar checks stay useful as a guard.</p>
 <h2>Onboard a teammate</h2>

@@ -385,7 +385,7 @@ function renderValue(value: string, quote: Quote): string {
     // Neither style can hold it: a value carrying a single quote AND a
     // backslash, double quote or carriage return. No dotenv spelling exists,
     // so this escapes and accepts that the reader will see the backslashes.
-    // `init` never lands here -- it writes `kerstel://scope/KEY` references.
+    // `init` never lands here -- it writes `ks:` references.
     const escaped = value
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')

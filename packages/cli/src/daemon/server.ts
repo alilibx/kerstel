@@ -138,7 +138,7 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
             return errorResponse(id, "internal", "Could not decrypt the stored value");
           }
           if (value === null) {
-            return errorResponse(id, "not_found", `No secret at kerstel://${scope}/${key}`);
+            return errorResponse(id, "not_found", `No secret at ks:${scope}/${key}`);
           }
 
           vault.appendAudit({

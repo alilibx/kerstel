@@ -1,6 +1,6 @@
 # Shorter references: `ks:<scope>`
 
-- **Status:** draft for review, 2026-11-09
+- **Status:** approved design, 2026-11-09
 - **Release:** 0.2.0
 - **Issue:** [#36](https://github.com/alilibx/kerstel/issues/36)
 - **Builds on:** the product spec (`2026-09-17-kerstel-secrets-manager-design.md`, §4 references, §6 the hook), the `ks move` spec (`2026-09-24-move-keys-between-vault-and-plaintext-design.md`)
@@ -73,7 +73,7 @@ The hook's own copy in `packages/hook/src/protocol.js` changes the same way. `RE
 
 What this spec does about it:
 
-- **`init` and `ks move` write the full form for any variable that an expansion in the same project's env files uses.** Both already read every env file they change, so they can see `${A}` and `$A`. Both writers need the check: if `move` shortened `A=kerstel://old/A` to `A=ks:new` and left `B=${A}` alone, `B` would look up `new/B`. That covers the common case, which is a Next.js or Compose project.
+- **`init` and `ks move` write the full form for any variable that an expansion in the same project's env files uses.** Both already read every env file they change, so they can see `${A}` and `$A`. `init` also writes out the key of a shorthand an earlier run wrote, if a line added since copies it; a `kerstel://` line already names its key and is left alone. Both writers need the check: if `move` shortened `A=kerstel://old/A` to `A=ks:new` and left `B=${A}` alone, `B` would look up `new/B`. That covers the common case, which is a Next.js or Compose project.
 - The `not_found` error for a shorthand names both the variable and the key it looked for: `B is ks:global, so Kerstel looked for global/B. If B was copied from another variable, write ks:global/<KEY>.`
 - The docs say it once, on the references page: copy a reference with its key (`ks:global/A`), never the shorthand.
 
@@ -95,12 +95,13 @@ A plain value such as `ks:prod` now parses as a reference. Under the full-match 
 - **`packages/hook/src/protocol.js`**: mirrors the parser. `preload.js` passes the property name, which it already has in the `get` trap and in the Bun startup pass.
 - **`init`**: writes the short forms, and checks expansions (§5.1).
 - **`move`**: writes the short forms, and checks expansions the same way `init` does. Its row IDs use the canonical `scope/KEY` pair, not the text in the file, so a `kerstel://` line and a `ks:` line for the same key are one row.
-- **`run`, `uninstall`, `doctor`**: pass the variable name. `doctor`'s ".env holds only kerstel:// references" line becomes "only references", and it gains a line counting each form.
+- **`run`, `uninstall`, `doctor`**: pass the variable name. `doctor`'s ".env holds only kerstel:// references" line becomes "only ks: references", and its References line counts each form (§7).
 - **Copy**: README, the website pages that show references (getting started, how it works, CLI, deploying, teams, security, the home page), the hero animation, and `kerstel --help`.
 - **Tests**: the fixtures table with names; the hook-vs-CLI parity test; `init` and `move` each writing both forms, and each writing the full form for a variable another line expands; `uninstall` restoring a shorthand line; `run` and the hook resolving all three forms; `resolve` refusing a bare shorthand with the hint.
 
-## 7. Open questions
+## 7. Decisions
 
-1. **Shorten existing `kerstel://` lines?** The issue proposes an opt-in step when `init` is re-run. Recommendation: leave it out of 0.2.0. Both forms work forever, and rewriting committed files makes diffs for no change in behaviour. `ks move` already shortens any line it rewrites.
-2. **A `--long` flag for `init`?** Recommendation: no. The full short form `ks:<scope>/<KEY>` is always valid to write by hand, and an extra flag adds a second output format to test.
-3. **How `ks ls` shows keys.** It prints `kerstel://scope/KEY` today. Recommendation: `ks:scope/KEY`, matching §4.
+1. **Existing `kerstel://` lines are not shortened.** Re-running `init` leaves them as they are. Both forms work forever, and rewriting committed files makes diffs for no change in behaviour. `ks move` shortens any line it rewrites anyway.
+2. **No `--long` flag for `init`.** The full form `ks:<scope>/<KEY>` is always valid to write by hand, and a flag would add a second output format to test.
+3. **`ks ls` shows `ks:scope/KEY`,** matching §4.
+4. **`doctor` counts each form on the References line:** `9 of 9 resolve (6 ks:, 3 kerstel://)`. It counts env file lines across every file, not the winning value per key, so a `ks:` line that another file overrides still shows. The counts appear only when every reference resolves; a failing line names what can't be found instead.

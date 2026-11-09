@@ -56,7 +56,7 @@ export function collectKeys(loaded: LoadedEnvFile[]): CollectedKey[] {
           source: entry.info.name,
           files: [entry.info.name],
           conflicts: [],
-          reference: parseReference(value),
+          reference: parseReference(value, pair.key),
         });
         continue;
       }

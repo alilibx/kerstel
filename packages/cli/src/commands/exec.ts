@@ -143,7 +143,7 @@ export async function execCommand(args: string[]): Promise<number> {
   if (!hookInstall.installed) {
     fail(
       `Kerstel could not install its runtime hook into ${hookDir}: ${hookInstall.error ?? "unknown error"}. ` +
-        "Without it the child would receive raw kerstel:// references. " +
+        "Without it the child would receive raw ks: references. " +
         `Fix the permissions, or use \`${cliName()} run -- <command>\` instead.`,
     );
     return 1;

@@ -53,15 +53,15 @@
 <h2>3. Reference it from your project</h2>
 <p>Open <code>.env</code> and replace the value with a reference:</p>
 <pre><code class="language-bash"># .env
-OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
+OPENAI_API_KEY=ks:global
 </code></pre>
 <p>This file is now safe to read, grep, and commit. <code>ks ls</code> shows every reference the vault can serve.</p>
 <h2>4. Run your app</h2>
-<p><code>ks run</code> resolves every <code>kerstel://</code> reference already sitting in the environment it inherits, then starts the command with the real values in place. It never reads <code>.env</code> itself, so get <code>.env</code> into the environment first:</p>
+<p><code>ks run</code> resolves every reference already sitting in the environment it inherits, then starts the command with the real values in place. It never reads <code>.env</code> itself, so get <code>.env</code> into the environment first:</p>
 <pre><code class="language-bash">set -a; . ./.env; set +a
 ks run -- npm run dev
 </code></pre>
-<p>Projects wired with the runtime hook skip both steps: the hook resolves <code>kerstel://</code> references wherever they come from, including a <code>.env</code> loader, so your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <code>ks init</code> does that wiring for you, once, and <a href="/docs/how-it-works">how resolution works</a> covers what it writes.</p>
+<p>Projects wired with the runtime hook skip both steps: the hook resolves references wherever they come from, including a <code>.env</code> loader, so your code reads <code>process.env.OPENAI_API_KEY</code> and gets the real value directly. <code>ks init</code> does that wiring for you, once, and <a href="/docs/how-it-works">how resolution works</a> covers what it writes.</p>
 <h2>5. Check the setup</h2>
 <pre><code class="language-bash">ks doctor
 </code></pre>

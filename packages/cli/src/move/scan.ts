@@ -22,7 +22,7 @@ export const PLACE_LABELS: Record<Place, string> = {
 export interface ScannedRow {
   /**
    * Unique, and the value the key menu returns: `${key}:plaintext` for a plain
-   * row, `${key}:kerstel://scope/KEY` for a vault row. Spec §2.1: one row per
+   * row, `${key}:ks:scope/KEY` for a vault row, however the line spells it. Spec §2.1: one row per
    * distinct reference, so `.env.local` reading `app/K_LOCAL` and `.env`
    * reading `app/K` stay two rows even though both are "project".
    */
@@ -61,7 +61,7 @@ export function resolveProjectScope(loaded: LoadedEnvFile[], derived: string): s
   const scopes = new Set<string>();
   for (const entry of loaded) {
     for (const pair of entries(entry.file)) {
-      const ref = parseReference(pair.value);
+      const ref = parseReference(pair.value, pair.key);
       if (ref && ref.scope !== GLOBAL_SCOPE) scopes.add(ref.scope);
     }
   }
@@ -82,12 +82,13 @@ export function scanRows(loaded: LoadedEnvFile[], scope: string): ScanResult {
 
       // Within one file the LAST assignment wins, as dotenv does.
       const value = lookup(entry.file, pair.key)!;
-      const ref = parseReference(value);
+      const ref = parseReference(value, pair.key);
       const place: Place | null =
         ref === null ? "plaintext" : ref.scope === GLOBAL_SCOPE ? "global" : ref.scope === scope ? "project" : null;
 
       if (place === null) {
-        const id = `${pair.key}:${value}`;
+        // One row per key and target, however the line spells the reference.
+        const id = `${pair.key}:${formatReference(ref!.scope, ref!.key)}`;
         const known = foreign.get(id);
         if (known) known.files.push(name);
         else foreign.set(id, { key: pair.key, reference: value, files: [name] });

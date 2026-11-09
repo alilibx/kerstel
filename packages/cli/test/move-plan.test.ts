@@ -53,7 +53,7 @@ function after(result: ReturnType<typeof plan>, name: string): string | undefine
 
 test("plain → project stores the value and writes the reference", () => {
   const result = plan({ files: { ".env": "K=secret-value\n" }, moves: [["K:plaintext", "project"]] });
-  expect(after(result, ".env")).toBe("K=kerstel://app/K\n");
+  expect(after(result, ".env")).toBe("K=ks:app\n");
   expect(result.vaultWrites).toEqual([{ ref: { scope: "app", key: "K" }, value: "secret-value", previous: null }]);
   expect(result.moves[0]!.outcome).toBe("new");
   expect(result.deletions).toEqual([]);
@@ -61,28 +61,28 @@ test("plain → project stores the value and writes the reference", () => {
 
 test("plain → shared stores the value in global", () => {
   const result = plan({ files: { ".env": "K=secret-value\n" }, moves: [["K:plaintext", "global"]] });
-  expect(after(result, ".env")).toBe("K=kerstel://global/K\n");
+  expect(after(result, ".env")).toBe("K=ks:global\n");
   expect(result.vaultWrites[0]!.ref).toEqual({ scope: "global", key: "K" });
 });
 
 test("project → shared copies the value and deletes the unused project copy", () => {
   const result = plan({
-    files: { ".env": "K=kerstel://app/K\n" },
+    files: { ".env": "K=ks:app\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "global"]],
+    moves: [["K:ks:app/K", "global"]],
   });
-  expect(after(result, ".env")).toBe("K=kerstel://global/K\n");
+  expect(after(result, ".env")).toBe("K=ks:global\n");
   expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "v", previous: null }]);
   expect(result.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "v" }]);
 });
 
 test("shared → project copies the value and never deletes global", () => {
   const result = plan({
-    files: { ".env": "K=kerstel://global/K\n" },
+    files: { ".env": "K=ks:global\n" },
     vault: { "global/K": "v" },
-    moves: [["K:kerstel://global/K", "project"]],
+    moves: [["K:ks:global/K", "project"]],
   });
-  expect(after(result, ".env")).toBe("K=kerstel://app/K\n");
+  expect(after(result, ".env")).toBe("K=ks:app\n");
   expect(result.vaultWrites[0]!.ref).toEqual({ scope: "app", key: "K" });
   expect(result.deletions).toEqual([]);
   expect(result.kept).toEqual([]);
@@ -90,9 +90,9 @@ test("shared → project copies the value and never deletes global", () => {
 
 test("project → plain writes the value back and deletes the project copy", () => {
   const result = plan({
-    files: { ".env": 'K="kerstel://app/K"\n' },
+    files: { ".env": 'K="ks:app"\n' },
     vault: { "app/K": "has space" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(after(result, ".env")).toBe('K="has space"\n');
   expect(result.moves[0]!.outcome).toBe("plaintext");
@@ -101,9 +101,9 @@ test("project → plain writes the value back and deletes the project copy", () 
 
 test("shared → plain writes the value back and keeps global", () => {
   const result = plan({
-    files: { ".env": "K=kerstel://global/K\n" },
+    files: { ".env": "K=ks:global\n" },
     vault: { "global/K": "v" },
-    moves: [["K:kerstel://global/K", "plaintext"]],
+    moves: [["K:ks:global/K", "plaintext"]],
   });
   expect(after(result, ".env")).toBe("K=v\n");
   expect(result.deletions).toEqual([]);
@@ -115,13 +115,13 @@ test("every covered file is rewritten, and every assignment in it", () => {
     files: { ".env.local": "K=v\nK=v\n", ".env": "K=v\n" },
     moves: [["K:plaintext", "global"]],
   });
-  expect(after(result, ".env.local")).toBe("K=kerstel://global/K\nK=kerstel://global/K\n");
-  expect(after(result, ".env")).toBe("K=kerstel://global/K\n");
+  expect(after(result, ".env.local")).toBe("K=ks:global\nK=ks:global\n");
+  expect(after(result, ".env")).toBe("K=ks:global\n");
 });
 
 for (const dest of ["global", "project"] as const) {
   const destRef = dest === "global" ? "global/K" : "app/K";
-  const source = dest === "global" ? "K:kerstel://app/K" : "K:kerstel://global/K";
+  const source = dest === "global" ? "K:ks:app/K" : "K:ks:global/K";
   const sourceRef = dest === "global" ? "app/K" : "global/K";
 
   test(`an existing ${dest} entry with the same value asks nothing`, () => {
@@ -147,13 +147,13 @@ for (const dest of ["global", "project"] as const) {
     ]);
     expect(open.moves[0]!.outcome).toBe("conflict");
 
-    const kept = plan({ ...base, choices: { [`kerstel://${destRef}`]: "keep" } });
+    const kept = plan({ ...base, choices: { [`ks:${destRef}`]: "keep" } });
     expect(kept.conflicts).toEqual([]);
     expect(kept.vaultWrites).toEqual([]);
     expect(kept.moves[0]!.outcome).toBe("kept");
     expect(kept.moves[0]!.length).toBe("existing-value".length);
 
-    const replaced = plan({ ...base, choices: { [`kerstel://${destRef}`]: "replace" } });
+    const replaced = plan({ ...base, choices: { [`ks:${destRef}`]: "replace" } });
     expect(replaced.vaultWrites).toEqual([
       { ref: { scope: destRef.split("/")[0]!, key: "K" }, value: "incoming", previous: "existing-value" },
     ]);
@@ -163,11 +163,11 @@ for (const dest of ["global", "project"] as const) {
 
 test("two rows for one key moving to the same absent destination: the first request writes, the second merges", () => {
   const result = plan({
-    files: { ".env.local": "K=plain-a\n", ".env": "K=kerstel://app/K\n" },
+    files: { ".env.local": "K=plain-a\n", ".env": "K=ks:app\n" },
     vault: { "app/K": "vault-b" },
     moves: [
       ["K:plaintext", "global"],
-      ["K:kerstel://app/K", "global"],
+      ["K:ks:app/K", "global"],
     ],
   });
   expect(result.vaultWrites).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-a", previous: null }]);
@@ -180,11 +180,11 @@ test("two rows for one key moving to the same absent destination: the first requ
 
 test("two rows for one key moving to the same conflicting destination: exactly one conflict, resolved by one write", () => {
   const base = {
-    files: { ".env.local": "K=plain-a\n", ".env": "K=kerstel://app/K\n" },
+    files: { ".env.local": "K=plain-a\n", ".env": "K=ks:app\n" },
     vault: { "app/K": "vault-b", "global/K": "existing-different" },
     moves: [
       ["K:plaintext", "global"],
-      ["K:kerstel://app/K", "global"],
+      ["K:ks:app/K", "global"],
     ] as [string, Place][],
   };
 
@@ -195,7 +195,7 @@ test("two rows for one key moving to the same conflicting destination: exactly o
   expect(open.moves[0]!.outcome).toBe("conflict");
   expect(open.moves[1]!.outcome).toBe("conflict");
 
-  const replaced = plan({ ...base, choices: { "kerstel://global/K": "replace" } });
+  const replaced = plan({ ...base, choices: { "ks:global/K": "replace" } });
   expect(replaced.vaultWrites).toEqual([
     { ref: { scope: "global", key: "K" }, value: "plain-a", previous: "existing-different" },
   ]);
@@ -209,7 +209,7 @@ test("a plain value that loses to a kept destination is recorded as discarded; a
     files: { ".env": "K=plain-incoming\n" },
     vault: { "global/K": "existing" },
     moves: [["K:plaintext", "global"]],
-    choices: { "kerstel://global/K": "keep" },
+    choices: { "ks:global/K": "keep" },
   });
   expect(kept.moves[0]!.outcome).toBe("kept");
   expect(kept.discarded).toEqual([{ ref: { scope: "global", key: "K" }, value: "plain-incoming" }]);
@@ -218,15 +218,15 @@ test("a plain value that loses to a kept destination is recorded as discarded; a
     files: { ".env": "K=plain-incoming\n" },
     vault: { "global/K": "existing" },
     moves: [["K:plaintext", "global"]],
-    choices: { "kerstel://global/K": "replace" },
+    choices: { "ks:global/K": "replace" },
   });
   expect(replaced.discarded).toEqual([]);
 
   const fromVault = plan({
-    files: { ".env": "K=kerstel://app/K\n" },
+    files: { ".env": "K=ks:app\n" },
     vault: { "app/K": "project-value", "global/K": "existing" },
-    moves: [["K:kerstel://app/K", "global"]],
-    choices: { "kerstel://global/K": "keep" },
+    moves: [["K:ks:app/K", "global"]],
+    choices: { "ks:global/K": "keep" },
   });
   expect(fromVault.discarded).toEqual([]);
   expect(fromVault.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "project-value" }]);
@@ -234,10 +234,10 @@ test("a plain value that loses to a kept destination is recorded as discarded; a
 
 test("a plain value that loses a cross-request merge is recorded as discarded", () => {
   const result = plan({
-    files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=plain-b\n" },
+    files: { ".env.local": "K=ks:app\n", ".env": "K=plain-b\n" },
     vault: { "app/K": "vault-a" },
     moves: [
-      ["K:kerstel://app/K", "global"],
+      ["K:ks:app/K", "global"],
       ["K:plaintext", "global"],
     ],
   });
@@ -248,9 +248,9 @@ test("a plain value that loses a cross-request merge is recorded as discarded", 
 
 test("a project copy another file still references is kept", () => {
   const result = plan({
-    files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\nOTHER=kerstel://app/K\n" },
+    files: { ".env.local": "K=ks:app\n", ".env": "K=ks:app\nOTHER=ks:app/K\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "global"]],
+    moves: [["K:ks:app/K", "global"]],
   });
   expect(result.deletions).toEqual([]);
   expect(result.kept).toEqual([{ ref: { scope: "app", key: "K" }, reason: "referenced", root: null }]);
@@ -258,10 +258,10 @@ test("a project copy another file still references is kept", () => {
 
 test("a project copy another checkout reads is kept, naming that checkout", () => {
   const result = plan({
-    files: { ".env": "K=kerstel://app/K\n" },
+    files: { ".env": "K=ks:app\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
-    otherCheckoutRefs: new Map([["kerstel://app/K", "/elsewhere/app"]]),
+    moves: [["K:ks:app/K", "plaintext"]],
+    otherCheckoutRefs: new Map([["ks:app/K", "/elsewhere/app"]]),
   });
   expect(result.deletions).toEqual([]);
   expect(result.kept).toEqual([{ ref: { scope: "app", key: "K" }, reason: "other-checkout", root: "/elsewhere/app" }]);
@@ -269,19 +269,19 @@ test("a project copy another checkout reads is kept, naming that checkout", () =
 
 test("a project copy no checkout reads is deleted", () => {
   const result = plan({
-    files: { ".env": "K=kerstel://app/K\n" },
+    files: { ".env": "K=ks:app\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
-    otherCheckoutRefs: new Map([["kerstel://app/OTHER", "/elsewhere/app"]]),
+    moves: [["K:ks:app/K", "plaintext"]],
+    otherCheckoutRefs: new Map([["ks:app/OTHER", "/elsewhere/app"]]),
   });
   expect(result.deletions.map((d) => d.ref)).toEqual([{ scope: "app", key: "K" }]);
 });
 
 test("different references in different files move as separate rows", () => {
   const result = plan({
-    files: { ".env.local": "K=kerstel://global/K\n", ".env": "K=kerstel://app/K\n" },
+    files: { ".env.local": "K=ks:global\n", ".env": "K=ks:app\n" },
     vault: { "global/K": "g", "app/K": "p" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(result.moves).toHaveLength(1);
   expect(result.moves[0]!.files).toEqual([".env"]);
@@ -290,10 +290,10 @@ test("different references in different files move as separate rows", () => {
 });
 
 test("two different project references for one key: moving one rewrites only its file, with its own value", () => {
-  const files = { ".env.local": "K=kerstel://app/K_LOCAL\n", ".env": "K=kerstel://app/K\n" };
+  const files = { ".env.local": "K=ks:app/K_LOCAL\n", ".env": "K=ks:app\n" };
   const vault = { "app/K_LOCAL": "local-value", "app/K": "base-value" };
 
-  const base = plan({ files, vault, moves: [["K:kerstel://app/K", "plaintext"]] });
+  const base = plan({ files, vault, moves: [["K:ks:app/K", "plaintext"]] });
   expect(base.moves).toHaveLength(1);
   expect(base.moves[0]!.files).toEqual([".env"]);
   expect(base.moves[0]!.fromRef).toEqual({ scope: "app", key: "K" });
@@ -301,7 +301,7 @@ test("two different project references for one key: moving one rewrites only its
   expect(after(base, ".env.local")).toBeUndefined();
   expect(base.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: "base-value" }]);
 
-  const local = plan({ files, vault, moves: [["K:kerstel://app/K_LOCAL", "plaintext"]] });
+  const local = plan({ files, vault, moves: [["K:ks:app/K_LOCAL", "plaintext"]] });
   expect(local.moves[0]!.files).toEqual([".env.local"]);
   expect(local.moves[0]!.fromRef).toEqual({ scope: "app", key: "K_LOCAL" });
   expect(after(local, ".env.local")).toBe("K=local-value\n");
@@ -311,16 +311,16 @@ test("two different project references for one key: moving one rewrites only its
 
 test("a reference in one file and a plain value in another: moving the plain row", () => {
   const result = plan({
-    files: { ".env.local": "K=plain\n", ".env": "K=kerstel://app/K\n" },
+    files: { ".env.local": "K=plain\n", ".env": "K=ks:app\n" },
     vault: { "app/K": "plain" },
     moves: [["K:plaintext", "project"]],
   });
-  expect(after(result, ".env.local")).toBe("K=kerstel://app/K\n");
+  expect(after(result, ".env.local")).toBe("K=ks:app\n");
   expect(result.moves[0]!.outcome).toBe("same");
 });
 
 test("a reference the vault does not hold is skipped, not moved", () => {
-  const result = plan({ files: { ".env": "K=kerstel://app/K\n" }, moves: [["K:kerstel://app/K", "plaintext"]] });
+  const result = plan({ files: { ".env": "K=ks:app\n" }, moves: [["K:ks:app/K", "plaintext"]] });
   expect(result.skipped).toEqual([{ key: "K", ref: { scope: "app", key: "K" } }]);
   expect(result.moves).toEqual([]);
   expect(result.files).toEqual([]);
@@ -337,9 +337,9 @@ test("plain values that differ between files: the first file's value is stored",
 
 test("plain text into a tracked or unignored file warns; into an ignored one does not", () => {
   const result = plan({
-    files: { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\n" },
+    files: { ".env.local": "K=ks:app\n", ".env": "K=ks:app\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
     git: { ".env": "tracked", ".env.local": "ignored" },
   });
   expect(result.gitWarnings).toEqual([{ file: ".env", key: "K", status: "tracked" }]);
@@ -347,25 +347,25 @@ test("plain text into a tracked or unignored file warns; into an ignored one doe
 
 test("noReferencesLeft is set when the last reference moves out", () => {
   const last = plan({
-    files: { ".env": "K=kerstel://app/K\nPORT=3000\n" },
+    files: { ".env": "K=ks:app\nPORT=3000\n" },
     vault: { "app/K": "v" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(last.noReferencesLeft).toBe(true);
 
   const notLast = plan({
-    files: { ".env": "K=kerstel://app/K\nJ=kerstel://app/J\n" },
+    files: { ".env": "K=ks:app\nJ=ks:app\n" },
     vault: { "app/K": "v", "app/J": "w" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(notLast.noReferencesLeft).toBe(false);
 });
 
 test("a double-quoted value with both quote characters stays in the vault rather than being rewritten wrong", () => {
   const result = plan({
-    files: { ".env": 'K="kerstel://app/K"\n' },
+    files: { ".env": 'K="ks:app"\n' },
     vault: { "app/K": `{"a":"O'B"}` },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(result.files).toEqual([]);
   expect(result.deletions).toEqual([]);
@@ -375,9 +375,9 @@ test("a double-quoted value with both quote characters stays in the vault rather
 
 test("a single-quoted value with a quote and a backslash stays in the vault rather than being rewritten wrong", () => {
   const result = plan({
-    files: { ".env": "K='kerstel://app/K'\n" },
+    files: { ".env": "K='ks:app'\n" },
     vault: { "app/K": "it's a\\b" },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(result.files).toEqual([]);
   expect(result.deletions).toEqual([]);
@@ -387,9 +387,9 @@ test("a single-quoted value with a quote and a backslash stays in the vault rath
 
 test("a double-quoted value with only a double quote still moves, by switching to single quotes", () => {
   const result = plan({
-    files: { ".env": 'K="kerstel://app/K"\n' },
+    files: { ".env": 'K="ks:app"\n' },
     vault: { "app/K": 'she said "hi"' },
-    moves: [["K:kerstel://app/K", "plaintext"]],
+    moves: [["K:ks:app/K", "plaintext"]],
   });
   expect(after(result, ".env")).toBe(`K='she said "hi"'\n`);
   expect(result.deletions).toEqual([{ ref: { scope: "app", key: "K" }, value: 'she said "hi"' }]);
@@ -401,4 +401,17 @@ test("a request to where the key already is does nothing", () => {
   expect(result.moves).toEqual([]);
   expect(result.files).toEqual([]);
   expect(result.noReferencesLeft).toBe(false);
+});
+
+test("move writes the shorthand, and the full form for a variable another line expands", () => {
+  const result = plan({
+    files: { ".env": "A=kerstel://app/A\nB=${A}\nC=kerstel://app/C\n" },
+    vault: { "app/A": "a", "app/C": "c" },
+    moves: [
+      ["A:ks:app/A", "global"],
+      ["C:ks:app/C", "global"],
+    ],
+  });
+  // Shortening A to ks:global would make B=${A} look up global/B.
+  expect(after(result, ".env")).toBe("A=ks:global/A\nB=${A}\nC=ks:global\n");
 });

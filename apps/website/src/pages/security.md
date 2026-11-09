@@ -30,7 +30,7 @@ That is the level Kerstel ships today. The [roadmap](/roadmap) calls the next on
 
 ## What is protected
 
-No plaintext secret sits in a project file. Your `.env`, `.env.local`, and their variants hold references of the form `kerstel://<scope>/<KEY>`. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.
+No plaintext secret sits in a project file. Your `.env`, `.env.local`, and their variants hold references of the form `ks:<scope>` or `ks:<scope>/<KEY>`. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.
 
 The values live in one vault on your machine, at `~/.kerstel/vault.db`. Kerstel has no account, collects no telemetry, and listens on no network port.
 
@@ -69,7 +69,7 @@ Plaintext leaves the vault in five places:
 1. **Inside your app's process**, when code reads `process.env.SOME_KEY` and the hook resolves the reference.
 2. **In the environment of a child process**, either one started by `kerstel run -- <command>`, or one spawned by a process already running under the hook. Building a child's environment resolves *every* reference in it, not only the ones the app read, so a `git` call from a file watcher hands that child the whole set. Same-user programs can read it from `ps -E` or `/proc`.
 3. **On your terminal**, when you ask with `kerstel get <scope>/<KEY> --reveal`.
-4. **On your terminal**, when `kerstel resolve kerstel://<scope>/<KEY>` prints a value to stdout.
+4. **On your terminal**, when `kerstel resolve ks:<scope>/<KEY>` prints a value to stdout.
 5. **Back in your `.env` files**, when `kerstel uninstall` restores them. That is the point of the command; it warns afterwards, and names any restored file git already tracks.
 
 Plaintext never appears in log output, error messages, or audit rows. One exception exists in `kerstel init`: its overview prints values it classifies as configuration, such as `PORT=3000`. A name that says it is a credential wins over a `PUBLIC_`, `VITE_` or `NEXT_PUBLIC_` prefix, and a value with a known token prefix (`sk_`, `AIza`, `ghp_`, a JWT) is never printed, whatever its key is called. Neither is a URL with a password in it, a query parameter named like a credential (`token=`, `api_key=`, `sig=`, `auth=`), or a long path segment that mixes letters and digits, as webhook tokens do. Everything else is shown only as its length.

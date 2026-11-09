@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.6 (unreleased)
 
+### Changed
+
+- References are shorter. `kerstel init` and `ks move` now write `OPENAI_API_KEY=ks:global` when the variable and the vault key share a name, and `ks:global/OPENAI_API_KEY` when they don't, or when another line of your env files copies the variable with `${OPENAI_API_KEY}`. References in the `kerstel://global/OPENAI_API_KEY` form keep working everywhere and are never rewritten for you. Messages show references as `ks:<scope>/<KEY>`, and `ks get`, `set`, `rm` and `resolve` accept every form. A project with `ks:` references needs this version of Kerstel on every machine that runs it, because older versions pass `ks:global` to the app as text; `kerstel doctor` shows how many references a project has in each form. If a short reference reaches a variable with another name and finds nothing, the error says which key it looked for and how to write the line.
+
 ## 0.1.5 (2026-11-08)
 
 ### Changed

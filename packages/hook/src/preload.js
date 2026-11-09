@@ -3,7 +3,7 @@
 const path = require("node:path");
 const { createBridge } = require("./bridge.js");
 const { locateHook } = require("./locate.js");
-const { parseReference } = require("./protocol.js");
+const { isShorthand, parseReference } = require("./protocol.js");
 
 // Guard against double installation (for example NODE_OPTIONS=--require plus bun's --preload).
 if (!process.env.KERSTEL_ACTIVE) {
@@ -46,7 +46,7 @@ function install() {
   function resolveValue(name, value) {
     if (typeof value !== "string") return value;
 
-    const ref = parseReference(value);
+    const ref = parseReference(value, name);
     if (!ref) return value;
 
     // Keyed by name and checked against the reference: a raw write through
@@ -64,7 +64,20 @@ function install() {
       });
     }
 
-    const resolved = bridge.resolveSync(ref.scope, ref.key);
+    let resolved;
+    try {
+      resolved = bridge.resolveSync(ref.scope, ref.key);
+    } catch (error) {
+      // `ks:<scope>` names the key by the variable it sits in, so one copied
+      // under another name as text (`B=${A}` in an env file, `export B=$A`)
+      // looks up the wrong key. Say so, since the reference alone doesn't.
+      if (error && error.code === "not_found" && isShorthand(value)) {
+        error.message +=
+          ` ${name} is ${value}, so Kerstel looked for ${ref.scope}/${name}.` +
+          ` If ${name} was copied from another variable, write ${value}/<KEY>.`;
+      }
+      throw error;
+    }
     cache.set(name, { ref: value, resolved });
     return resolved;
   }
@@ -118,7 +131,7 @@ function install() {
   if (process.versions && process.versions.bun) {
     for (const name of Object.keys(raw)) {
       const value = raw[name];
-      if (!parseReference(value)) continue;
+      if (!parseReference(value, name)) continue;
       try {
         raw[name] = resolveValue(name, value);
       } catch (error) {

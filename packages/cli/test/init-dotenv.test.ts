@@ -124,9 +124,9 @@ test("entries keeps key order and every occurrence", () => {
 
 test("setValue rewrites only the value bytes", () => {
   const file = parseDotenv(GNARLY);
-  expect(setValue(file, "WITH_COMMENT", "kerstel://app/WITH_COMMENT")).toBe(1);
+  expect(setValue(file, "WITH_COMMENT", "ks:app/WITH_COMMENT")).toBe(1);
   const out = serializeDotenv(file);
-  expect(out).toContain("WITH_COMMENT=kerstel://app/WITH_COMMENT # trailing note");
+  expect(out).toContain("WITH_COMMENT=ks:app/WITH_COMMENT # trailing note");
   // Everything else survives untouched.
   expect(out).toContain("# Leading comment");
   expect(out).toContain("  INDENTED=indented-value");
@@ -135,12 +135,12 @@ test("setValue rewrites only the value bytes", () => {
 
 test("setValue preserves the original quoting style", () => {
   const file = parseDotenv(['A="old"', "B='old'", "C=old", "export D=old"].join("\n"));
-  setValue(file, "A", "kerstel://app/A");
-  setValue(file, "B", "kerstel://app/B");
-  setValue(file, "C", "kerstel://app/C");
-  setValue(file, "D", "kerstel://app/D");
+  setValue(file, "A", "ks:app/A");
+  setValue(file, "B", "ks:app/B");
+  setValue(file, "C", "ks:app/C");
+  setValue(file, "D", "ks:app/D");
   expect(serializeDotenv(file)).toBe(
-    ['A="kerstel://app/A"', "B='kerstel://app/B'", "C=kerstel://app/C", "export D=kerstel://app/D"].join("\n"),
+    ['A="ks:app/A"', "B='ks:app/B'", "C=ks:app/C", "export D=ks:app/D"].join("\n"),
   );
 });
 
@@ -152,8 +152,8 @@ test("setValue quotes an unquoted value that would otherwise change meaning", ()
 
 test("setValue rewrites every occurrence of a duplicated key", () => {
   const file = parseDotenv("K=one\nOTHER=x\nK=two\n");
-  expect(setValue(file, "K", "kerstel://app/K")).toBe(2);
-  expect(serializeDotenv(file)).toBe("K=kerstel://app/K\nOTHER=x\nK=kerstel://app/K\n");
+  expect(setValue(file, "K", "ks:app/K")).toBe(2);
+  expect(serializeDotenv(file)).toBe("K=ks:app/K\nOTHER=x\nK=ks:app/K\n");
 });
 
 test("a value whose quote never closes is reported, not parsed", () => {
@@ -270,8 +270,8 @@ test("a lone carriage return ends a line, as dotenv treats it", () => {
 test("setLineValue rewrites only the targeted line and throws on non-pair lines", () => {
   const file = parseDotenv("K=one\nOTHER=x\nK=two\n# comment\n");
   // Rewrite only the second K (at index 2)
-  setLineValue(file, 2, "kerstel://app/K");
-  expect(serializeDotenv(file)).toBe("K=one\nOTHER=x\nK=kerstel://app/K\n# comment\n");
+  setLineValue(file, 2, "ks:app/K");
+  expect(serializeDotenv(file)).toBe("K=one\nOTHER=x\nK=ks:app/K\n# comment\n");
 
   // Throws on a non-pair line (comment at index 3)
   expect(() => setLineValue(file, 3, "value")).toThrow();
@@ -279,9 +279,9 @@ test("setLineValue rewrites only the targeted line and throws on non-pair lines"
 
 test("setLineValue preserves quoting style like setValue", () => {
   const file = parseDotenv(['A="old"', "B='old'"].join("\n"));
-  setLineValue(file, 0, "kerstel://app/A");
-  setLineValue(file, 1, "kerstel://app/B");
+  setLineValue(file, 0, "ks:app/A");
+  setLineValue(file, 1, "ks:app/B");
   expect(serializeDotenv(file)).toBe(
-    ['A="kerstel://app/A"', "B='kerstel://app/B'"].join("\n"),
+    ['A="ks:app/A"', "B='ks:app/B'"].join("\n"),
   );
 });

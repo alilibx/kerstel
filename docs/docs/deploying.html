@@ -46,9 +46,9 @@
 <li><strong>Or commit it, and set every key on the host.</strong> Once every value is a reference, <code>.env</code> holds nothing sensitive and doubles as the list of keys the host needs. Check that first: <code>init</code> lets you leave a value in plaintext, and names every plaintext key it leaves behind, so a file with a plaintext secret in it is still a secret. Commit only when <code>init</code> reports no plaintext, or when what is left is meant to be public. The frameworks we checked (Next.js, Nuxt, the Vite-based ones, Expo, NestJS config) do not overwrite a variable the environment already sets when they load <code>.env</code>, so a key set on the host wins.</li>
 </ul>
 <p>The mistake to avoid is a committed <code>.env</code> reaching a host where one key is <strong>not</strong> set. The framework loads the file, nothing overrides that line, and the app gets the literal reference:</p>
-<pre><code>Error: Publishable key not valid: kerstel://myapp/CLERK_PUBLISHABLE_KEY
+<pre><code>Error: Publishable key not valid: ks:myapp
 </code></pre>
-<p>If a value on a host looks like <code>kerstel://…</code>, that key is missing from the host&#39;s settings. Add it there; there is nothing to fix in the repo.</p>
+<p>If a value on a host looks like <code>ks:…</code> (or <code>kerstel://…</code> in a project set up with Kerstel 0.1), that key is missing from the host&#39;s settings. Add it there; there is nothing to fix in the repo.</p>
 <h2>What each host runs on its own</h2>
 <p>A host runs some scripts without being asked, which is why they are wired through the launcher rather than left alone. Overriding the build or start command in the host&#39;s settings changes nothing about Kerstel; the launcher steps aside either way.</p>
 <div class="table-wrap"><table>
@@ -191,14 +191,14 @@
   &quot;globalPassThroughEnv&quot;: [&quot;KERSTEL_SOCKET&quot;, &quot;KERSTEL_TOKEN_FILE&quot;, &quot;KERSTEL_HOOK_DIR&quot;]
 }
 </code></pre>
-<p>Without this, a task under <code>turbo run dev</code> on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal <code>kerstel://</code> reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host&#39;s settings. Nx does no filtering and needs nothing.</p>
+<p>Without this, a task under <code>turbo run dev</code> on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal <code>ks:</code> reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host&#39;s settings. Nx does no filtering and needs nothing.</p>
 <h2>Bun</h2>
 <p>On your machine, under Bun, the hook resolves every reference in the environment when the process starts, so <code>Bun.env.KEY</code> and <code>process.env.KEY</code> both hold the value. A reference assigned later, by a dotenv library for example, resolves through <code>process.env</code> but not through <code>Bun.env</code>. Read late-assigned values through <code>process.env</code>. On a host none of this applies: there is no hook, and <code>Bun.env</code> holds whatever the host set.</p>
 <h2>Checklist</h2>
 <ol>
 <li>Commit <code>.kerstel/exec.cjs</code> with your <code>package.json</code>. <code>kerstel init</code> warns if <code>.gitignore</code> hides it.</li>
 <li>Set every key on the host.</li>
-<li>Keep <code>.env</code> out of git, or commit it knowing that a key missing on the host shows up as a literal <code>kerstel://</code> value.</li>
+<li>Keep <code>.env</code> out of git, or commit it knowing that a key missing on the host shows up as a literal <code>ks:</code> value.</li>
 <li>In a Turborepo, add the three <code>KERSTEL_*</code> variables to <code>globalPassThroughEnv</code>.</li>
 <li>Do not install Kerstel on the host.</li>
 </ol>

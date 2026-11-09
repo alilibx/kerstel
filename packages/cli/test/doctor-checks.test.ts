@@ -14,7 +14,7 @@ const passingProject: ProjectStatus = {
   packageManager: "npm",
   envFiles: [".env"],
   scripts: { wrappable: 3, wired: 3, oldForm: [], partlyWired: [], skipped: [] },
-  references: { total: 9, resolvable: 9, unresolved: [] },
+  references: { total: 9, resolvable: 9, unresolved: [], short: 9, long: 0 },
   unreadable: [],
   shadowed: [],
   launcher: null,
@@ -363,14 +363,25 @@ test("Project Scripts: names half-wired scripts and refused ones, and refused on
 
 test("Project References: pass with the resolvable count", () => {
   const checks = gatherChecks(
-    allPassFacts({ project: { ...passingProject, references: { total: 9, resolvable: 9, unresolved: [] } } }),
+    allPassFacts({ project: { ...passingProject, references: { total: 9, resolvable: 9, unresolved: [], short: 9, long: 0 } } }),
   );
   expect(checkFor(checks, "References")).toEqual({
     group: "project",
     status: "pass",
     label: "References",
-    detail: "9 of 9 resolve",
+    detail: "9 of 9 resolve (9 ks:)",
   });
+});
+
+test("Project References: counts each spelling, since Kerstel 0.1 reads only kerstel://", () => {
+  const mixed = gatherChecks(
+    allPassFacts({ project: { ...passingProject, references: { total: 9, resolvable: 9, unresolved: [], short: 6, long: 3 } } }),
+  );
+  expect(checkFor(mixed, "References")?.detail).toBe("9 of 9 resolve (6 ks:, 3 kerstel://)");
+  const old = gatherChecks(
+    allPassFacts({ project: { ...passingProject, references: { total: 2, resolvable: 2, unresolved: [], short: 0, long: 2 } } }),
+  );
+  expect(checkFor(old, "References")?.detail).toBe("2 of 2 resolve (2 kerstel://)");
 });
 
 test("Project References: problem names what can't be found and how to fix it", () => {
@@ -378,7 +389,7 @@ test("Project References: problem names what can't be found and how to fix it", 
     allPassFacts({
       project: {
         ...passingProject,
-        references: { total: 9, resolvable: 8, unresolved: ["kerstel://whasal/DATABASE_URL"] },
+        references: { total: 9, resolvable: 8, unresolved: ["ks:whasal/DATABASE_URL"], short: 0, long: 0 },
       },
       cli: "ks",
     }),
@@ -387,7 +398,7 @@ test("Project References: problem names what can't be found and how to fix it", 
     group: "project",
     status: "problem",
     label: "References",
-    detail: "1 of 9 can't be found: kerstel://whasal/DATABASE_URL",
+    detail: "1 of 9 can't be found: ks:whasal/DATABASE_URL",
     fix: "ks init",
   });
 });
@@ -417,7 +428,7 @@ test("exitCode: 0 when nothing is a problem, even with warnings", () => {
 test("exitCode: 1 when anything is a problem", () => {
   const checks = gatherChecks(
     allPassFacts({
-      project: { ...passingProject, references: { total: 1, resolvable: 0, unresolved: ["kerstel://whasal/X"] } },
+      project: { ...passingProject, references: { total: 1, resolvable: 0, unresolved: ["ks:whasal/X"], short: 0, long: 0 } },
     }),
   );
   expect(exitCode(checks)).toBe(1);
@@ -463,7 +474,7 @@ test("the how-it-works note appears outside a project and in an unwired one, nev
   expect(outside).toContain("Run `ks init` inside a project");
 
   const unwired = howItWorksNote({
-    project: { ...passingProject, scripts: { wrappable: 2, wired: 0, oldForm: [], partlyWired: [], skipped: [] }, references: { total: 0, resolvable: 0, unresolved: [] } },
+    project: { ...passingProject, scripts: { wrappable: 2, wired: 0, oldForm: [], partlyWired: [], skipped: [] }, references: { total: 0, resolvable: 0, unresolved: [], short: 0, long: 0 } },
     cli: "kerstel",
   });
   expect(unwired).toContain("`kerstel init`");

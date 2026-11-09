@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { formatReference, type SecretRef } from "../reference";
+import { formatReference, referenceSyntax, type SecretRef } from "../reference";
 import { collectKeys, type LoadedEnvFile } from "./collect";
 import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } from "./detect";
-import { parseDotenv } from "./dotenv-file";
+import { entries, parseDotenv } from "./dotenv-file";
 import { deriveScope } from "./project-name";
 import { findShadowedBinaries } from "./shadow";
 import { launcherStatus, type LauncherStatus } from "./launcher";
@@ -33,7 +33,13 @@ export interface ProjectStatus {
   };
   /** The committed launcher, or null when no script is wired in any form, so there is nothing to check. */
   launcher: LauncherStatus | null;
-  references: { total: number; resolvable: number; unresolved: string[] };
+  /**
+   * `short` and `long` count env file LINES by spelling, `ks:` and the 0.1
+   * `kerstel://`, across every file, not the winning value per key: a `ks:`
+   * line that a `kerstel://` one overrides still has to be read by every
+   * machine that loads that file.
+   */
+  references: { total: number; resolvable: number; unresolved: string[]; short: number; long: number };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
   /** `node_modules/.bin/kerstel` and friends in this project or an ancestor, absolute. See shadow.ts. */
@@ -118,6 +124,15 @@ export function projectStatus(
   const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
   let resolvable = 0;
+  let short = 0;
+  let long = 0;
+  for (const entry of loaded) {
+    for (const pair of entries(entry.file)) {
+      const syntax = referenceSyntax(pair.value, pair.key);
+      if (syntax === "short") short += 1;
+      else if (syntax === "long") long += 1;
+    }
+  }
   const unresolved: string[] = [];
   for (const key of collectKeys(loaded)) {
     if (!key.reference) continue;
@@ -134,7 +149,7 @@ export function projectStatus(
     envFiles: detected.envFiles.map((file) => file.name),
     scripts: { wrappable: wired + wiring.rewrites.length, wired, oldForm, partlyWired, skipped },
     launcher: anyWired ? launcherStatus(detected.root) : null,
-    references: { total, resolvable, unresolved },
+    references: { total, resolvable, unresolved, short, long },
     unreadable,
     shadowed: findShadowedBinaries(detected.root),
     otherCheckouts,

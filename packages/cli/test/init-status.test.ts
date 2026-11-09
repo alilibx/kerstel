@@ -81,7 +81,7 @@ test("projectStatus reports an unwired project", () => {
   expect(status?.scope).toBe("site");
   expect(status?.runtime).toBe("node");
   expect(status?.scripts).toEqual({ wrappable: 1, wired: 0, oldForm: [], partlyWired: [], skipped: [] });
-  expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [] });
+  expect(status?.references).toEqual({ total: 0, resolvable: 0, unresolved: [], short: 0, long: 0 });
   expect(status?.envFiles).toEqual([".env"]);
 });
 
@@ -91,7 +91,7 @@ test("projectStatus reports a wired project and which references resolve", async
 
   const root = makeProject({
     "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
-    ".env": "PRESENT=kerstel://site/PRESENT\nMISSING=kerstel://site/MISSING\nPLAIN=still-plain\n",
+    ".env": "PRESENT=ks:site\nMISSING=ks:site\nPLAIN=still-plain\n",
   });
 
   const { key } = await loadOrCreateDataKey();
@@ -101,7 +101,7 @@ test("projectStatus reports a wired project and which references resolve", async
     expect(status?.scripts).toEqual({ wrappable: 1, wired: 1, oldForm: [], partlyWired: [], skipped: [] });
     expect(status?.references.total).toBe(2);
     expect(status?.references.resolvable).toBe(1);
-    expect(status?.references.unresolved).toEqual(["kerstel://site/MISSING"]);
+    expect(status?.references.unresolved).toEqual(["ks:site/MISSING"]);
   } finally {
     vault.close();
   }
@@ -111,7 +111,7 @@ test("doctor prints the project section when run inside a project", async () => 
   isolateEnv({ prefix: "status-doctor" });
   const root = makeProject({
     "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
-    ".env": "PRESENT=kerstel://site/PRESENT\n",
+    ".env": "PRESENT=ks:site\n",
   });
 
   const captured: string[] = [];
@@ -129,7 +129,7 @@ test("doctor prints the project section when run inside a project", async () => 
   expect(out).toContain("This project");
   expect(out).toContain("site");
   expect(out).toContain("1 of 1 go through Kerstel");
-  expect(out).toContain("1 of 1 can't be found: kerstel://site/PRESENT");
+  expect(out).toContain("1 of 1 can't be found: ks:site/PRESENT");
 });
 
 test("doctor outside a project prints no project section", async () => {
@@ -160,8 +160,8 @@ const asRoot = process.getuid?.() === 0;
 test.skipIf(asRoot)("projectStatus reports an unreadable env file instead of throwing", () => {
   const root = makeProject({
     "package.json": '{\n  "name": "site"\n}\n',
-    ".env": "PRESENT=kerstel://site/PRESENT\n",
-    ".env.production": "LOCKED=kerstel://site/LOCKED\n",
+    ".env": "PRESENT=ks:site\n",
+    ".env.production": "LOCKED=ks:site\n",
   });
   chmodSync(join(root, ".env.production"), 0o000);
 
@@ -178,8 +178,8 @@ test.skipIf(asRoot)("doctor exits 0 and names an env file it could not read", as
   await runCli(["set", "site/PRESENT", "--value", "x"]);
   const root = makeProject({
     "package.json": '{\n  "name": "site"\n}\n',
-    ".env": "PRESENT=kerstel://site/PRESENT\n",
-    ".env.production": "LOCKED=kerstel://site/LOCKED\n",
+    ".env": "PRESENT=ks:site\n",
+    ".env.production": "LOCKED=ks:site\n",
   });
   chmodSync(join(root, ".env.production"), 0o000);
 
@@ -255,4 +255,27 @@ test("projectStatus does not call a different package sharing the scope another 
 
   const sharedOnly = rows.filter((row) => row.rootPath !== "/wt/api");
   expect(projectStatus(root, { getSecret: () => null, listProjects: () => sharedOnly })?.otherCheckouts).toEqual([]);
+});
+
+test("projectStatus counts every line by spelling, not only the value that wins", async () => {
+  isolateEnv({ prefix: "status-forms" });
+  await runCli(["set", "site/A", "--value", "a"]);
+
+  // .env.local wins for A, but every machine that loads .env still reads ks:site.
+  const root = makeProject({
+    "package.json": '{\n  "name": "site",\n  "scripts": {\n    "dev": "node .kerstel/exec.cjs -- next dev"\n  }\n}\n',
+    ".env.local": "A=kerstel://site/A\n",
+    ".env": "A=ks:site\nPLAIN=still-plain\n",
+  });
+
+  const { key } = await loadOrCreateDataKey();
+  const vault = openVault(key);
+  try {
+    const status = projectStatus(root, vault);
+    expect(status?.references.total).toBe(1);
+    expect(status?.references.short).toBe(1);
+    expect(status?.references.long).toBe(1);
+  } finally {
+    vault.close();
+  }
 });
