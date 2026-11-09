@@ -12,7 +12,15 @@ function when(ms: number): string {
 
 export const SECRETS_HEADER = ["Reference", "Value", "Updated"];
 
-export function secretRows(secrets: SecretRow[]): Row[] {
-  // mask() never hints at a value's length, so neither does this column.
-  return secrets.map((s) => ({ cells: [s.reference, mask(), when(s.updatedAt)], tone: "normal", reference: s.reference }));
+/**
+ * `revealed` is the one value `r` decrypted, shown in place of the dots on its
+ * own row. Everywhere else the column is `mask()`, which never hints at a
+ * value's length.
+ */
+export function secretRows(secrets: SecretRow[], revealed: { reference: string; value: string } | null = null): Row[] {
+  return secrets.map((s) => ({
+    cells: [s.reference, revealed?.reference === s.reference ? revealed.value : mask(), when(s.updatedAt)],
+    tone: "normal",
+    reference: s.reference,
+  }));
 }

@@ -1,4 +1,6 @@
 import type { ProjectRefs } from "../project-refs";
+import { formatReference, type SecretRef } from "../reference";
+import { keyProblem, scopeProblem, valueProblem } from "../secret-value";
 import type { Loaded, SecretRow } from "./data";
 import { scrollTop } from "./frame";
 import { isChar, isNamed, type Key } from "./keys";
@@ -34,17 +36,63 @@ export interface State {
   help: boolean;
   byKey: boolean;
   loading: boolean;
-  status: string | null;
+  status: Status | null;
   quit: boolean;
+  /**
+   * The one decrypted value on screen, if any. Spec §4.4: it replaces the
+   * dots until the next key, and lives nowhere else in the state.
+   */
+  revealed: { reference: string; value: string } | null;
+  /** An add, edit or delete in progress. While one is open, every key goes to it. */
+  modal: Modal | null;
+  /** A secret to put the cursor on once the next load lands: the one just stored. */
+  select: string | null;
 }
+
+export interface Status {
+  text: string;
+  tone: "info" | "problem";
+}
+
+export const NEW_SCOPE = "New scope…";
+
+export type Modal =
+  | { kind: "pick-scope"; choices: string[]; cursor: number }
+  | { kind: "input"; field: "scope" | "key"; scope: string; text: string; error: string | null }
+  | {
+      kind: "input";
+      field: "value";
+      mode: "add" | "edit";
+      scope: string;
+      key: string;
+      /** What has been typed so far. Shown only as dots, and dropped when the modal closes. */
+      text: string;
+      error: string | null;
+    }
+  | {
+      kind: "confirm";
+      action: "store" | "remove";
+      ref: SecretRef;
+      value: string;
+      question: string;
+      defaultYes: boolean;
+    };
 
 export type Event =
   | { type: "key"; key: Key }
   | { type: "resize"; width: number; height: number }
   | ({ type: "loaded" } & Loaded)
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "revealed"; reference: string; value: string | null }
+  | { type: "stored"; reference: string }
+  | { type: "removed"; reference: string; existed: boolean };
 
-export type Effect = { type: "reload" };
+/** Spec §4.2: the loop runs these against `data.ts` and feeds the result back as an event. */
+export type Effect =
+  | { type: "reload" }
+  | { type: "reveal"; ref: SecretRef }
+  | { type: "store"; ref: SecretRef; value: string }
+  | { type: "remove"; ref: SecretRef };
 
 export function initialState(width: number, height: number): State {
   const list = (): ListState => ({ cursor: 0, top: 0, filter: "" });
@@ -61,6 +109,9 @@ export function initialState(width: number, height: number): State {
     loading: true,
     status: null,
     quit: false,
+    revealed: null,
+    modal: null,
+    select: null,
   };
 }
 
@@ -78,7 +129,7 @@ function matches(row: Row, filter: string): boolean {
 /** The rows a screen shows: its data, filtered. */
 export function rowsFor(state: State, screen: ScreenName = state.screen): Row[] {
   const filter = state.lists[screen].filter;
-  if (screen === "secrets") return secretRows(state.secrets).filter((r) => matches(r, filter));
+  if (screen === "secrets") return secretRows(state.secrets, state.revealed).filter((r) => matches(r, filter));
   if (!state.refs) return [];
   const stored = new Set(state.secrets.map((s) => s.reference));
   const rows = referenceRows(state.refs, state.byKey, stored);
@@ -122,18 +173,185 @@ export function update(state: State, event: Event): Result {
       return done(SCREENS.reduce<State>((s, screen) => withList(s, screen, {}), next));
     }
     case "loaded": {
-      const next: State = { ...state, secrets: event.secrets, refs: event.refs, loading: false };
-      return done(SCREENS.reduce<State>((s, screen) => withList(s, screen, {}), next));
+      let next: State = { ...state, secrets: event.secrets, refs: event.refs, loading: false, select: null };
+      next = SCREENS.reduce<State>((s, screen) => withList(s, screen, {}), next);
+      if (state.select) {
+        const index = rowsFor(next, "secrets").findIndex((r) => r.reference === state.select);
+        if (index !== -1) next = withList(next, "secrets", { cursor: index });
+      }
+      return done(next);
     }
     case "error":
-      return done({ ...state, loading: false, status: event.message });
+      return done({ ...state, loading: false, status: { text: event.message, tone: "problem" } });
+    case "revealed":
+      if (event.value === null) {
+        return done({ ...state, status: { text: `No secret at ${event.reference}. It was removed elsewhere.`, tone: "problem" } }, [
+          { type: "reload" },
+        ]);
+      }
+      return done({ ...state, revealed: { reference: event.reference, value: event.value } });
+    case "stored":
+      return done(
+        { ...state, loading: true, select: event.reference, status: { text: `Stored ${event.reference}`, tone: "info" } },
+        [{ type: "reload" }],
+      );
+    case "removed":
+      return done(
+        {
+          ...state,
+          loading: true,
+          status: event.existed
+            ? { text: `Deleted ${event.reference}`, tone: "info" }
+            : { text: `No secret at ${event.reference}. It was already gone.`, tone: "problem" },
+        },
+        [{ type: "reload" }],
+      );
     case "key":
-      return onKey({ ...state, status: null }, event.key);
+      // Any key hides a revealed value: it shows only until you move. Spec §4.4.
+      return onKey({ ...state, status: null, revealed: null }, event.key, state.revealed);
   }
 }
 
-function onKey(state: State, key: Key): Result {
+/** Distinct project files that reference `reference`, and whether some could not be read. */
+export function referencedBy(state: State, reference: string): { files: number; partial: boolean } {
+  const files = new Set<string>();
+  for (const checkout of state.refs?.checkouts ?? []) {
+    for (const file of checkout.files) {
+      if (file.references.some((r) => r.reference === reference)) files.add(file.path);
+    }
+  }
+  const partial = (state.refs?.unreachable.length ?? 0) + (state.refs?.unreadable.length ?? 0) > 0;
+  return { files: files.size, partial };
+}
+
+function scopesForAdd(state: State): string[] {
+  const scopes = new Set<string>();
+  for (const s of state.secrets) if (s.scope !== "global") scopes.add(s.scope);
+  for (const c of state.refs?.checkouts ?? []) if (c.scope !== "global") scopes.add(c.scope);
+  return ["global", ...[...scopes].sort(), NEW_SCOPE];
+}
+
+/** The secret on the Secrets cursor, if the list has one. */
+function currentSecret(state: State): SecretRow | null {
+  const row = rowsFor(state, "secrets")[state.lists.secrets.cursor];
+  return state.secrets.find((s) => s.reference === row?.reference) ?? null;
+}
+
+function onModal(state: State, modal: Modal, key: Key): Result {
+  const close = (): Result => done({ ...state, modal: null });
+  if (isNamed(key, "esc")) return close();
+
+  if (modal.kind === "pick-scope") {
+    if (isChar(key, "j") || isNamed(key, "down")) {
+      return done({ ...state, modal: { ...modal, cursor: Math.min(modal.choices.length - 1, modal.cursor + 1) } });
+    }
+    if (isChar(key, "k") || isNamed(key, "up")) return done({ ...state, modal: { ...modal, cursor: Math.max(0, modal.cursor - 1) } });
+    if (isNamed(key, "enter")) {
+      const choice = modal.choices[modal.cursor]!;
+      return done({
+        ...state,
+        modal:
+          choice === NEW_SCOPE
+            ? { kind: "input", field: "scope", scope: "", text: "", error: null }
+            : { kind: "input", field: "key", scope: choice, text: "", error: null },
+      });
+    }
+    return done(state);
+  }
+
+  if (modal.kind === "confirm") {
+    const yes = isChar(key, "y") || isChar(key, "Y") || (isNamed(key, "enter") && modal.defaultYes);
+    const no = isChar(key, "n") || isChar(key, "N") || (isNamed(key, "enter") && !modal.defaultYes);
+    if (no) return close();
+    if (!yes) return done(state);
+    const effect: Effect =
+      modal.action === "store" ? { type: "store", ref: modal.ref, value: modal.value } : { type: "remove", ref: modal.ref };
+    return done({ ...state, modal: null }, [effect]);
+  }
+
+  // A text input: scope, key, or the value in masked mode.
+  if (isNamed(key, "backspace")) {
+    return done({ ...state, modal: { ...modal, text: [...modal.text].slice(0, -1).join(""), error: null } });
+  }
+  if (key.kind === "char") return done({ ...state, modal: { ...modal, text: modal.text + key.char, error: null } });
+  if (!isNamed(key, "enter")) return done(state);
+
+  if (modal.field === "scope") {
+    const error = scopeProblem(modal.text);
+    if (error) return done({ ...state, modal: { ...modal, error } });
+    return done({ ...state, modal: { kind: "input", field: "key", scope: modal.text, text: "", error: null } });
+  }
+  if (modal.field === "key") {
+    const error = keyProblem(modal.text);
+    if (error) return done({ ...state, modal: { ...modal, error } });
+    return done({
+      ...state,
+      modal: { kind: "input", field: "value", mode: "add", scope: modal.scope, key: modal.text, text: "", error: null },
+    });
+  }
+  if (modal.field !== "value") return done(state);
+  const error = valueProblem(modal.text);
+  if (error) return done({ ...state, modal: { ...modal, error } });
+  const reference = formatReference(modal.scope, modal.key);
+  const exists = state.secrets.some((s) => s.reference === reference);
+  // An add that lands on an existing secret replaces it: say so, and default to No.
+  const question =
+    modal.mode === "edit"
+      ? `Replace the value of ${reference}?`
+      : exists
+        ? `${reference} already exists. Replace its value?`
+        : `Store ${reference}?`;
+  return done({
+    ...state,
+    modal: {
+      kind: "confirm",
+      action: "store",
+      ref: { scope: modal.scope, key: modal.key },
+      value: modal.text,
+      question,
+      defaultYes: modal.mode === "edit" || !exists,
+    },
+  });
+}
+
+function onSecretsAction(state: State, key: Key, revealed: State["revealed"]): Result | null {
+  if (isChar(key, "a")) return done({ ...state, modal: { kind: "pick-scope", choices: scopesForAdd(state), cursor: 0 } });
+  const secret = currentSecret(state);
+  if (!secret) return null;
+  const ref = { scope: secret.scope, key: secret.key };
+  if (isChar(key, "r")) {
+    // r again on the row it revealed hides it, as any key does.
+    if (revealed?.reference === secret.reference) return done(state);
+    return done(state, [{ type: "reveal", ref }]);
+  }
+  if (isChar(key, "e")) {
+    return done({
+      ...state,
+      modal: { kind: "input", field: "value", mode: "edit", scope: secret.scope, key: secret.key, text: "", error: null },
+    });
+  }
+  if (isChar(key, "d")) {
+    const { files, partial } = referencedBy(state, secret.reference);
+    const used =
+      files === 0 ? "Referenced by no project file" : `Referenced by ${files} project file${files === 1 ? "" : "s"}`;
+    return done({
+      ...state,
+      modal: {
+        kind: "confirm",
+        action: "remove",
+        ref,
+        value: "",
+        question: `${used}${partial ? " that could be read" : ""}. Delete ${secret.reference}?`,
+        defaultYes: false,
+      },
+    });
+  }
+  return null;
+}
+
+function onKey(state: State, key: Key, revealed: State["revealed"] = null): Result {
   if (key.kind === "ctrl" && key.char === "c") return done({ ...state, quit: true });
+  if (state.modal) return onModal(state, state.modal, key);
 
   if (state.help) return done({ ...state, help: isChar(key, "q") ? state.help : false, quit: isChar(key, "q") });
 
@@ -167,6 +385,11 @@ function onKey(state: State, key: Key): Result {
   if (isChar(key, "G") || isNamed(key, "end")) return done(move(state, "end"));
   if (isChar(key, "/")) return done({ ...state, filtering: true });
   if (isNamed(key, "esc")) return done(withList(state, state.screen, { filter: "" }));
+
+  if (state.screen === "secrets") {
+    const action = onSecretsAction(state, key, revealed);
+    if (action) return action;
+  }
 
   if (state.screen === "references") {
     if (isChar(key, "b")) return done(withList({ ...state, byKey: !state.byKey }, "references", { cursor: 0, top: 0 }));

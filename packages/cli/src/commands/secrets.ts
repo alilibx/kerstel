@@ -1,6 +1,6 @@
 import { openContext } from "../context";
 import { DaemonError, ensureDaemon } from "../daemon/client";
-import { MAX_LINE_CHARS } from "../daemon/protocol";
+import { valueProblem } from "../secret-value";
 import { bold, dim, fail, info, mask, ok } from "../output";
 import { REFERENCE_PROTOCOL, SHORT_PROTOCOL, formatReference, isShorthand, parseReference, type SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
@@ -85,22 +85,11 @@ export async function setCommand(args: string[]): Promise<number> {
     value = await readStdin();
   }
 
-  if (value === undefined || value === "") {
-    fail("No value supplied. Pipe the secret on stdin, or pass --value.");
-    return 2;
-  }
-
-  // A value longer than one protocol line can be stored but never resolved:
-  // the daemon's reply would exceed MAX_LINE_CHARS and the connection would be
-  // dropped. Refuse it at the door rather than accepting a secret that is
-  // guaranteed to fail at runtime. The JSON envelope costs a little of the
-  // budget, so leave headroom rather than allowing exactly the cap.
-  const maxValueChars = MAX_LINE_CHARS - 1_024;
-  if (value.length > maxValueChars) {
-    fail(
-      `That value is ${value.length} characters; Kerstel can transport at most ${maxValueChars}. ` +
-        "The daemon could store it but never serve it. Store a path or a shorter credential instead.",
-    );
+  // Empty, or longer than the daemon could ever serve: refused at the door
+  // rather than stored and guaranteed to fail at runtime. See secret-value.ts.
+  const problem = valueProblem(value ?? "");
+  if (problem || value === undefined) {
+    fail(problem ?? "No value supplied.");
     return 2;
   }
 

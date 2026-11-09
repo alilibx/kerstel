@@ -104,7 +104,7 @@ A small module tree in `packages/cli/src/tui/`, with no new dependency. Renderin
 | `widgets/` | Pure renderers: `list` (rows, a cursor, a filter line, a scroll window), `input` (single line, with a masked mode that echoes dots), `confirm` (a one-line yes or no), `statusbar` (keys for the current screen). |
 | `app.ts` | The state type and `update(state, event)`, a pure reducer that returns the next state and a list of effects. Effects are `reload`, `store`, `remove`, and `reveal`. The loop applies effects against `data.ts` and feeds the results back as events. |
 | `screens/secrets.ts`, `screens/references.ts`, `screens/audit.ts` | One renderer and one sub-reducer per screen. |
-| `data.ts` | The adapter over `Vault` and the `project-refs` scan. It is the only place a value is decrypted. The first release (#8) decrypts nothing: reveal, add, edit and delete arrive with #9. |
+| `data.ts` | The adapter over `Vault` and the `project-refs` scan. It is the only place a value is decrypted, by `reveal`, which writes the audit row before reading the value for display. |
 
 Each frame is a full redraw: cursor home, every row written and cleared to the end of line. No diffing. A frame is written only after an event, so an idle UI costs nothing.
 
@@ -130,12 +130,14 @@ The list groups by scope, `global` first and then each project scope alphabetica
 
 | Key | Action |
 | --- | --- |
-| `r` | Reveal the value on the current row. It replaces the dots until you move, press `Esc`, or leave the screen, and a `reveal` audit row is written first. |
-| `a` | Add. Pick the scope from the existing ones, `global`, or type a new one. Type the key. Type the value in the masked input. Confirm `Store kerstel://<scope>/<KEY>?`. |
+| `r` | Reveal the value on the current row. It replaces the dots until the next key, and a `reveal` audit row is written first. `r` again on that row hides it. |
+| `a` | Add. Pick the scope from the existing ones, `global`, or type a new one. Type the key. Type the value in the masked input. Confirm `Store ks:<scope>/<KEY>?`. |
 | `e` | Edit the value on the current row, in the masked input, then confirm. |
-| `d` | Delete the current row. The confirm names how many project files reference it, from the same scan the References screen uses: `Referenced by 2 project files. Delete kerstel://web/DATABASE_URL? y/N`. |
+| `d` | Delete the current row. The confirm names how many project files reference it, from the same scan the References screen uses: `Referenced by 2 project files. Delete ks:web/DATABASE_URL? y/N`. |
 
-Validation is the CLI's: `isValidScope`, `isValidKey`, and the transport cap `set` enforces today, which moves from `secrets.ts` into a shared `MAX_VALUE_CHARS` constant. A rejected input shows the same sentence the CLI prints, on the input line, and keeps the input open.
+Validation is the CLI's: `isValidScope`, `isValidKey`, and the transport cap `set` enforces today, which moves from `secrets.ts` into `secret-value.ts` as `MAX_VALUE_CHARS`, with `valueProblem`, `scopeProblem` and `keyProblem` returning the sentence each refusal prints, shared by `set` and the UI. A rejected input shows that sentence on the line under the input, in the problem colour, and keeps the input open.
+
+An add that names a secret that already exists asks `ks:<scope>/<KEY> already exists. Replace its value? y/N`, defaulting to No; a new one asks `Store ks:<scope>/<KEY>? Y/n`, and an edit `Replace the value of ks:<scope>/<KEY>? Y/n`. After a store the list reloads with the cursor on that secret. The delete confirm says `that could be read` after its count when a checkout or file could not be read, since the count is then a lower bound.
 
 A decrypted value exists only in the screen state while it is shown, and the reducer clears it on every move. Nothing in the UI logs, and `terminal.ts` writes only frames, so a value cannot reach scrollback: the alternate screen is discarded on exit.
 

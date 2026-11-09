@@ -1,11 +1,11 @@
 import { scanProjectRefs, type ProjectRefs } from "../project-refs";
-import { formatReference } from "../reference";
+import { formatReference, type SecretRef } from "../reference";
 import type { Vault } from "../vault/store";
 
 /**
- * What the UI reads from the vault. Terminal UI spec §4.2: the only module
- * that touches `Vault`, and so the only place a value could be decrypted. This
- * release decrypts nothing: the Secrets screen shows a fixed mask.
+ * What the UI reads from and writes to the vault. Terminal UI spec §4.2: the
+ * only module that touches `Vault`, and so the only place a value is
+ * decrypted, by `reveal`, which records the reveal first.
  */
 
 export interface SecretRow {
@@ -23,6 +23,11 @@ export interface Loaded {
 
 export interface UiData {
   load(): Loaded;
+  /** The value, after writing the `reveal` audit row; null when the secret is gone. */
+  reveal(ref: SecretRef): string | null;
+  store(ref: SecretRef, value: string): void;
+  /** Whether there was a secret to remove. */
+  remove(ref: SecretRef): boolean;
 }
 
 /** `global` first, then each project scope alphabetically, then keys. Spec §4.4. */
@@ -50,6 +55,26 @@ export function vaultData(vault: Vault): UiData {
       );
       const refs = scanProjectRefs(vault.listProjects(), new Set(summaries.map((s) => `${s.scope}/${s.key}`)));
       return { secrets, refs };
+    },
+    reveal(ref) {
+      if (vault.getSecret(ref) === null) return null;
+      // Written before the value is read for display, as `get --reveal` does:
+      // a reveal that is not recorded is one the audit log denies happened.
+      vault.appendAudit({
+        ts: Date.now(),
+        event: "reveal",
+        scope: ref.scope,
+        key: ref.key,
+        pid: process.pid,
+        processName: "kerstel",
+      });
+      return vault.getSecret(ref);
+    },
+    store(ref, value) {
+      vault.setSecret(ref, value);
+    },
+    remove(ref) {
+      return vault.removeSecret(ref);
     },
   };
 }
