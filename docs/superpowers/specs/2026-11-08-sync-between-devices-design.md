@@ -49,7 +49,7 @@ The alternative was to keep sync in Later with shared vaults. It moved because s
 | A random vault ID | Scope names, key names, values |
 | Each device's random ID and public keys | Device names and hostnames (sealed, §7) |
 | How many records a vault holds, their sizes, and when they change | Project paths, `.env` contents, backups |
-| Opaque record IDs, stable for one key epoch (§6.1) | Which record is which key |
+| Opaque record IDs, stable for one key epoch (§6.1), and which of them are deletions | Which record is which key |
 | The IP address of each request | The sync key or any data key |
 
 **What a hostile server can do,** and what stops it:
@@ -106,7 +106,9 @@ A record ID is `HMAC-SHA256(idKey, scope || 0x00 || key)`, truncated to 16 bytes
 
 The JSON is padded to a multiple of 256 bytes, so the server cannot tell a short value from a long one within that bucket. It is encrypted with AES-256-GCM under the epoch's sync key, with a random 96-bit nonce. The associated data is `vaultId || recordId || epoch`.
 
-A deletion is the same payload with `deleted: true` and no value. The server keeps tombstones for 90 days after every device has pulled past them, then drops them. A device that has been offline longer than that does a full pull (§8.3).
+A deletion is pushed as a record with no blob (a tombstone), so the server can drop it later. The server learns that some record was deleted, not which key. It drops tombstones after 90 days and raises the vault's pruned revision to the newest one it dropped. A device whose cursor is below that revision gets `full_pull_required` and pulls the whole vault with `full=1` (§8.3).
+
+The `deleted` field stays in the payload format for a later case: a deletion that must carry data, such as which device made it.
 
 ### 6.3 Local sync state
 
@@ -154,7 +156,9 @@ On the new device, run:
 The code works once and expires in 10 minutes. Waiting for the new device…
 ```
 
-On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys and sealed name to a pairing slot on the server. The code carries a pairing ID, which the server sees, and a 120-bit secret, which it never sees. The post is authenticated with an HMAC keyed by that secret.
+`add-device` first opens a pairing slot on the server under a fresh pairing ID. The slot lasts 10 minutes, and a vault can have at most three open.
+
+On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys and sealed name to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code carries the pairing ID, which the server sees, and a 120-bit secret, which it never sees. The post is authenticated with an HMAC keyed by that secret.
 
 Back on the first device:
 
@@ -163,9 +167,9 @@ New device: ali-desktop (Linux), key fingerprint 4F2A 91C0 7B3E
 Add it? It will be able to read every secret in this vault. (y/N)
 ```
 
-On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself. The default answer is no, and `--yes` is refused for this question.
+On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself and naming the pairing slot. The server marks the slot accepted. On no, the first device deletes the slot, and the new device's poll gets 404. The default answer is no, and `--yes` is refused for this question.
 
-The new device must also know that the sealed key came from the first device and not the server, which can seal a key of its own choosing to any public key. So with the registration, the first device stores a confirmation on the pairing slot: `HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ newDeviceId ‖ epoch ‖ sealedKey)`. The new device fetches its sealed key, checks the confirmation against it, and refuses to join if it doesn't match. Only then does it pull the vault, and only then does it merge and push any secrets it already held (§10). Without this check, a hostile server could hand a joining device a key it chose and an empty vault, and read the secrets the device uploads.
+The new device must also know that the sealed key came from the first device and not the server, which can seal a key of its own choosing to any public key. So with the registration, the first device stores a confirmation on the pairing slot: `HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ newDeviceId ‖ epoch ‖ sealedKey)`. The new device, polling the slot, gets the vault ID and the confirmation once the slot is accepted. It fetches its sealed key, checks the confirmation against it, and refuses to join if it doesn't match. Only then does it pull the vault, and only then does it merge and push any secrets it already held (§10). Without this check, a hostile server could hand a joining device a key it chose and an empty vault, and read the secrets the device uploads.
 
 The secret is long because the server could otherwise guess it offline from the pairing post. A short code would need a PAKE such as SPAKE2, which `node:crypto` does not provide. See §13.
 
@@ -177,7 +181,7 @@ The secret is long because the server could otherwise guess it offline from the 
 
 `ks sync remove-device <name>`:
 
-1. Generates a new sync key (a new epoch) and seals it to every remaining device.
+1. Generates a new sync key (a new epoch), seals it to every remaining device, and seals every remaining device's name again under it: names are sealed with the sync key, so a device paired after the rotation could not read the old ones.
 2. Pulls, then re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The request names the vault revision it was prepared from. The server rejects it if the vault has moved past that revision, because another device pushed in the meantime and its change would be lost. The client then pulls and prepares the rotation again. Otherwise the server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
 3. Prints a reminder: the removed device already had every value, so rotate any secret it should no longer hold. Kerstel cannot do that for the user.
 
@@ -239,26 +243,34 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 
 - A new package, `packages/server`, compiled with `bun build --compile` to `kerstel-server`. It is a separate binary, so the CLI that runs on developer machines still contains no listening code.
 - Released alongside the CLI for Linux x64 and arm64, plus an image at `ghcr.io/alilibx/kerstel-server`.
-- Storage is one SQLite file. Settings: `--db`, `--listen`, and an optional `--enroll-token` that `sync setup` must present to create a vault. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one.
+- Storage is one SQLite file, mode `0600`. Settings: `--db` (`KERSTEL_SERVER_DB`), `--listen` (`KERSTEL_SERVER_LISTEN`, default `127.0.0.1:8787`), `--trust-proxy` to rate limit by `X-Forwarded-For`, and an optional enroll token that `sync setup` must present to create a vault. The token comes from `--enroll-token-file` or `KERSTEL_SERVER_ENROLL_TOKEN`, never from a command-line value, where `ps` would show it. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one, and the server says so on start.
+- The binary is compiled with `--no-compile-autoload-dotenv`, so a `.env` in its working directory cannot change its settings.
+- The log has one line per request: method, the route as a fixed label with every ID as `:id` (`(unknown)` for a path the server does not answer, so no text a caller puts in a path is logged), status and duration. No IDs, addresses or bodies.
+- Until 0.3.0 ships, no release includes the server.
 - TLS is left to a reverse proxy (Caddy, nginx, or a platform's load balancer). The docs give a Caddy example.
 
 ### 9.2 API
 
-JSON over HTTPS, versioned under `/v1`. Every request except `join` carries `Kerstel-Device`, `Kerstel-Timestamp` and an Ed25519 signature over the method, path, timestamp and body hash. The server rejects a timestamp more than five minutes off and a repeated signature.
+JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carries `Kerstel-Device`, `Kerstel-Timestamp` and `Kerstel-Signature`, an Ed25519 signature over the method, the path with its query string, the timestamp and the SHA-256 of the body. The server rejects a timestamp more than five minutes off and a repeated signature. A signature must be in canonical base64url, since 64 bytes leave unused bits in the last character and a re-encoded spelling would otherwise pass as new. It is spent only once the request passes the rate limit, so a refused request writes nothing. An unknown vault and an unknown device both answer 401, so IDs cannot be probed. Creating a vault is signed by the key it registers, which proves the caller holds it. The wire types live in `packages/server/src/protocol.ts`, which the client imports.
 
 | Method and path | Purpose |
 |---|---|
 | `POST /v1/vaults` | Create a vault with its first device and sealed sync key |
-| `GET /v1/vaults/:id/records?since=<rev>` | Records newer than a revision, paged |
+| `GET /v1/health` | Version and protocol, unauthenticated |
+| `GET /v1/vaults/:id/records?since=<rev>[&full=1][&limit=<n>]` | Records newer than a revision, 500 a page by default, with `more` when another page follows. `full=1` marks a full pull, which skips the `full_pull_required` check. |
 | `POST /v1/vaults/:id/records` | Push a batch with compare-and-swap. Returns accepted revisions and conflicts. |
 | `GET /v1/vaults/:id/keys` | This device's sealed sync key for the current epoch |
 | `GET /v1/vaults/:id/devices` | Devices, with sealed names |
-| `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device), with the pairing confirmation of §7.1 |
-| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, removed device, in one transaction. Rejected if the vault has moved past the revision the request names. |
-| `PUT /v1/pairings/:pairingId` and `GET` | The pairing slot of §7.1, deleted on use or after 10 minutes. `GET` returns the confirmation once the first device accepts. |
+| `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device), naming the pairing slot it answered and carrying the pairing confirmation of §7.1 |
+| `DELETE /v1/vaults/:id/devices/:deviceId` | A device removes itself (`ks sync off`). Not the last one, and never another device, which needs a rotation. |
+| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, re-sealed device names, removed device, in one transaction. Rejected if the vault has moved past the revision the request names. |
+| `POST /v1/vaults/:id/pairings` | Open a pairing slot for 10 minutes |
+| `GET` and `DELETE /v1/vaults/:id/pairings/:pairingId` | Read the new device's answer, or decline it |
+| `PUT /v1/pairings/:pairingId` | The new device answers, once. Unauthenticated. |
+| `GET /v1/pairings/:pairingId` | The new device polls: `waiting`, or `accepted` with the vault ID and the pairing confirmation. Unauthenticated. |
 | `DELETE /v1/vaults/:id` | Delete the vault, signed by a device in it |
 
-Limits per vault: 10,000 records, 64 KB per record, and 60 requests a minute per device.
+Limits: 10,000 records, 64 KB per record and 8 MB in total per vault; 32 devices per vault; 12 MB per request, so a rotation can re-upload a full vault; 60 requests a minute per device; 10 new vaults an hour and 30 pairing requests a minute per address. A push or rotation that would break a limit changes nothing.
 
 ## 10. Commands
 
