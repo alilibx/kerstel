@@ -377,7 +377,7 @@ export async function uninstallCommand(
   // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
   // a leftover key with no vault is harmless, but a keyless vault would block
   // every re-run if the key delete happened first and this one failed after.
-  if (await stopDaemonIfRunning()) ok("Stopped the Kerstel daemon.");
+  if (await stopDaemonIfRunning({ settle: true })) ok("Stopped the Kerstel daemon.");
   const home = kerstelHome();
   // Retried: a process that still had a file open in the home (a daemon
   // stopped by hand a moment ago, an editor) can make one pass fail with

@@ -15,8 +15,16 @@ export function readToken(): string | null {
   // creates the file. A token written by an older build, restored from a
   // backup, or copied with `cp` keeps whatever mode it arrived with, and
   // nothing else would ever notice.
-  if (process.platform !== "win32") chmodSync(file, 0o600);
-  const token = readFileSync(file, "utf8").trim();
+  let token: string;
+  try {
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    token = readFileSync(file, "utf8").trim();
+  } catch (error) {
+    // A daemon clearing its token between the check above and this read:
+    // there is no token. Anything else is a real problem.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
   return token.length > 0 ? token : null;
 }
 

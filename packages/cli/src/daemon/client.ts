@@ -209,23 +209,32 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
  * wants the next resolution to start the new binary, not race the old one.
  * Shared by `daemon stop`, `uninstall`, and `update`.
  */
-export async function stopDaemonIfRunning(): Promise<boolean> {
-  if (!(await isDaemonRunning())) return false;
+export async function stopDaemonIfRunning(options: { settle?: boolean } = {}): Promise<boolean> {
+  // Read before the socket check: a daemon that an idle timeout or another
+  // `daemon stop` is already closing has no socket left but may still be
+  // closing its vault, and the token is how to tell when it has finished.
   const token = readToken();
-  const client = await connectDaemon();
-  await client.shutdown();
-  client.close();
-  for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
-    await Bun.sleep(100);
+  const running = await isDaemonRunning();
+  if (running) {
+    const client = await connectDaemon();
+    await client.shutdown();
+    client.close();
+    for (let waited = 0; waited < 5000 && (await isDaemonRunning()); waited += 100) {
+      await Bun.sleep(100);
+    }
   }
   // The socket goes first; the daemon then closes the vault, which can still
   // write SQLite's journal files, and clears its token last. Wait for that
   // too, or `uninstall` deleting the home races those writes and can leave
-  // the folder behind.
-  for (let waited = 0; waited < 5000 && token !== null && readToken() === token; waited += 100) {
+  // the folder behind. With no socket, only a caller about to delete the home
+  // (`settle`) waits, and only briefly: a closing daemon finishes in
+  // milliseconds, and a token a crashed daemon left behind would otherwise
+  // cost every `daemon stop` the full wait.
+  const limit = running ? 5000 : options.settle ? 1000 : 0;
+  for (let waited = 0; waited < limit && token !== null && readToken() === token; waited += 100) {
     await Bun.sleep(100);
   }
-  return true;
+  return running;
 }
 
 export async function isDaemonRunning(sock: string = defaultSocketPath()): Promise<boolean> {

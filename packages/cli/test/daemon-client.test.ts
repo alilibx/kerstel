@@ -169,3 +169,22 @@ test("stopDaemonIfRunning waits for the daemon to clear its token, not only to c
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a daemon already shutting down, with its socket gone, is still waited on", async () => {
+  const { isolateEnv, restoreEnv } = await import("./helpers/isolate-env");
+  const { clearTokenIf, readToken, writeToken, createToken } = await import("../src/daemon/token");
+  const { stopDaemonIfRunning } = await import("../src/daemon/client");
+  const { rmSync } = await import("node:fs");
+  const home = isolateEnv({ prefix: "daemon-closing" });
+  // No socket: an idle timeout has closed it. The vault is still closing.
+  const token = writeToken(createToken());
+  setTimeout(() => clearTokenIf(token), 300);
+  try {
+    expect(await stopDaemonIfRunning({ settle: true })).toBe(false);
+    expect(readToken()).toBeNull();
+  } finally {
+    restoreEnv();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
