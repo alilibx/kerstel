@@ -128,9 +128,9 @@ function main(): void {
       const started = performance.now();
       const ip = clientAddress(request, srv.requestIP(request)?.address ?? "unknown", trustProxy);
       const response = await app.fetch(request, ip);
-      // IDs in the path are random and say nothing about contents, but the log
-      // has no use for them, so it records the route shape only.
-      const route = new URL(request.url).pathname.replace(/[A-Za-z0-9_-]{22}/g, ":id");
+      // A fixed label per route, IDs as :id, and "(unknown)" for anything else,
+      // so no text a caller puts in a path reaches the log.
+      const route = app.routeLabel(request.method, new URL(request.url).pathname);
       console.log(`${request.method} ${route} ${response.status} ${Math.round(performance.now() - started)}ms`);
       return response;
     },

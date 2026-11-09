@@ -108,6 +108,33 @@ describe("authentication", () => {
     expect((await body(again)).message).toContain("already used");
   });
 
+  test("a re-encoded spelling of a spent signature is not a new one", async () => {
+    const d = await vaultWithDevice(h);
+    const path = records(d);
+    const headers = signRequest(d.key.privateKey, d.id, "GET", path, new Uint8Array(), h.clock.t);
+    expect((await h.app.fetch(new Request(`http://server${path}`, { headers }), "10.0.0.1")).status).toBe(200);
+    // 64 bytes leave 4 unused bits in the last base64url character; setting one
+    // decodes to the same bytes.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const sig = headers["kerstel-signature"]!;
+    const variant = sig.slice(0, -1) + alphabet[alphabet.indexOf(sig.at(-1)!) ^ 1];
+    expect(Buffer.from(variant, "base64url").equals(Buffer.from(sig, "base64url"))).toBe(true);
+    const replay = await h.app.fetch(
+      new Request(`http://server${path}`, { headers: { ...headers, "kerstel-signature": variant } }),
+      "10.0.0.1",
+    );
+    expect(replay.status).toBe(401);
+  });
+
+  test("a request refused by the rate limit spends nothing", async () => {
+    const d = await vaultWithDevice(h);
+    const spent = () => (h.db.query("SELECT COUNT(*) AS n FROM seen_signatures").get() as { n: number }).n;
+    for (let i = 0; i < 60; i += 1) await d.call("GET", records(d));
+    const before = spent();
+    for (let i = 0; i < 5; i += 1) expect((await d.call("GET", records(d))).status).toBe(429);
+    expect(spent()).toBe(before);
+  });
+
   test("the signature covers the query string and the body", async () => {
     const d = await vaultWithDevice(h);
     const headers = signRequest(d.key.privateKey, d.id, "GET", `${records(d)}?since=0`, new Uint8Array(), h.clock.t);
@@ -296,6 +323,7 @@ describe("rotation", () => {
       epoch: 2,
       removeDevices: [c.id],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: blob(40), [b.id]: blob(40) },
       records: fresh.map((id) => ({ id, blob: blob() })),
     });
     expect(res.status).toBe(200);
@@ -325,6 +353,7 @@ describe("rotation", () => {
       epoch: 2,
       removeDevices: [],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: blob(40), [b.id]: blob(40) },
       records: [],
     });
     expect(res.status).toBe(400);
@@ -338,6 +367,7 @@ describe("rotation", () => {
       epoch: 3,
       removeDevices: [c.id],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: blob(40), [b.id]: blob(40) },
       records: [],
     });
     expect(skip.status).toBe(409);
@@ -346,6 +376,7 @@ describe("rotation", () => {
       epoch: 2,
       removeDevices: [a.id],
       sealedKeys: { [b.id]: blob(80), [c.id]: blob(80) },
+      sealedNames: { [b.id]: blob(40), [c.id]: blob(40) },
       records: [],
     });
     expect(self.status).toBe(403);
@@ -360,6 +391,7 @@ describe("rotation", () => {
       epoch: 2,
       removeDevices: [c.id],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: blob(40), [b.id]: blob(40) },
       records: [{ id: newId(), blob: blob() }],
     });
     expect(stale.status).toBe(409);
@@ -369,7 +401,34 @@ describe("rotation", () => {
     expect(full.epoch).toBe(1);
     expect(full.records.length).toBe(3);
     expect((await c.call("GET", records(c))).status).toBe(200);
-    expect((await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, { epoch: 2, removeDevices: [], sealedKeys: {}, records: [] })).status).toBe(400);
+    expect((await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, { epoch: 2, removeDevices: [], sealedKeys: {},
+      sealedNames: {}, records: [] })).status).toBe(400);
+  });
+
+  test("re-seals every remaining device's name with the new key, and needs one for each", async () => {
+    const { a, b, c } = await setup();
+    const names = { [a.id]: blob(41), [b.id]: blob(42) };
+    const missing = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
+      epoch: 2,
+      removeDevices: [c.id],
+      sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: names[a.id] },
+      records: [],
+    });
+    expect(missing.status).toBe(400);
+    expect((await body(missing)).message).toContain("sealedNames");
+    const ok = await a.call("POST", `/v1/vaults/${a.vaultId}/epochs`, {
+      baseRevision: 2,
+      epoch: 2,
+      removeDevices: [c.id],
+      sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: names,
+      records: [],
+    });
+    expect(ok.status).toBe(200);
+    const devices = (await body(await b.call("GET", `/v1/vaults/${b.vaultId}/devices`))).devices as { id: string; sealedName: string }[];
+    expect(Object.fromEntries(devices.map((d) => [d.id, d.sealedName]))).toEqual(names);
   });
 
   test("a failed rotation changes nothing", async () => {
@@ -379,6 +438,7 @@ describe("rotation", () => {
       epoch: 2,
       removeDevices: [c.id, newId()],
       sealedKeys: { [a.id]: blob(80), [b.id]: blob(80) },
+      sealedNames: { [a.id]: blob(40), [b.id]: blob(40) },
       records: [],
     });
     expect(res.status).toBe(404);
@@ -499,5 +559,18 @@ describe("maintenance", () => {
     // Paging a full pull past the pruned point still works.
     expect((await d.call("GET", `${records(d)}?since=1&full=1`)).status).toBe(200);
     expect((await d.call("GET", `${records(d)}?since=3`)).status).toBe(200);
+  });
+});
+
+describe("access log labels", () => {
+  test("known routes get a fixed label with IDs as :id; anything else is (unknown)", () => {
+    const id = newId();
+    expect(h.app.routeLabel("GET", `/v1/vaults/${id}/records`)).toBe("/v1/vaults/:id/records");
+    expect(h.app.routeLabel("delete", `/v1/vaults/${id}/devices/${id}`)).toBe("/v1/vaults/:id/devices/:id");
+    expect(h.app.routeLabel("GET", "/v1/health")).toBe("/v1/health");
+    expect(h.app.routeLabel("GET", "/v1/private-name")).toBe("(unknown)");
+    expect(h.app.routeLabel("GET", "/v1/vaults/not-an-id/records")).toBe("(unknown)");
+    expect(h.app.routeLabel("PATCH", `/v1/vaults/${id}/records`)).toBe("(unknown)");
+    expect(h.app.routeLabel("GET", "/secret/path")).toBe("(unknown)");
   });
 });

@@ -131,6 +131,11 @@ export function signRequest(
 
 export function verifySignature(publicKey: string, message: string, signature: string): boolean {
   if (base64urlBytes(signature) !== 64) return false;
+  // One spelling per signature: 64 bytes in base64url leave unused bits in the
+  // last character, and a variant with those bits set decodes to the same
+  // bytes. The server remembers spent signatures as text, so a variant would
+  // pass as new and replay the request.
+  if (Buffer.from(signature, "base64url").toString("base64url") !== signature) return false;
   try {
     return verify(null, Buffer.from(message), ed25519PublicKey(publicKey), Buffer.from(signature, "base64url"));
   } catch {
@@ -211,6 +216,13 @@ export interface DeviceOut {
 
 export interface RotateBody {
   epoch: number;
+  /**
+   * Each remaining device's name, sealed again under the new sync key, keyed
+   * by device ID: exactly the devices that stay. Names are sealed with the
+   * sync key, so without these a device paired after the rotation could not
+   * read them.
+   */
+  sealedNames: Record<string, string>;
   /**
    * The vault head the rotating device pulled up to. A rotation re-uploads
    * every record, so one based on an older head would drop whatever was pushed

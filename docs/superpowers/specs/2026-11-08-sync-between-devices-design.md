@@ -181,7 +181,7 @@ The secret is long because the server could otherwise guess it offline from the 
 
 `ks sync remove-device <name>`:
 
-1. Generates a new sync key (a new epoch) and seals it to every remaining device.
+1. Generates a new sync key (a new epoch), seals it to every remaining device, and seals every remaining device's name again under it: names are sealed with the sync key, so a device paired after the rotation could not read the old ones.
 2. Pulls, then re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The request names the vault revision it was prepared from. The server rejects it if the vault has moved past that revision, because another device pushed in the meantime and its change would be lost. The client then pulls and prepares the rotation again. Otherwise the server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
 3. Prints a reminder: the removed device already had every value, so rotate any secret it should no longer hold. Kerstel cannot do that for the user.
 
@@ -245,13 +245,13 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 - Released alongside the CLI for Linux x64 and arm64, plus an image at `ghcr.io/alilibx/kerstel-server`.
 - Storage is one SQLite file, mode `0600`. Settings: `--db` (`KERSTEL_SERVER_DB`), `--listen` (`KERSTEL_SERVER_LISTEN`, default `127.0.0.1:8787`), `--trust-proxy` to rate limit by `X-Forwarded-For`, and an optional enroll token that `sync setup` must present to create a vault. The token comes from `--enroll-token-file` or `KERSTEL_SERVER_ENROLL_TOKEN`, never from a command-line value, where `ps` would show it. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one, and the server says so on start.
 - The binary is compiled with `--no-compile-autoload-dotenv`, so a `.env` in its working directory cannot change its settings.
-- The log has one line per request: method, the route with every ID replaced by `:id`, status and duration. No IDs, addresses or bodies.
+- The log has one line per request: method, the route as a fixed label with every ID as `:id` (`(unknown)` for a path the server does not answer, so no text a caller puts in a path is logged), status and duration. No IDs, addresses or bodies.
 - Until 0.3.0 ships, no release includes the server.
 - TLS is left to a reverse proxy (Caddy, nginx, or a platform's load balancer). The docs give a Caddy example.
 
 ### 9.2 API
 
-JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carries `Kerstel-Device`, `Kerstel-Timestamp` and `Kerstel-Signature`, an Ed25519 signature over the method, the path with its query string, the timestamp and the SHA-256 of the body. The server rejects a timestamp more than five minutes off and a repeated signature. An unknown vault and an unknown device both answer 401, so IDs cannot be probed. Creating a vault is signed by the key it registers, which proves the caller holds it. The wire types live in `packages/server/src/protocol.ts`, which the client imports.
+JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carries `Kerstel-Device`, `Kerstel-Timestamp` and `Kerstel-Signature`, an Ed25519 signature over the method, the path with its query string, the timestamp and the SHA-256 of the body. The server rejects a timestamp more than five minutes off and a repeated signature. A signature must be in canonical base64url, since 64 bytes leave unused bits in the last character and a re-encoded spelling would otherwise pass as new. It is spent only once the request passes the rate limit, so a refused request writes nothing. An unknown vault and an unknown device both answer 401, so IDs cannot be probed. Creating a vault is signed by the key it registers, which proves the caller holds it. The wire types live in `packages/server/src/protocol.ts`, which the client imports.
 
 | Method and path | Purpose |
 |---|---|
@@ -263,7 +263,7 @@ JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carrie
 | `GET /v1/vaults/:id/devices` | Devices, with sealed names |
 | `POST /v1/vaults/:id/devices` | Add a device (signed by an existing device), naming the pairing slot it answered and carrying the pairing confirmation of §7.1 |
 | `DELETE /v1/vaults/:id/devices/:deviceId` | A device removes itself (`ks sync off`). Not the last one, and never another device, which needs a rotation. |
-| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, removed device, in one transaction. Rejected if the vault has moved past the revision the request names. |
+| `POST /v1/vaults/:id/epochs` | Rotate: new sealed keys, re-encrypted records, re-sealed device names, removed device, in one transaction. Rejected if the vault has moved past the revision the request names. |
 | `POST /v1/vaults/:id/pairings` | Open a pairing slot for 10 minutes |
 | `GET` and `DELETE /v1/vaults/:id/pairings/:pairingId` | Read the new device's answer, or decline it |
 | `PUT /v1/pairings/:pairingId` | The new device answers, once. Unauthenticated. |

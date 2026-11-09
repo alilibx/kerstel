@@ -38,7 +38,32 @@ export interface App {
   fetch(request: Request, ip: string): Promise<Response>;
   /** Drops expired pairings, spent signatures and old tombstones. Run periodically. */
   maintain(): void;
+  /**
+   * The route a request names, as a fixed label with IDs as `:id`, or
+   * `(unknown)`. The access log prints this, so no text a caller puts in a
+   * path ever reaches the log.
+   */
+  routeLabel(method: string, pathname: string): string;
 }
+
+/** Every route the server answers, as `METHOD shape`. */
+const ROUTES = new Set([
+  "GET health",
+  "POST vaults",
+  "PUT pairings/:id",
+  "GET pairings/:id",
+  "DELETE vaults/:id",
+  "GET vaults/:id/records",
+  "POST vaults/:id/records",
+  "GET vaults/:id/keys",
+  "GET vaults/:id/devices",
+  "POST vaults/:id/devices",
+  "DELETE vaults/:id/devices/:id",
+  "POST vaults/:id/epochs",
+  "POST vaults/:id/pairings",
+  "GET vaults/:id/pairings/:id",
+  "DELETE vaults/:id/pairings/:id",
+]);
 
 export class HttpError extends Error {
   constructor(
@@ -215,7 +240,12 @@ export function createApp(options: AppOptions): App {
    * request with the same signature is a replay. The timestamp window bounds
    * how long a spent signature has to be remembered.
    */
-  function checkSignature(request: Request, pathAndQuery: string, body: Uint8Array, signPub: string): void {
+  /**
+   * Checks the timestamp and signature, and returns a function that spends the
+   * signature. The caller spends it only once the request passes the rate
+   * limit, so a device already over its limit cannot keep adding rows.
+   */
+  function checkSignature(request: Request, pathAndQuery: string, body: Uint8Array, signPub: string): () => void {
     const timestamp = request.headers.get(HEADERS.timestamp) ?? "";
     const signature = request.headers.get(HEADERS.signature) ?? "";
     if (!/^\d{1,16}$/.test(timestamp)) fail(401, "unauthorized", "Missing or malformed Kerstel-Timestamp.");
@@ -225,10 +255,15 @@ export function createApp(options: AppOptions): App {
     }
     const message = signingString(request.method, pathAndQuery, timestamp, body);
     if (!verifySignature(signPub, message, signature)) fail(401, "unauthorized", "Bad signature.");
-    const spent = db
-      .query("INSERT OR IGNORE INTO seen_signatures (signature, expires_at) VALUES (?, ?)")
-      .run(signature, ts + TIMING.clockSkewMs);
-    if (spent.changes === 0) fail(401, "unauthorized", "This request was already used.");
+    if (db.query("SELECT 1 FROM seen_signatures WHERE signature = ?").get(signature)) {
+      fail(401, "unauthorized", "This request was already used.");
+    }
+    return () => {
+      const spent = db
+        .query("INSERT OR IGNORE INTO seen_signatures (signature, expires_at) VALUES (?, ?)")
+        .run(signature, ts + TIMING.clockSkewMs);
+      if (spent.changes === 0) fail(401, "unauthorized", "This request was already used.");
+    };
   }
 
   /** The device a signed request comes from. Unknown vaults and devices both answer 401, so IDs cannot be probed. */
@@ -236,8 +271,11 @@ export function createApp(options: AppOptions): App {
     const deviceId = request.headers.get(HEADERS.device);
     if (!isId(deviceId)) fail(401, "unauthorized", "Missing or malformed Kerstel-Device.");
     const row = getDevice(vaultId, deviceId!) ?? fail(401, "unauthorized", "Unknown device.");
-    checkSignature(request, pathAndQuery, body, row.sign_pub);
+    // Verified first, so nobody without the key can spend this device's
+    // budget; limited next; spent last, so a refused request writes nothing.
+    const spend = checkSignature(request, pathAndQuery, body, row.sign_pub);
     limiter.hit(`device:${vaultId}:${row.id}`, RATE.perDevice.limit, RATE.perDevice.windowMs);
+    spend();
     db.query("UPDATE devices SET last_seen = ? WHERE vault_id = ? AND id = ?").run(now(), vaultId, row.id);
     return row;
   }
@@ -418,6 +456,10 @@ export function createApp(options: AppOptions): App {
     const baseRevision = count(body.baseRevision, "baseRevision");
     const removeDevices = array(body.removeDevices, "removeDevices", LIMITS.devicesPerVault).map((v, i) => id(v, `removeDevices[${i}]`));
     unique(removeDevices, "removeDevices");
+    const sealedNames = Object.entries(object(body.sealedNames, "sealedNames")).map(([deviceId, value]) => ({
+      deviceId: id(deviceId, "sealedNames key"),
+      sealed: sealed(value, `sealedNames.${deviceId}`, LIMITS.sealedBytes),
+    }));
     const sealedKeys = object(body.sealedKeys, "sealedKeys");
     const keyed = Object.entries(sealedKeys).map(([deviceId, value]) => ({
       deviceId: id(deviceId, "sealedKeys key"),
@@ -455,6 +497,10 @@ export function createApp(options: AppOptions): App {
       if (remaining.length !== sealedFor.length || remaining.some((d, i) => d !== sealedFor[i])) {
         fail(400, "bad_request", "sealedKeys must hold exactly one key for every device that stays.");
       }
+      const namedFor = sealedNames.map((n) => n.deviceId).sort();
+      if (remaining.length !== namedFor.length || remaining.some((d, i) => d !== namedFor[i])) {
+        fail(400, "bad_request", "sealedNames must hold exactly one name for every device that stays.");
+      }
 
       const before = vault.head;
       let head = before;
@@ -464,6 +510,9 @@ export function createApp(options: AppOptions): App {
       for (const r of records) insert.run(vaultId, r.id, ++head, r.blob, base64urlBytes(r.blob), t);
       const removeDevice = db.query("DELETE FROM devices WHERE vault_id = ? AND id = ?");
       for (const r of removeDevices) removeDevice.run(vaultId, r);
+      // Names are sealed with the sync key, so they move to the new one with it.
+      const rename = db.query("UPDATE devices SET sealed_name = ? WHERE vault_id = ? AND id = ?");
+      for (const n of sealedNames) rename.run(n.sealed, vaultId, n.deviceId);
       db.query("DELETE FROM sealed_keys WHERE vault_id = ?").run(vaultId);
       const insertKey = db.query("INSERT INTO sealed_keys (vault_id, device_id, epoch, sealed) VALUES (?, ?, ?, ?)");
       for (const k of keyed) insertKey.run(vaultId, k.deviceId, epoch, k.sealed);
@@ -600,6 +649,16 @@ export function createApp(options: AppOptions): App {
   }
 
   return {
+    routeLabel(method, pathname) {
+      if (!pathname.startsWith(`${PROTOCOL_PREFIX}/`)) return "(unknown)";
+      const shape = pathname
+        .slice(PROTOCOL_PREFIX.length + 1)
+        .split("/")
+        .map((part) => (isId(part) ? ":id" : part))
+        .join("/");
+      return ROUTES.has(`${method.toUpperCase()} ${shape}`) ? `${PROTOCOL_PREFIX}/${shape}` : "(unknown)";
+    },
+
     async fetch(request, ip) {
       try {
         return await route(request, ip);

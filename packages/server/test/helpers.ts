@@ -8,6 +8,8 @@ export const blob = (bytes = 300): string => randomBytes(bytes).toString("base64
 
 export interface Harness {
   app: App;
+  /** For tests that check what a request wrote. */
+  db: ReturnType<typeof openDatabase>;
   clock: { t: number };
   close(): void;
 }
@@ -16,7 +18,7 @@ export function harness(options: { enrollToken?: string } = {}): Harness {
   const db = openDatabase(":memory:");
   const clock = { t: 1_762_560_000_000 };
   const app = createApp({ db, version: "test", enrollToken: options.enrollToken, now: () => clock.t });
-  return { app, clock, close: () => db.close() };
+  return { app, db, clock, close: () => db.close() };
 }
 
 export class Device {
