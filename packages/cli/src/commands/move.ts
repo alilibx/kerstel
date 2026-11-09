@@ -179,7 +179,7 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
     const referencedScopes = new Set(
       loaded
         .flatMap((entry) => entries(entry.file))
-        .map((pair) => parseReference(pair.value))
+        .map((pair) => parseReference(pair.value, pair.key))
         .filter((ref): ref is SecretRef => ref !== null && ref.scope !== GLOBAL_SCOPE)
         .map((ref) => ref.scope),
     );

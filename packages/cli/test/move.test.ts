@@ -81,15 +81,15 @@ test("direct form: plain → shared with --yes, backup first, value never printe
   const { code, out } = await run(root, ["STRIPE_KEY", "--to", "global", "--yes"], null);
 
   expect(code).toBe(0);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("STRIPE_KEY=kerstel://global/STRIPE_KEY\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("STRIPE_KEY=ks:global\n");
   expect(await withVault((v) => v.getSecret({ scope: "global", key: "STRIPE_KEY" }))).toBe(SECRET);
   expect(listBackups("app")).toHaveLength(1);
-  expect(out).toContain("STRIPE_KEY now reads kerstel://global/STRIPE_KEY");
+  expect(out).toContain("STRIPE_KEY now reads ks:global/STRIPE_KEY");
   expect(out).not.toContain(SECRET);
 });
 
 test("direct form: project → plain deletes the unused project copy", async () => {
-  const root = makeProject({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\nOTHER=kerstel://app/OTHER\n" });
+  const root = makeProject({ ".env": "STRIPE_KEY=ks:app\nOTHER=ks:app\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "STRIPE_KEY" }, SECRET);
     v.setSecret({ scope: "app", key: "OTHER" }, "other");
@@ -98,13 +98,13 @@ test("direct form: project → plain deletes the unused project copy", async () 
   const { code, out } = await run(root, ["STRIPE_KEY", "--to", "plaintext", "--yes"], null);
 
   expect(code).toBe(0);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe(`STRIPE_KEY=${SECRET}\nOTHER=kerstel://app/OTHER\n`);
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe(`STRIPE_KEY=${SECRET}\nOTHER=ks:app\n`);
   expect(await withVault((v) => v.getSecret({ scope: "app", key: "STRIPE_KEY" }))).toBeNull();
   expect(out).not.toContain(SECRET);
 });
 
 test("direct form: a value with no plain-text spelling for its line stays in the vault", async () => {
-  const root = makeProject({ ".env": 'K="kerstel://app/K"\n' });
+  const root = makeProject({ ".env": 'K="ks:app"\n' });
   const unwritable = `{"a":"O'B"}`;
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "K" }, unwritable);
@@ -113,7 +113,7 @@ test("direct form: a value with no plain-text spelling for its line stays in the
   const { code, out } = await run(root, ["K", "--to", "plaintext", "--yes"], null);
 
   expect(code).toBe(1);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe('K="kerstel://app/K"\n');
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe('K="ks:app"\n');
   expect(await withVault((v) => v.getSecret({ scope: "app", key: "K" }))).toBe(unwritable);
   expect(out).toContain("K");
   expect(out).toContain("cannot be written as plain text");
@@ -121,7 +121,7 @@ test("direct form: a value with no plain-text spelling for its line stays in the
 });
 
 test("the last reference moving out points at uninstall", async () => {
-  const root = makeProject({ ".env": "K=kerstel://app/K\n" });
+  const root = makeProject({ ".env": "K=ks:app\n" });
   await withVault((v) => v.setSecret({ scope: "app", key: "K" }, "v"));
   const { code, out } = await run(root, ["K", "--to", "plaintext", "--yes"], null);
   expect(code).toBe(0);
@@ -129,7 +129,7 @@ test("the last reference moving out points at uninstall", async () => {
 });
 
 test("direct form refuses a conflict without --replace, and replaces with it", async () => {
-  const root = makeProject({ ".env": "K=kerstel://app/K\n" });
+  const root = makeProject({ ".env": "K=ks:app\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "K" }, "project-value");
     v.setSecret({ scope: "global", key: "K" }, "shared-value");
@@ -137,8 +137,8 @@ test("direct form refuses a conflict without --replace, and replaces with it", a
 
   const refused = await run(root, ["K", "--to", "global", "--yes"], null);
   expect(refused.code).toBe(1);
-  expect(refused.out).toContain("kerstel://global/K already holds a different value (12 chars).");
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://app/K\n");
+  expect(refused.out).toContain("ks:global/K already holds a different value (12 chars).");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:app\n");
   expect(listBackups("app")).toHaveLength(0);
 
   const replaced = await run(root, ["K", "--to", "global", "--yes", "--replace"], null);
@@ -147,7 +147,7 @@ test("direct form refuses a conflict without --replace, and replaces with it", a
 });
 
 test("direct form refuses plain text into a tracked file without --allow-tracked", async () => {
-  const root = makeProject({ ".env": "K=kerstel://app/K\n" });
+  const root = makeProject({ ".env": "K=ks:app\n" });
   await withVault((v) => v.setSecret({ scope: "app", key: "K" }, "v"));
   Bun.spawnSync(["git", "-C", root, "init", "-q"]);
   Bun.spawnSync(["git", "-C", root, "add", ".env"]);
@@ -155,7 +155,7 @@ test("direct form refuses plain text into a tracked file without --allow-tracked
   const refused = await run(root, ["K", "--to", "plaintext", "--yes"], null);
   expect(refused.code).toBe(1);
   expect(refused.out).toContain(".env is tracked by git; K's value would be committed.");
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://app/K\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:app\n");
 
   const allowed = await run(root, ["K", "--to", "plaintext", "--yes", "--allow-tracked"], null);
   expect(allowed.code).toBe(0);
@@ -196,22 +196,22 @@ test("no terminal: every row of the spec §2.4 table", async () => {
 });
 
 test("interactive: pick a key, pick a destination, answer a conflict, apply", async () => {
-  const root = makeProject({ ".env": "K=kerstel://app/K\nPORT=3000\n" });
+  const root = makeProject({ ".env": "K=ks:app\nPORT=3000\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "K" }, "project-value");
     v.setSecret({ scope: "global", key: "K" }, "shared-value");
   });
-  const prompter = new ScriptedPrompter([["K:kerstel://app/K"], "global", "keep", "yes"]);
+  const prompter = new ScriptedPrompter([["K:ks:app/K"], "global", "keep", "yes"]);
   const { code, out } = await run(root, [], prompter);
 
   expect(code).toBe(0);
   expect(prompter.asked).toEqual([
     "Which keys?",
     "Move K to:",
-    "kerstel://global/K already holds a different value (12 chars). Which one stays?",
+    "ks:global/K already holds a different value (12 chars). Which one stays?",
     "Apply?",
   ]);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://global/K\nPORT=3000\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:global\nPORT=3000\n");
   expect(await withVault((v) => v.getSecret({ scope: "global", key: "K" }))).toBe("shared-value");
   expect(out).not.toContain("project-value");
   expect(out).not.toContain("shared-value");
@@ -238,7 +238,7 @@ test("the scope is the vault's project record for this root, even when the files
   await withVault((v) => v.registerProject("custom", root));
   const { code } = await run(root, ["K", "--to", "project", "--yes"], null);
   expect(code).toBe(0);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://custom/K\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:custom\n");
   expect(await withVault((v) => v.getSecret({ scope: "custom", key: "K" }))).toBe("v");
   expect(await withVault((v) => v.getSecret({ scope: "app", key: "K" }))).toBeNull();
 });
@@ -264,27 +264,27 @@ test("a named key is reported and skipped when there are no .env files at all; n
 });
 
 test("a vault row the vault doesn't hold is reported, not offered, and not asked a destination", async () => {
-  const root = makeProject({ ".env": "A=kerstel://app/A\nB=v\n" });
+  const root = makeProject({ ".env": "A=ks:app\nB=v\n" });
   // A's reference is never stored: the row exists in the file, but not in the vault.
   const prompter = new ScriptedPrompter([["B:plaintext"], "global", "yes"]);
   const { code, out } = await run(root, [], prompter);
 
   expect(code).toBe(0);
-  expect(out).toContain("A: kerstel://app/A is not in the vault. Run");
+  expect(out).toContain("A: ks:app/A is not in the vault. Run");
   expect(out).toContain("init to store it first.");
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=kerstel://app/A\nB=kerstel://global/B\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=ks:app\nB=ks:global\n");
 });
 
 test("a named key whose only row has a missing vault reference is reported once and skipped", async () => {
-  const root = makeProject({ ".env": "A=kerstel://app/A\n" });
+  const root = makeProject({ ".env": "A=ks:app\n" });
   const { code, out } = await run(root, ["A", "--to", "plaintext", "--yes"], null);
   expect(code).toBe(1);
-  expect(out).toContain("A: kerstel://app/A is not in the vault. Run");
+  expect(out).toContain("A: ks:app/A is not in the vault. Run");
   expect(out.match(/is not in the vault/g)).toHaveLength(1);
 });
 
 test("when every row is foreign or has a missing vault reference, nothing is offered", async () => {
-  const root = makeProject({ ".env": "A=kerstel://app/A\nB=kerstel://other/B\n" });
+  const root = makeProject({ ".env": "A=ks:app\nB=ks:other\n" });
   const { code, out } = await run(root, [], new ScriptedPrompter([]));
   expect(code).toBe(0);
   expect(out).toContain("Nothing to move.");
@@ -292,8 +292,8 @@ test("when every row is foreign or has a missing vault reference, nothing is off
 
 test("the key menu header counts distinct keys, not rows", async () => {
   const root = makeProject({
-    ".env": "K=kerstel://app/K\nOTHER=v\n",
-    ".env.local": "K=kerstel://global/K\n",
+    ".env": "K=ks:app\nOTHER=v\n",
+    ".env.local": "K=ks:global\n",
   });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "K" }, "project-value");
@@ -333,8 +333,8 @@ function secondCheckout(env: Record<string, string>): string {
 }
 
 test("a copy another checkout still reads is kept and that checkout is named", async () => {
-  const root = makeProject({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
-  const other = secondCheckout({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
+  const root = makeProject({ ".env": "STRIPE_KEY=ks:app\n" });
+  const other = secondCheckout({ ".env": "STRIPE_KEY=ks:app\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "STRIPE_KEY" }, SECRET);
     v.registerProject("app", root, "app");
@@ -350,7 +350,7 @@ test("a copy another checkout still reads is kept and that checkout is named", a
 });
 
 test("a copy no checkout reads is deleted even with another checkout registered", async () => {
-  const root = makeProject({ ".env": "STRIPE_KEY=kerstel://app/STRIPE_KEY\n" });
+  const root = makeProject({ ".env": "STRIPE_KEY=ks:app\n" });
   const other = secondCheckout({ ".env": "OTHER=plain\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "STRIPE_KEY" }, SECRET);
@@ -386,7 +386,7 @@ test("a derived scope that belongs to a different package is refused before anyt
 });
 
 test("a scope the files themselves reference is not a collision, even when another package's row shares its name", async () => {
-  const root = makeProject({ ".env": "K=kerstel://app/K\n" });
+  const root = makeProject({ ".env": "K=ks:app\n" });
   await withVault((v) => {
     v.setSecret({ scope: "app", key: "K" }, SECRET);
     v.registerProject("app", "/somewhere/else/app", "@other/app");

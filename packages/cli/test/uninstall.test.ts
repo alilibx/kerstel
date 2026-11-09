@@ -47,7 +47,7 @@ async function setup(extra: { unusedSecret?: boolean } = {}): Promise<{ home: st
   const root = mkdtempSync(join(tmpdir(), "kerstel-uninstall-app-"));
   dirs.push(root);
   writeFileSync(join(root, "package.json"), WIRED);
-  writeFileSync(join(root, ".env"), "API_KEY=kerstel://demo-app/API_KEY\n");
+  writeFileSync(join(root, ".env"), "API_KEY=ks:demo-app\n");
 
   const { key } = await loadOrCreateDataKey();
   const vault = openVault(key);
@@ -79,7 +79,7 @@ test("an interactive yes applies; the default no changes nothing", async () => {
   capture();
   expect(await uninstallCommand([], new ScriptedPrompter(["no"]), NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(true);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=kerstel://demo-app/API_KEY\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=ks:demo-app\n");
 
   expect(await uninstallCommand([], new ScriptedPrompter(["yes"]), NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(false);
@@ -113,7 +113,7 @@ test("cancelling the final question exits 130 and changes nothing", async () => 
   expect(await uninstallCommand([], cancelling, NO_BINARY)).toBe(130);
   expect(existsSync(home)).toBe(true);
   expect(readdirSync(home).sort()).toEqual(before);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=kerstel://demo-app/API_KEY\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=ks:demo-app\n");
 });
 
 test("removeLinks deletes a ks link next to the binary and nothing else", () => {
@@ -273,8 +273,8 @@ test("--dry-run writes nothing and exits 0 even when something would be lost", a
   capture();
   expect(await uninstallCommand(["--dry-run"], undefined, NO_BINARY)).toBe(0);
   expect(existsSync(home)).toBe(true);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=kerstel://demo-app/API_KEY\n");
-  expect(output.join("\n")).toContain("kerstel://global/ORPHAN");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=ks:demo-app\n");
+  expect(output.join("\n")).toContain("ks:global/ORPHAN");
 });
 
 test("a possible loss refuses without --force, even with --yes", async () => {
@@ -283,7 +283,7 @@ test("a possible loss refuses without --force, even with --yes", async () => {
   expect(await uninstallCommand(["--yes"], undefined, NO_BINARY)).toBe(1);
   expect(existsSync(home)).toBe(true);
   const text = output.join("\n");
-  expect(text).toContain("kerstel://global/ORPHAN");
+  expect(text).toContain("ks:global/ORPHAN");
   expect(text).toContain("--reveal");
   expect(text).not.toContain("orphan-value");
 
@@ -361,7 +361,7 @@ test("a value only a move backup's vault section holds trips the gate until --fo
   createBackup({
     scope: "demo-app",
     dataKey: key,
-    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    files: [{ name: ".env", contents: "API_KEY=ks:demo-app\n" }],
     vault: [{ scope: "global", key: "OLD_TOKEN", value: "move-backup-only" }],
   });
   capture();

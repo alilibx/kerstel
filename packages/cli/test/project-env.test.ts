@@ -23,7 +23,7 @@ test("a KERSTEL_* the project's .env defines, and that Bun loaded, is reported",
       "KERSTEL_HOME=./.kerstel-local",
       "KERSTEL_KEYCHAIN_BACKEND=file",
       "KERSTEL_IDLE_MS=9999999999",
-      "DATABASE_URL=kerstel://app/DATABASE_URL",
+      "DATABASE_URL=ks:app",
       "",
     ].join("\n"),
   });
@@ -33,7 +33,7 @@ test("a KERSTEL_* the project's .env defines, and that Bun loaded, is reported",
     KERSTEL_HOME: "./.kerstel-local",
     KERSTEL_KEYCHAIN_BACKEND: "file",
     KERSTEL_IDLE_MS: "9999999999",
-    DATABASE_URL: "kerstel://app/DATABASE_URL",
+    DATABASE_URL: "ks:app/DATABASE_URL",
   };
 
   const ignored = projectSettings(root, loaded);

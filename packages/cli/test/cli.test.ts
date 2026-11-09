@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_LINE_CHARS } from "../src/daemon/protocol";
@@ -59,8 +59,8 @@ test("ls prints references and never values", async () => {
   capture();
   expect(await runCli(["ls"])).toBe(0);
   const out = captured.join("\n");
-  expect(out).toContain("kerstel://global/A");
-  expect(out).toContain("kerstel://my-app/B");
+  expect(out).toContain("ks:global/A");
+  expect(out).toContain("ks:my-app/B");
   expect(out).not.toContain("value-a");
 });
 
@@ -128,8 +128,8 @@ test("run writes one audit row per reference it resolves", async () => {
   await runCli(["set", "global/RA", "--value", "a"]);
   await runCli(["set", "global/RB", "--value", "b"]);
 
-  process.env.RA = "kerstel://global/RA";
-  process.env.RB = "kerstel://global/RB";
+  process.env.RA = "ks:global/RA";
+  process.env.RB = "ks:global/RB";
   capture();
   const code = await runCli(["run", "--", "node", "-e", ""]);
   delete process.env.RA;
@@ -159,11 +159,62 @@ test("run injects resolved values into the child environment", async () => {
   const script = join(mkdtempSync(join(tmpdir(), "kerstel-run-")), "print.cjs");
   await Bun.write(script, "process.stdout.write(process.env.RUN_KEY);");
 
-  process.env.RUN_KEY = "kerstel://global/RUN_KEY";
+  process.env.RUN_KEY = "ks:global/RUN_KEY";
   capture();
   const code = await runCli(["run", "--", "node", script]);
   delete process.env.RUN_KEY;
   expect(code).toBe(0);
+});
+
+test("run resolves the shorthand by the variable's name, and kerstel:// still works", async () => {
+  isolate();
+  await runCli(["set", "global/SHORT_RUN", "--value", "short"]);
+  await runCli(["set", "global/OLD_RUN", "--value", "old"]);
+
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-run-"));
+  const out = join(dir, "out.txt");
+  const script = join(dir, "print.cjs");
+  await Bun.write(script, `require("fs").writeFileSync(${JSON.stringify(out)}, process.env.SHORT_RUN + "|" + process.env.OLD_RUN);`);
+
+  process.env.SHORT_RUN = "ks:global";
+  process.env.OLD_RUN = "kerstel://global/OLD_RUN";
+  capture();
+  const code = await runCli(["run", "--", "node", script]);
+  delete process.env.SHORT_RUN;
+  delete process.env.OLD_RUN;
+  expect(code).toBe(0);
+  expect(readFileSync(out, "utf8")).toBe("short|old");
+});
+
+test("run explains a shorthand that names a key the vault lacks", async () => {
+  isolate();
+  process.env.COPIED = "ks:global";
+  capture();
+  const code = await runCli(["run", "--", "node", "-e", ""]);
+  delete process.env.COPIED;
+  expect(code).toBe(1);
+  const text = captured.join("\n");
+  expect(text).toContain("No secret at ks:global/COPIED (referenced by COPIED)");
+  expect(text).toContain("COPIED is ks:global, so Kerstel looked for global/COPIED.");
+});
+
+test("a bare ks:<scope> typed on the command line is refused with a hint", async () => {
+  isolate();
+  capture();
+  expect(await runCli(["resolve", "ks:global"])).toBe(2);
+  expect(await runCli(["get", "ks:global"])).toBe(2);
+  const text = captured.join("\n");
+  expect(text).toContain("ks:global names no key on its own. Add one: ks:global/<KEY>.");
+});
+
+test("get, set and rm accept every spelling of a reference", async () => {
+  isolate();
+  expect(await runCli(["set", "ks:global/SPELLED", "--value", "v"])).toBe(0);
+  capture();
+  expect(await runCli(["get", "kerstel://global/SPELLED"])).toBe(0);
+  expect(await runCli(["get", "global/SPELLED"])).toBe(0);
+  expect(await runCli(["rm", "KS:global/SPELLED", "--yes"])).toBe(0);
+  expect(captured.join("\n")).toContain("Removed ks:global/SPELLED");
 });
 
 // `resolve` goes through the daemon (see resolveCommand), so this test has to
@@ -183,7 +234,7 @@ test("resolve prints one value for scripting, through the daemon", async () => {
 
   try {
     capture();
-    expect(await runCli(["resolve", "kerstel://global/R"])).toBe(0);
+    expect(await runCli(["resolve", "ks:global/R"])).toBe(0);
     expect(captured.join("\n")).toBe("resolved");
 
     // The daemon audits every resolution it serves; routing `resolve` through
@@ -205,8 +256,8 @@ test("resolve reports a missing key without inventing one", async () => {
 
   try {
     capture();
-    expect(await runCli(["resolve", "kerstel://global/NOPE"])).toBe(1);
-    expect(captured.join("\n")).toContain("No secret at kerstel://global/NOPE");
+    expect(await runCli(["resolve", "ks:global/NOPE"])).toBe(1);
+    expect(captured.join("\n")).toContain("No secret at ks:global/NOPE");
   } finally {
     await handle.close();
     vault.close();
@@ -290,7 +341,7 @@ test.if(process.platform !== "win32")(
       // The vault still opens, and the command still works.
       capture();
       expect(await runCli(["ls"])).toBe(0);
-      expect(captured.join("\n")).toContain("kerstel://global/A");
+      expect(captured.join("\n")).toContain("ks:global/A");
 
       capture();
       expect(await runCli(["doctor"])).toBe(0);

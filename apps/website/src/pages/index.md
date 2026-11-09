@@ -6,9 +6,9 @@ description: Your .env files hold only references. The real values live in an en
 <div class="hero-logo"><img src="/icon-light.png" alt="Kerstel"></div>
 <h1>Kerstel</h1>
 <p class="tagline">Local-first secrets for Node and Bun projects. Your <code>.env</code> holds references. The values never touch disk in the clear.</p>
-<div class="terminal is-ref" role="img" aria-label="Example .env file switching from a plaintext key to a kerstel:// reference">
+<div class="terminal is-ref" role="img" aria-label="Example .env file switching from a plaintext key to a ks: reference">
 <div class="terminal-bar"><i></i><i></i><i></i><span>.env</span></div>
-<div class="terminal-body"><span class="comment"># safe to read, grep, and commit</span><br><span class="key">OPENAI_API_KEY=</span><span class="val" id="hero-val">kerstel://global/OPENAI_API_KEY</span><span class="cursor" aria-hidden="true"></span></div>
+<div class="terminal-body"><span class="comment"># safe to read, grep, and commit</span><br><span class="key">OPENAI_API_KEY=</span><span class="val" id="hero-val">ks:global</span><span class="cursor" aria-hidden="true"></span></div>
 </div>
 <div class="install">
 <div class="install-box">
@@ -38,7 +38,7 @@ description: Your .env files hold only references. The real values live in an en
 <section class="section">
 <div class="section-label">How it works</div>
 <h2>Store once. Reference everywhere.</h2>
-<p class="lede">Run <code>ks set global/OPENAI_API_KEY</code> once (<code>ks</code> is short for <code>kerstel</code>). From then on your project file holds <code class="ref">kerstel://global/OPENAI_API_KEY</code> and your code still reads the real value from <code>process.env</code>. <code>ks init</code> does the whole project at once, and wires your scripts for you.</p>
+<p class="lede">Run <code>ks set global/OPENAI_API_KEY</code> once (<code>ks</code> is short for <code>kerstel</code>). From then on your project file holds <code class="ref">OPENAI_API_KEY=ks:global</code> and your code still reads the real value from <code>process.env</code>. <code>ks init</code> does the whole project at once, and wires your scripts for you.</p>
 <div class="steps">
 <div class="step"><h3>Vault</h3><p>Values are encrypted at rest with AES-256-GCM. The data key lives in your OS credential store, or in a <code>0600</code> file where there is none.</p></div>
 <div class="step"><h3>Daemon</h3><p>A per-user resolver unlocks the vault once and answers lookups over a local socket. Nothing leaves your machine.</p></div>

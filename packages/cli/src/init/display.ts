@@ -24,7 +24,7 @@ const BLANK_OR_COMMENT = /^\s*(#.*)?$/;
 
 /**
  * One `.env` file rendered for DISPLAY: every value that is not already a
- * `kerstel://` reference is replaced by its `describeValue` mask, keeping the
+ * reference is replaced by its `describeValue` mask, keeping the
  * key, the `export` prefix, the quoting style and any inline comment.
  *
  * It masks EVERY value, not only the ones this run migrates. Rule 1 has no
@@ -54,7 +54,7 @@ export function maskForDisplay(source: string): string {
     if (line.kind === "pair") {
       // A value that is ALREADY a reference is not a secret and keeps its own
       // text -- masking it would invent a diff line for a key nothing touches.
-      if (parseReference(line.value) !== null) {
+      if (parseReference(line.value, line.key) !== null) {
         out += line.text + line.eol;
         continue;
       }

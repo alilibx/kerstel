@@ -30,10 +30,10 @@ Then decide what to do with `.env`:
 The mistake to avoid is a committed `.env` reaching a host where one key is **not** set. The framework loads the file, nothing overrides that line, and the app gets the literal reference:
 
 ```
-Error: Publishable key not valid: kerstel://myapp/CLERK_PUBLISHABLE_KEY
+Error: Publishable key not valid: ks:myapp
 ```
 
-If a value on a host looks like `kerstel://…`, that key is missing from the host's settings. Add it there; there is nothing to fix in the repo.
+If a value on a host looks like `ks:…` (or `kerstel://…` in a project set up with Kerstel 0.1), that key is missing from the host's settings. Add it there; there is nothing to fix in the repo.
 
 ## What each host runs on its own
 
@@ -79,7 +79,7 @@ Turborepo's strict environment mode, the default, hands a task only the variable
 }
 ```
 
-Without this, a task under `turbo run dev` on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal `kerstel://` reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host's settings. Nx does no filtering and needs nothing.
+Without this, a task under `turbo run dev` on your machine loads the hook but the hook finds no socket to talk to, so it stands down and the app reads the literal `ks:` reference, the same failure as a key missing on a host. If that happens on your own machine in a Turborepo, this list is the fix, not the host's settings. Nx does no filtering and needs nothing.
 
 ## Bun
 
@@ -89,6 +89,6 @@ On your machine, under Bun, the hook resolves every reference in the environment
 
 1. Commit `.kerstel/exec.cjs` with your `package.json`. `kerstel init` warns if `.gitignore` hides it.
 2. Set every key on the host.
-3. Keep `.env` out of git, or commit it knowing that a key missing on the host shows up as a literal `kerstel://` value.
+3. Keep `.env` out of git, or commit it knowing that a key missing on the host shows up as a literal `ks:` value.
 4. In a Turborepo, add the three `KERSTEL_*` variables to `globalPassThroughEnv`.
 5. Do not install Kerstel on the host.

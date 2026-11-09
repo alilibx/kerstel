@@ -314,10 +314,21 @@ function launcherCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check | n
   }
 }
 
+/**
+ * `(9 ks:, 3 kerstel://)`: which spellings the project's env files use.
+ * Kerstel 0.1 reads only `kerstel://`, so a project with any `ks:` line needs
+ * Kerstel 0.2.0 on every machine that runs it (short-references spec §5.2).
+ */
+function referenceForms(total: number, long: number): string {
+  const forms = [total - long > 0 ? `${total - long} ks:` : "", long > 0 ? `${long} kerstel://` : ""];
+  return total === 0 ? "" : ` (${forms.filter(Boolean).join(", ")})`;
+}
+
 function referencesCheck(project: ProjectStatus, cli: "ks" | "kerstel"): Check {
-  const { total, resolvable, unresolved } = project.references;
+  const { total, resolvable, unresolved, long } = project.references;
+  const forms = referenceForms(total, long);
   if (unresolved.length === 0) {
-    return { group: "project", status: "pass", label: "References", detail: `${resolvable} of ${total} resolve` };
+    return { group: "project", status: "pass", label: "References", detail: `${resolvable} of ${total} resolve${forms}` };
   }
   return {
     group: "project",

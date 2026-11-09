@@ -17,12 +17,12 @@ function checkout(files: Record<string, string>): string {
 }
 
 test("collects every reference each checkout reads, first root first", () => {
-  const a = checkout({ ".env": "K=kerstel://app/K\nP=plain\n" });
-  const b = checkout({ ".env.local": "K=kerstel://app/K\nG=kerstel://global/G\n" });
+  const a = checkout({ ".env": "K=ks:app\nP=plain\n" });
+  const b = checkout({ ".env.local": "K=ks:app\nG=ks:global\n" });
   const refs = referencesInCheckouts([a, b]);
-  expect(refs.get("kerstel://app/K")).toBe(a);
-  expect(refs.get("kerstel://global/G")).toBe(b);
-  expect(refs.has("kerstel://app/P")).toBe(false);
+  expect(refs.get("ks:app/K")).toBe(a);
+  expect(refs.get("ks:global/G")).toBe(b);
+  expect(refs.has("ks:app/P")).toBe(false);
 });
 
 test("a checkout whose folder is gone reads nothing", () => {

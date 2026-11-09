@@ -113,7 +113,7 @@ export function howItWorksNote(facts: Pick<DoctorFacts, "project" | "cli">): str
     "needed, so there is nothing to keep running.",
     `\`${facts.cli} init\` moves a project's .env values into the vault and wires its`,
     "scripts through `kerstel exec`, so `npm run dev` keeps working and the",
-    ".env file holds only kerstel:// references.",
+    ".env file holds only ks: references.",
   ];
   if (facts.project === null) lines.push("", `Run \`${facts.cli} init\` inside a project to get started.`);
   return lines.join("\n");

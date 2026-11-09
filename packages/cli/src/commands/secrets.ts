@@ -2,13 +2,25 @@ import { openContext } from "../context";
 import { DaemonError, ensureDaemon } from "../daemon/client";
 import { MAX_LINE_CHARS } from "../daemon/protocol";
 import { bold, dim, fail, info, mask, ok } from "../output";
-import { formatReference, parseReference, type SecretRef } from "../reference";
+import { REFERENCE_PROTOCOL, SHORT_PROTOCOL, formatReference, isShorthand, parseReference, type SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
 
-/** Accepts `scope/KEY` or a full `kerstel://scope/KEY`. */
+/**
+ * Accepts `scope/KEY`, `ks:scope/KEY`, or `kerstel://scope/KEY`. A typed
+ * argument has no variable to name the key, so the shorthand `ks:scope` is
+ * refused here; `targetHint` says what to type instead.
+ */
 export function parseTarget(input: string): SecretRef | null {
-  if (input.startsWith("kerstel://")) return parseReference(input);
-  return parseReference(`kerstel://${input}`);
+  if (input.startsWith(REFERENCE_PROTOCOL) || input.slice(0, SHORT_PROTOCOL.length).toLowerCase() === SHORT_PROTOCOL) {
+    return parseReference(input);
+  }
+  return parseReference(`${SHORT_PROTOCOL}${input}`);
+}
+
+/** Extra advice for a target that failed to parse, or "" when there is none. */
+export function targetHint(input: string | undefined): string {
+  if (input === undefined || !isShorthand(input)) return "";
+  return ` ${input} names no key on its own. Add one: ${input}/<KEY>.`;
 }
 
 async function readStdin(): Promise<string> {
@@ -42,7 +54,11 @@ export async function setCommand(args: string[]): Promise<number> {
 
   const ref = parseTarget(target);
   if (!ref) {
-    fail(`Invalid reference "${target}". Use a lowercase scope and an ENV_STYLE key, e.g. global/API_KEY.`);
+    fail(
+      targetHint(target)
+        ? `Invalid reference "${target}".${targetHint(target)}`
+        : `Invalid reference "${target}". Use a lowercase scope and an ENV_STYLE key, e.g. global/API_KEY.`,
+    );
     return 2;
   }
 
@@ -107,7 +123,7 @@ export async function getCommand(args: string[]): Promise<number> {
 
   const ref = parseTarget(target);
   if (!ref) {
-    fail(`Invalid reference "${target}".`);
+    fail(`Invalid reference "${target}".${targetHint(target)}`);
     return 2;
   }
 
@@ -172,7 +188,7 @@ export async function rmCommand(args: string[]): Promise<number> {
 
   const ref = parseTarget(target);
   if (!ref) {
-    fail(`Invalid reference "${target}".`);
+    fail(`Invalid reference "${target}".${targetHint(target)}`);
     return 2;
   }
   if (!args.includes("--yes")) {
@@ -210,7 +226,7 @@ export async function resolveCommand(args: string[]): Promise<number> {
   const target = args[0];
   const ref = target ? parseTarget(target) : null;
   if (!ref) {
-    fail(`Usage: ${cliName()} resolve kerstel://<scope>/<KEY>`);
+    fail(`Usage: ${cliName()} resolve ks:<scope>/<KEY>.${targetHint(target)}`);
     return 2;
   }
 

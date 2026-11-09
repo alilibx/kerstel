@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Your `.env` files hold only references (`kerstel://<scope>/<KEY>`) — safe to read, grep, and commit. The real values live in an encrypted vault on your machine. No account, no cloud, no telemetry.
+Your `.env` files hold only references (`OPENAI_API_KEY=ks:global`) — safe to read, grep, and commit. The real values live in an encrypted vault on your machine. No account, no cloud, no telemetry.
 
 [Problem](#the-problem) · [How it works](#how-it-works) · [Usage](#usage) · [Security](#security-model) · [Build from source](#build-from-source)
 
@@ -30,8 +30,10 @@ Your `.env` file then holds a reference instead of the value:
 
 ```bash
 # .env — safe to commit
-OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
+OPENAI_API_KEY=ks:global
 ```
+
+`ks:global` means the key in `global` with the same name as the variable. To point a variable at a key with another name, write the key too: `OPENAI_KEY=ks:global/OPENAI_API_KEY`. References written by Kerstel 0.1, `kerstel://global/OPENAI_API_KEY`, keep working. A project with `ks:` references needs Kerstel 0.2.0 or later on every machine that runs it.
 
 A reference names exactly one scope — `global`, or a project name — with no fallback chain. A resolver daemon unlocks the vault once via your OS credential store (Keychain on macOS, Secret Service on Linux) and serves resolutions to your app's process over a local socket. Your code sees the real value in `process.env`; the file on disk never does.
 
@@ -47,7 +49,7 @@ ks ls [--scope <scope>]                           # List stored references
 ks rm <scope>/<KEY> --yes                         # Remove a secret
 ks run -- <command>                               # Run a command with references resolved
 ks exec -- <command>                              # Run a command with the hook wired in
-ks resolve kerstel://<scope>/<KEY>                # Print one resolved value
+ks resolve ks:<scope>/<KEY>                       # Print one resolved value
 ks daemon <serve|start|stop|status>               # Manage the resolver daemon
 ks doctor [--verbose]                             # Diagnose this machine's setup
 ks update [--check]                               # Install the latest release

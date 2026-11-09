@@ -30,7 +30,7 @@ const COMMANDS = `Usage:
   ${cliName()} rm <scope>/<KEY> --yes                Remove a secret
   ${cliName()} run -- <command>                      Run a command with references resolved
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
-  ${cliName()} resolve kerstel://<scope>/<KEY>       Print one resolved value
+  ${cliName()} resolve ks:<scope>/<KEY>             Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
   ${cliName()} update [--check]                      Install the latest release
@@ -39,7 +39,8 @@ const COMMANDS = `Usage:
   ${cliName()} --version                             Print the version, and whether it's current
 
 Scopes are explicit: "global" or a project name. A reference resolves in exactly
-one scope — there is no fallback.`;
+one scope — there is no fallback. In an env file, KEY=ks:<scope> reads the key
+named like the variable, and ks:<scope>/<KEY> any other key.`;
 
 export async function runCli(argv: string[]): Promise<number> {
   // FIRST, before any command and before anything reads a KERSTEL_* setting:

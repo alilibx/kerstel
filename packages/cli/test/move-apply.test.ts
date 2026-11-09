@@ -74,23 +74,23 @@ function makePlan(
 
 test("apply backs up, writes, deletes, and saves every deleted and overwritten value", () => {
   const { root, vault, dataKey } = setup(
-    { ".env": "A=kerstel://app/A\nB=kerstel://app/B\n" },
+    { ".env": "A=ks:app\nB=ks:app\n" },
     { "app/A": "value-a", "app/B": "value-b", "global/B": "old-shared-b" },
   );
-  const plan = makePlan(root, vault, [["A:kerstel://app/A", "plaintext"], ["B:kerstel://app/B", "global"]], {
-    "kerstel://global/B": "replace",
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"], ["B:ks:app/B", "global"]], {
+    "ks:global/B": "replace",
   });
 
   const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
 
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=value-a\nB=kerstel://global/B\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=value-a\nB=ks:global\n");
   expect(vault.getSecret({ scope: "global", key: "B" })).toBe("value-b");
   expect(vault.getSecret({ scope: "app", key: "A" })).toBeNull();
   expect(vault.getSecret({ scope: "app", key: "B" })).toBeNull();
   expect(result.deleted.map((r) => `${r.scope}/${r.key}`).sort()).toEqual(["app/A", "app/B"]);
 
   expect(readBackup("app", result.backup.timestamp, dataKey)).toEqual([
-    { name: ".env", contents: "A=kerstel://app/A\nB=kerstel://app/B\n" },
+    { name: ".env", contents: "A=ks:app\nB=ks:app\n" },
   ]);
   expect(readBackupVault("app", result.backup.timestamp, dataKey)).toEqual([
     { scope: "app", key: "A", value: "value-a" },
@@ -101,11 +101,11 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
 
 test("a plain value that loses to a kept destination is saved in the backup's vault section", () => {
   const { root, vault, dataKey } = setup({ ".env": "K=plain-incoming\n" }, { "global/K": "existing" });
-  const plan = makePlan(root, vault, [["K:plaintext", "global"]], { "kerstel://global/K": "keep" });
+  const plan = makePlan(root, vault, [["K:plaintext", "global"]], { "ks:global/K": "keep" });
 
   const result = applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
 
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://global/K\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:global\n");
   expect(vault.getSecret({ scope: "global", key: "K" })).toBe("existing");
   expect(readBackupVault("app", result.backup.timestamp, dataKey)).toEqual([
     { scope: "global", key: "K", value: "plain-incoming" },
@@ -136,7 +136,7 @@ test("a failure writing the vault leaves the vault and files as they were", () =
     { "global/B": "old-shared-b" },
   );
   const plan = makePlan(root, vault, [["A:plaintext", "global"], ["B:plaintext", "global"]], {
-    "kerstel://global/B": "replace",
+    "ks:global/B": "replace",
   });
   let calls = 0;
   const failing: Vault = {
@@ -155,7 +155,7 @@ test("a failure writing the vault leaves the vault and files as they were", () =
     caught = error;
   }
   expect(caught).toBeInstanceOf(MoveApplyError);
-  expect((caught as MoveApplyError).message).toContain("kerstel://global/B");
+  expect((caught as MoveApplyError).message).toContain("ks:global/B");
   expect((caught as MoveApplyError).backupDir).toContain(join("app"));
   expect(vault.getSecret({ scope: "global", key: "A" })).toBeNull();
   expect(vault.getSecret({ scope: "global", key: "B" })).toBe("old-shared-b");
@@ -165,10 +165,10 @@ test("a failure writing the vault leaves the vault and files as they were", () =
 
 test("a failure writing a file restores the vault and the files already written", () => {
   const { root, vault, dataKey } = setup(
-    { ".env.local": "K=kerstel://app/K\n", ".env": "K=kerstel://app/K\n" },
+    { ".env.local": "K=ks:app\n", ".env": "K=ks:app\n" },
     { "app/K": "v", "global/K": "old-shared" },
   );
-  const plan = makePlan(root, vault, [["K:kerstel://app/K", "global"]], { "kerstel://global/K": "replace" });
+  const plan = makePlan(root, vault, [["K:ks:app/K", "global"]], { "ks:global/K": "replace" });
   let writes = 0;
   const writeFile = (path: string, contents: string) => {
     writes += 1;
@@ -187,8 +187,8 @@ test("a failure writing a file restores the vault and the files already written"
   expect((caughtFile as MoveApplyError).message).toContain(".env");
   expect(vault.getSecret({ scope: "global", key: "K" })).toBe("old-shared");
   expect(vault.getSecret({ scope: "app", key: "K" })).toBe("v");
-  expect(readFileSync(join(root, ".env.local"), "utf8")).toBe("K=kerstel://app/K\n");
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=kerstel://app/K\n");
+  expect(readFileSync(join(root, ".env.local"), "utf8")).toBe("K=ks:app\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("K=ks:app\n");
 });
 
 test("a failure that also fails to roll back still throws MoveApplyError naming what could not be restored", () => {
@@ -197,7 +197,7 @@ test("a failure that also fails to roll back still throws MoveApplyError naming 
     { "global/B": "old-shared-b" },
   );
   const plan = makePlan(root, vault, [["A:plaintext", "global"], ["B:plaintext", "global"]], {
-    "kerstel://global/B": "replace",
+    "ks:global/B": "replace",
   });
   let setCalls = 0;
   const failing: Vault = {
@@ -225,8 +225,8 @@ test("a failure that also fails to roll back still throws MoveApplyError naming 
   expect(caught).toBeInstanceOf(MoveApplyError);
   const err = caught as MoveApplyError;
   expect(err.message).toContain("disk full");
-  expect(err.message).toContain("kerstel://global/B");
-  expect(err.message).toContain("kerstel://global/A");
+  expect(err.message).toContain("ks:global/B");
+  expect(err.message).toContain("ks:global/A");
   expect(err.backupDir).toContain(join("backups", "app"));
   expect(listBackups("app")).toHaveLength(1);
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=plain-a\nB=plain-b\n");

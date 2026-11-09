@@ -42,7 +42,7 @@ afterEach(async () => {
 
 test("buildExecEnv wires the hook without resolving anything", () => {
   const env = buildExecEnv({
-    base: { PATH: "/usr/bin", OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY" },
+    base: { PATH: "/usr/bin", OPENAI_API_KEY: "ks:global/OPENAI_API_KEY" },
     socketPath: "/tmp/k.sock",
     tokenFile: "/home/dev/.kerstel/session.token",
     hookDir: "/home/dev/.kerstel/hook",
@@ -56,7 +56,7 @@ test("buildExecEnv wires the hook without resolving anything", () => {
   expect(JSON.stringify(env)).not.toContain("session-token-value");
   expect(env.KERSTEL_HOOK_DIR).toBe("/home/dev/.kerstel/hook");
   // A reference stays a reference: resolving is `run`'s job, never `exec`'s.
-  expect(env.OPENAI_API_KEY).toBe("kerstel://global/OPENAI_API_KEY");
+  expect(env.OPENAI_API_KEY).toBe("ks:global/OPENAI_API_KEY");
   expect(env.NODE_OPTIONS).toBe(`--require ${JSON.stringify(preloadPathFor("/home/dev/.kerstel/hook"))}`);
 });
 
@@ -123,7 +123,7 @@ test("exec runs a node command that resolves a reference through the daemon", as
     `require("node:fs").writeFileSync(${JSON.stringify(out)}, String(process.env.EXEC_KEY));`,
   );
 
-  process.env.EXEC_KEY = "kerstel://global/EXEC_KEY";
+  process.env.EXEC_KEY = "ks:global/EXEC_KEY";
   const code = await runCli(["exec", "--", "node", script]);
   delete process.env.EXEC_KEY;
 
@@ -220,7 +220,7 @@ test("exec resolves a reference for a bun child", async () => {
     `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(out)}, String(process.env.BUN_KEY));\n`,
   );
 
-  process.env.BUN_KEY = "kerstel://global/BUN_KEY";
+  process.env.BUN_KEY = "ks:global/BUN_KEY";
   const code = await runCli(["exec", "--", "bun", script]);
   delete process.env.BUN_KEY;
 
@@ -270,7 +270,7 @@ test("exec still runs a `bun run <script>` and reaches its child", async () => {
   );
 
   process.chdir(dir);
-  process.env.RUN_KEY = "kerstel://global/RUN_KEY";
+  process.env.RUN_KEY = "ks:global/RUN_KEY";
   const code = await runCli(["exec", "--", "bun", "run", "probe"]);
   delete process.env.RUN_KEY;
 

@@ -43,7 +43,7 @@ test("rewrites references to vault values and never puts a value in the diff", a
   v.setSecret({ scope: "demo-app", key: "API_KEY" }, "sk-live-value");
   const root = project({
     "package.json": WIRED,
-    ".env": "# keep me\r\nAPI_KEY=kerstel://demo-app/API_KEY\r\nPORT=3000\r\n",
+    ".env": "# keep me\r\nAPI_KEY=ks:demo-app\r\nPORT=3000\r\n",
   });
   v.registerProject("demo-app", root);
 
@@ -78,7 +78,7 @@ test("records an unreachable project, an unresolvable reference, and an unused s
   v.registerProject("gone", gone);
   const noPkg = project({});
   v.registerProject("no-pkg", noPkg);
-  const root = project({ "package.json": WIRED, ".env": "MISSING=kerstel://demo-app/MISSING\n" });
+  const root = project({ "package.json": WIRED, ".env": "MISSING=ks:demo-app\n" });
   v.registerProject("demo-app", root);
 
   const plan = planUninstall(v, dataKey);
@@ -87,9 +87,9 @@ test("records an unreachable project, an unresolvable reference, and an unused s
     { name: "no-pkg", rootPath: noPkg, reason: "it has no package.json" },
   ]);
   expect(plan.unresolvable).toEqual([
-    { project: "demo-app", file: join(root, ".env"), reference: "kerstel://demo-app/MISSING" },
+    { project: "demo-app", file: join(root, ".env"), reference: "ks:demo-app/MISSING" },
   ]);
-  expect(plan.unused).toEqual(["kerstel://global/ORPHAN"]);
+  expect(plan.unused).toEqual(["ks:global/ORPHAN"]);
   expect(hasLoss(plan)).toBe(true);
 });
 
@@ -103,7 +103,7 @@ test("a malformed package.json makes the project unreachable", async () => {
 test("a secret used only through a global reference in a project is not unused", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "global", key: "SHARED" }, "shared-value");
-  const root = project({ "package.json": WIRED, ".env": "SHARED=kerstel://global/SHARED\n" });
+  const root = project({ "package.json": WIRED, ".env": "SHARED=ks:global\n" });
   mkdirSync(join(root, "sub"));
   v.registerProject("demo-app", root);
   expect(planUninstall(v, dataKey).unused).toEqual([]);
@@ -115,7 +115,7 @@ test("duplicate keys with different references each get their own restored value
   v.setSecret({ scope: "demo-app", key: "SECRET" }, "secret-value");
   const root = project({
     "package.json": WIRED,
-    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=kerstel://demo-app/SECRET\n",
+    ".env": "API_KEY=ks:demo-app\nAPI_KEY=ks:demo-app/SECRET\n",
   });
   v.registerProject("demo-app", root);
 
@@ -130,7 +130,7 @@ test("duplicate keys on reference and plaintext lines preserve the plaintext", a
   v.setSecret({ scope: "demo-app", key: "API_KEY" }, "restored-value");
   const root = project({
     "package.json": WIRED,
-    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=local-plaintext-value\n",
+    ".env": "API_KEY=ks:demo-app\nAPI_KEY=local-plaintext-value\n",
   });
   v.registerProject("demo-app", root);
 
@@ -143,7 +143,7 @@ test("duplicate keys on reference and plaintext lines preserve the plaintext", a
 test("a key init collapsed across files is flagged as kept only in the backup", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "demo-app", key: "DB_PASSWORD" }, "my-local-pw");
-  const reference = "DB_PASSWORD=kerstel://demo-app/DB_PASSWORD\n";
+  const reference = "DB_PASSWORD=ks:demo-app\n";
   const root = project({ "package.json": WIRED, ".env": reference, ".env.local": reference });
   v.registerProject("demo-app", root);
   // What init backs up: the originals, highest precedence first.
@@ -168,7 +168,7 @@ test("a key init collapsed across files is flagged as kept only in the backup", 
 test("a value collapsed by an earlier init is flagged from its older backup", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "demo-app", key: "API_KEY" }, "kept");
-  const reference = "API_KEY=kerstel://demo-app/API_KEY\n";
+  const reference = "API_KEY=ks:demo-app\n";
   const root = project({ "package.json": WIRED, ".env": reference, ".env.local": reference });
   v.registerProject("demo-app", root);
   // First init collapsed two values; a re-run then backed up files that already held references.
@@ -187,7 +187,7 @@ test("a value collapsed by an earlier init is flagged from its older backup", as
     timestamp: "2026-02-01T00-00-00.000Z",
     files: [
       { name: ".env.local", contents: reference },
-      { name: ".env", contents: "API_KEY=kerstel://other/API_KEY\n" },
+      { name: ".env", contents: "API_KEY=ks:other\n" },
     ],
   });
 
@@ -235,7 +235,7 @@ test("a key assigned twice with different values in one file is flagged", async 
   v.setSecret({ scope: "demo-app", key: "API_KEY" }, "second");
   const root = project({
     "package.json": WIRED,
-    ".env": "API_KEY=kerstel://demo-app/API_KEY\nAPI_KEY=kerstel://demo-app/API_KEY\n",
+    ".env": "API_KEY=ks:demo-app\nAPI_KEY=ks:demo-app\n",
   });
   v.registerProject("demo-app", root);
   const backup = createBackup({
@@ -254,8 +254,8 @@ test("a backup with no conflicting values, or no backup at all, contributes noth
   v.setSecret({ scope: "demo-app", key: "API_KEY" }, "same-value");
   const root = project({
     "package.json": WIRED,
-    ".env": "API_KEY=kerstel://demo-app/API_KEY\n",
-    ".env.local": "API_KEY=kerstel://demo-app/API_KEY\n",
+    ".env": "API_KEY=ks:demo-app\n",
+    ".env.local": "API_KEY=ks:demo-app\n",
   });
   v.registerProject("demo-app", root);
   expect(planUninstall(v, dataKey).backupOnly).toEqual([]);
@@ -277,13 +277,13 @@ test("a backup with no conflicting values, or no backup at all, contributes noth
 test("a value only a move backup's vault section holds is flagged, by key, never by value", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "global", key: "API_KEY" }, "kept-shared");
-  const root = project({ "package.json": WIRED, ".env": "API_KEY=kerstel://global/API_KEY\n" });
+  const root = project({ "package.json": WIRED, ".env": "API_KEY=ks:global\n" });
   v.registerProject("demo-app", root);
   // ks move kept the shared value; the project's own copy was deleted and saved here.
   const backup = createBackup({
     scope: "demo-app",
     dataKey,
-    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    files: [{ name: ".env", contents: "API_KEY=ks:demo-app\n" }],
     vault: [{ scope: "demo-app", key: "API_KEY", value: "moved-away-value" }],
   });
 
@@ -303,13 +303,13 @@ test("a move backup's vault value that a restored file or the vault still holds 
   v.setSecret({ scope: "global", key: "TOKEN" }, "token-value");
   const root = project({
     "package.json": WIRED,
-    ".env": "API_KEY=kerstel://global/API_KEY\nTOKEN=kerstel://global/TOKEN\n",
+    ".env": "API_KEY=ks:global\nTOKEN=ks:global\n",
   });
   v.registerProject("demo-app", root);
   createBackup({
     scope: "demo-app",
     dataKey,
-    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\nTOKEN=kerstel://demo-app/TOKEN\n" }],
+    files: [{ name: ".env", contents: "API_KEY=ks:demo-app\nTOKEN=ks:demo-app\n" }],
     vault: [
       { scope: "demo-app", key: "API_KEY", value: "same-value" },
       { scope: "global", key: "TOKEN", value: "token-value" },
@@ -368,7 +368,7 @@ test.each(QUOTING_CASES)("restoring %s keeps its original quoting byte for byte"
 });
 
 test("restoreLineValue falls back to a quoting that holds the value", () => {
-  const file = parseDotenv("A=kerstel://demo-app/A # note\n");
+  const file = parseDotenv("A=ks:demo-app # note\n");
   restoreLineValue(file, 0, "has space #hash");
   const text = serializeDotenv(file);
   expect(text).toBe('A="has space #hash" # note\n');
@@ -396,8 +396,8 @@ test("the plan restores values in their original quoting", async () => {
 test("both checkouts of one package are restored", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "demo-app", key: "API_TOKEN" }, "tok-aaaa-1111");
-  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
-  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=ks:demo-app\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=ks:demo-app\n" });
   v.registerProject("demo-app", main, "demo-app");
   v.registerProject("demo-app", worktree, "demo-app");
 
@@ -420,8 +420,8 @@ test("both checkouts of one package are restored", async () => {
 test("a checkout whose folder is gone is reported while the other is restored", async () => {
   const v = await freshVault();
   v.setSecret({ scope: "demo-app", key: "API_TOKEN" }, "tok-aaaa-1111");
-  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
-  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=kerstel://demo-app/API_TOKEN\n" });
+  const main = project({ "package.json": WIRED, ".env": "API_TOKEN=ks:demo-app\n" });
+  const worktree = project({ "package.json": WIRED, ".env": "API_TOKEN=ks:demo-app\n" });
   v.registerProject("demo-app", main, "demo-app");
   v.registerProject("demo-app", worktree, "demo-app");
   rmSync(worktree, { recursive: true, force: true });
@@ -462,7 +462,7 @@ test("a move backup is read once per scope, against every checkout's restored fi
   const backup = createBackup({
     scope: "demo-app",
     dataKey,
-    files: [{ name: ".env", contents: "API_KEY=kerstel://demo-app/API_KEY\n" }],
+    files: [{ name: ".env", contents: "API_KEY=ks:demo-app\n" }],
     vault: [
       { scope: "demo-app", key: "API_KEY", value: "moved-to-plain" },
       { scope: "demo-app", key: "GONE", value: "nowhere-else" },

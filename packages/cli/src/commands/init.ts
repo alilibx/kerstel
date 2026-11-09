@@ -22,7 +22,8 @@ import { findShadowedBinaries, shadowedBinaryMessage } from "../init/shadow";
 import { LAUNCHER_DIR, LAUNCHER_RELATIVE_PATH, planLauncher } from "../init/launcher";
 import { GITIGNORE_NOTE, renderDiff, skipReasonText, wirePackageJson } from "../init/wiring";
 import { bold, dim, fail, info, ok, yellow } from "../output";
-import { GLOBAL_SCOPE, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
+import { expandedNames } from "../expansions";
+import { GLOBAL_SCOPE, formatEnvReference, formatReference, isValidScope, parseReference, type SecretRef } from "../reference";
 import { vaultPath } from "../paths";
 import { printBanner } from "../ui/banner";
 import { cliName } from "../ui/cli-name";
@@ -487,7 +488,7 @@ function plaintextKeysRemaining(files: { name: string; contents: string }[]): st
   for (const { name, contents } of files) {
     const file = parseDotenv(contents);
     for (const pair of entries(file)) {
-      if (parseReference(pair.value) !== null) continue;
+      if (parseReference(pair.value, pair.key) !== null) continue;
       if (!remaining.includes(pair.key)) remaining.push(pair.key);
     }
     // A line the parser could not read is a line that was never rewritten.
@@ -518,7 +519,7 @@ function movablePlaintextKeys(files: { name: string; contents: string }[]): stri
   for (const { contents } of files) {
     const file = parseDotenv(contents);
     for (const pair of entries(file)) {
-      if (parseReference(pair.value) !== null) continue;
+      if (parseReference(pair.value, pair.key) !== null) continue;
       if (!remaining.includes(pair.key)) remaining.push(pair.key);
     }
   }
@@ -873,11 +874,15 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
     };
     const decisions = plain.length > 0 ? await decideTargets(plain, scope, fileNames, options, prompter, lookup) : [];
 
+    // A variable another line copies with `${NAME}` keeps its key in the
+    // reference, or the copy would name a different key (spec §5.1).
+    const expanded = expandedNames(loaded.map((entry) => entry.original));
     const references = new Map<string, string>();
     for (const decision of decisions) {
       if (decision.target === "plaintext") continue;
       const target = decision.target === "global" ? GLOBAL_SCOPE : scope;
-      references.set(decision.key.key, formatReference(target, decision.key.key));
+      const name = decision.key.key;
+      references.set(name, formatEnvReference(name, target, name, expanded.has(name)));
     }
     for (const key of referenced) {
       // Already-migrated keys keep their existing reference, which the
@@ -1137,7 +1142,9 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
                 detected,
                 {
                   key: probeDecision.key.key,
-                  reference: formatReference(probeScope, probeDecision.key.key),
+                  // The form init writes, so the probe exercises the hook's
+                  // shorthand: the key comes from the variable's name.
+                  reference: formatEnvReference(probeDecision.key.key, probeScope, probeDecision.key.key),
                   expected,
                 },
                 // Written above when it was not current, so wired means current now.

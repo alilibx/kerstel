@@ -9,14 +9,14 @@ test("describeValue gives shape and size only", () => {
 });
 
 test("maskForDisplay hides plaintext, keeps references, comments, and quoting", () => {
-  const source = '# note\nA=secret-value\nB="quoted secret"\nC=kerstel://demo/C\n';
+  const source = '# note\nA=secret-value\nB="quoted secret"\nC=ks:demo/C\n';
   const masked = maskForDisplay(source);
   expect(masked).not.toContain("secret-value");
   expect(masked).not.toContain("quoted secret");
   expect(masked).toContain("# note\n");
   expect(masked).toContain("A=«12-chars-opaque»\n");
   expect(masked).toContain('B="«13-chars-opaque»"\n');
-  expect(masked).toContain("C=kerstel://demo/C\n");
+  expect(masked).toContain("C=ks:demo/C\n");
 });
 
 test("serializePackageJson keeps indent, CRLF, and a missing final newline", () => {

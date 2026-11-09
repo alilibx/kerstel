@@ -101,11 +101,11 @@ test("init then uninstall restores every file byte for byte and gates the collap
   // below has something to undo.
   const wiredEnv = readFileSync(join(root, ".env"), "utf8");
   for (const key of ["DB_PASSWORD", "API_SECRET", "AUTH_TOKEN", "WEBHOOK_SECRET"]) {
-    expect(wiredEnv).toContain(`kerstel://gnarly-app/${key}`);
+    expect(wiredEnv).toMatch(new RegExp(`${key}=["']?ks:gnarly-app["']?(?:[ \r\n]|$)`));
   }
   const wiredLocal = readFileSync(join(root, ".env.local"), "utf8");
   for (const key of ["STRIPE_KEY", "SHARED_SECRET", "PRIVATE_KEY"]) {
-    expect(wiredLocal).toContain(`kerstel://gnarly-app/${key}`);
+    expect(wiredLocal).toMatch(new RegExp(`${key}=["']?ks:gnarly-app["']?(?:[ \r\n]|$)`));
   }
   expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"dev": "node .kerstel/exec.cjs -- vite"');
   expect(readFileSync(join(root, "package.json"), "utf8")).toContain('"build": "node .kerstel/exec.cjs -- vite build"');

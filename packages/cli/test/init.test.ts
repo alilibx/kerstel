@@ -158,11 +158,11 @@ test("init leaves an unquoted PEM block alone, never prints it, and does not cal
   expect(out).not.toContain("safe to commit");
 
   const after = readFileSync(join(root, ".env"), "utf8");
-  expect(after).toContain("API_KEY=kerstel://demo-app/API_KEY");
+  expect(after).toContain("API_KEY=ks:demo-app");
   expect(after).toContain("PRIVATE_KEY=-----BEGIN PRIVATE KEY-----");
   expect(after).toContain(body);
   expect(after).toContain(tail);
-  expect(after).not.toContain(`${tail.slice(0, -2)}=kerstel://`);
+  expect(after).not.toContain(`${tail.slice(0, -2)}=ks:`);
 });
 
 test("collectKeys applies the documented precedence and records conflicts", () => {
@@ -182,7 +182,7 @@ test("collectKeys applies the documented precedence and records conflicts", () =
 });
 
 test("collectKeys recognises a value that is already a reference", () => {
-  const root = makeProject({ ".env": "A=kerstel://demo/A\nB=plain\n" });
+  const root = makeProject({ ".env": "A=ks:demo\nB=plain\n" });
   const keys = collectKeys(loadEnvFiles(discoverEnvFiles(root)));
   expect(keys.find((k) => k.key === "A")?.reference).toEqual({ scope: "demo", key: "A" });
   expect(keys.find((k) => k.key === "B")?.reference).toBeNull();
@@ -239,8 +239,8 @@ test("init migrates an npm project end to end", async () => {
   const env = readFileSync(join(root, ".env"), "utf8");
   expect(env).toContain("# app config");
   expect(env).toContain("NODE_ENV=development");
-  expect(env).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
-  expect(env).toContain('OPENAI_API_KEY="kerstel://global/OPENAI_API_KEY" # from the console');
+  expect(env).toContain("DATABASE_URL=ks:demo-app");
+  expect(env).toContain('OPENAI_API_KEY="ks:global" # from the console');
   expect(env).not.toContain("sk-project-key");
   expect(env).not.toContain("pw@localhost");
 
@@ -279,9 +279,9 @@ test("init stores the highest-precedence value and points every file at it", asy
 
   expect(await runInit(options(root), new ScriptedPrompter(["each", "project", "accept", "apply"]))).toBe(0);
 
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://conflicted/API_TOKEN\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=ks:conflicted\n");
   expect(readFileSync(join(root, ".env.local"), "utf8")).toBe(
-    "API_TOKEN=kerstel://conflicted/API_TOKEN\n",
+    "API_TOKEN=ks:conflicted\n",
   );
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "conflicted", key: "API_TOKEN" })).toBe("local-value-bbbb");
@@ -354,7 +354,7 @@ test("the teammate flow prompts for references the vault cannot resolve", async 
 
   const root = makeProject({
     "package.json": NPM_PACKAGE,
-    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+    ".env": "SERVICE_TOKEN=ks:demo-app\n",
   });
 
   // One `text` for the missing value, then apply (this fixture's scripts are
@@ -373,7 +373,7 @@ test("--non-interactive with a missing value exits 2 naming the flag", async () 
 
   const root = makeProject({
     "package.json": NPM_PACKAGE,
-    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+    ".env": "SERVICE_TOKEN=ks:demo-app\n",
   });
 
   const captured: string[] = [];
@@ -404,7 +404,7 @@ test("--keep forces plaintext and --global forces the global scope", async () =>
 
   const env = readFileSync(join(root, ".env"), "utf8");
   expect(env).toContain("KEEP_ME=keep-this-value");
-  expect(env).toContain("SHARE_ME=kerstel://global/SHARE_ME");
+  expect(env).toContain("SHARE_ME=ks:global");
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "global", key: "SHARE_ME" })).toBe("share-this-value");
     expect(vault.getSecret({ scope: "demo-app", key: "KEEP_ME" })).toBeNull();
@@ -476,8 +476,8 @@ test("the printed diff masks the plaintext it is about to remove", async () => {
   expect(output).not.toContain("super-secret-plaintext");
   expect(output).not.toContain("another-secret-value");
   // The diff still has to be a real, readable diff of the whole file.
-  expect(output).toContain("SECRET_TOKEN=kerstel://demo-app/SECRET_TOKEN");
-  expect(output).toContain("QUOTED_TOKEN=\"kerstel://global/QUOTED_TOKEN\" # note");
+  expect(output).toContain("SECRET_TOKEN=ks:demo-app");
+  expect(output).toContain("QUOTED_TOKEN=\"ks:global\" # note");
   // The mask tells the user the shape and size and nothing else.
   expect(output).toContain("SECRET_TOKEN=\u00ab22-chars-opaque\u00bb");
   expect(output).toContain("QUOTED_TOKEN=\"\u00ab20-chars-opaque\u00bb\" # note");
@@ -524,8 +524,8 @@ test("the diff masks every value it is not migrating, parsed or not", async () =
   expect(output).not.toContain("pw@localhost");
   expect(output).not.toContain("sk-a-real-looking-key");
   // The diff is still a diff: it names what changed, and masks what did not.
-  expect(output).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
-  expect(output).toContain("OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY");
+  expect(output).toContain("DATABASE_URL=ks:demo-app");
+  expect(output).toContain("OPENAI_API_KEY=ks:global");
   expect(output).toContain("KEEP_ME=«20-chars-opaque»");
 
   // Masking is a DISPLAY concern. The bytes on disk keep the unsupported
@@ -533,8 +533,8 @@ test("the diff masks every value it is not migrating, parsed or not", async () =
   const env = readFileSync(join(root, ".env"), "utf8");
   expect(env).toContain('PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAsecretkeymaterial\n-----END RSA PRIVATE KEY-----"');
   expect(env).toContain("KEEP_ME=kept-plaintext-value");
-  expect(env).toContain("DATABASE_URL=kerstel://demo-app/DATABASE_URL");
-  expect(env).toContain("OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY");
+  expect(env).toContain("DATABASE_URL=ks:demo-app");
+  expect(env).toContain("OPENAI_API_KEY=ks:global");
 });
 
 test("init warns about a key it cannot parse and never prints its value", async () => {
@@ -564,7 +564,7 @@ test("init warns about a key it cannot parse and never prints its value", async 
   // The line the wizard refused is on disk exactly as the developer wrote it.
   const env = readFileSync(join(root, ".env"), "utf8");
   expect(env).toContain("MY-KEY=dash-secret-value");
-  expect(env).toContain("GOOD_KEY=kerstel://demo-app/GOOD_KEY");
+  expect(env).toContain("GOOD_KEY=ks:demo-app");
 });
 
 test("the .gitignore offer names the keys that still hold plaintext", async () => {
@@ -784,7 +784,7 @@ test("--dry-run leaves KERSTEL_HOME exactly as it found it", async () => {
   const home = isolateEnv({ prefix: "init-dry-home" });
   const root = makeProject({
     "package.json": NPM_PACKAGE,
-    ".env": "SECRET_TOKEN=do-not-touch-me\nOTHER=kerstel://demo-app/OTHER\n",
+    ".env": "SECRET_TOKEN=do-not-touch-me\nOTHER=ks:demo-app\n",
   });
 
   expect(await runInit(options(root, ["--dry-run", "--yes"]), new DefaultsPrompter())).toBe(0);
@@ -798,12 +798,12 @@ test("--dry-run lists only the references the vault really lacks", async () => {
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
     ".kerstel/exec.cjs": launcherSource(),
-    ".env": "HAVE_IT=kerstel://demo-app/HAVE_IT\nNEED_IT=kerstel://demo-app/NEED_IT\n",
+    ".env": "HAVE_IT=ks:demo-app\nNEED_IT=ks:demo-app\n",
   });
 
   const out = await captureLog(() => runInit(options(root, ["--dry-run"]), new ScriptedPrompter([])));
-  expect(out).toContain("kerstel://demo-app/NEED_IT");
-  expect(out).not.toContain("kerstel://demo-app/HAVE_IT");
+  expect(out).toContain("ks:demo-app/NEED_IT");
+  expect(out).not.toContain("ks:demo-app/HAVE_IT");
 });
 
 test("the teammate flow stores nothing when the user declines the plan", async () => {
@@ -811,7 +811,7 @@ test("the teammate flow stores nothing when the user declines the plan", async (
 
   const root = makeProject({
     "package.json": NPM_PACKAGE,
-    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+    ".env": "SERVICE_TOKEN=ks:demo-app\n",
   });
 
   const prompter = new ScriptedPrompter(["typed-then-declined", "cancel"]);
@@ -827,7 +827,7 @@ test("the teammate flow stores values when nothing else needs changing", async (
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
     ".kerstel/exec.cjs": launcherSource(),
-    ".env": "SERVICE_TOKEN=kerstel://demo-app/SERVICE_TOKEN\n",
+    ".env": "SERVICE_TOKEN=ks:demo-app\n",
   });
 
   expect(await runInit(options(root), new ScriptedPrompter(["only-value"]))).toBe(0);
@@ -875,7 +875,7 @@ test("--keep naming a key that is already a reference is reported", async () => 
   const root = makeProject({
     "package.json": WIRED_PACKAGE,
     ".kerstel/exec.cjs": launcherSource(),
-    ".env": "ALREADY=kerstel://demo-app/ALREADY\nPLAIN=value\n",
+    ".env": "ALREADY=ks:demo-app\nPLAIN=value\n",
   });
 
   const out = await captureLog(() =>
@@ -938,7 +938,7 @@ test("changing some asks only about the ticked keys", async () => {
   });
   const prompter = new ScriptedPrompter(["change", ["NODE_ENV"], "project", "accept", "apply"]);
   expect(await runInit(options(root), prompter)).toBe(0);
-  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NODE_ENV=kerstel://demo-app/NODE_ENV");
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NODE_ENV=ks:demo-app");
   expect(prompter.asked.filter((q) => q.startsWith("DATABASE_URL"))).toEqual([]);
 });
 
@@ -948,7 +948,7 @@ test("showing the full diff first, then applying", async () => {
   const root = makeProject({ "package.json": NPM_PACKAGE, ".env": "DATABASE_URL=postgres://u:pw@localhost/app\n" });
   const prompter = new ScriptedPrompter(["accept", "diff", "apply"]);
   expect(await runInit(options(root), prompter)).toBe(0);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=kerstel://demo-app/DATABASE_URL\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=ks:demo-app\n");
 });
 
 test("cancelling at any prompt writes nothing", async () => {
@@ -1156,7 +1156,7 @@ test("a second checkout of the same package is registered beside the first", asy
   isolateEnv({ prefix: "init-checkouts" });
   await bootLocalDaemon();
   const main = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
-  const worktree = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=kerstel://api/API_TOKEN\n" });
+  const worktree = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=ks:api\n" });
 
   expect(await runInit({ ...options(main), yes: true }, new DefaultsPrompter())).toBe(0);
   const log = captureConsoleLog();
@@ -1225,10 +1225,10 @@ test("a re-run without --scope keeps the scope this folder was registered under"
   await bootLocalDaemon();
   const root = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-aaaa-1111\n" });
   expect(await runInit({ ...options(root, ["--scope", "custom"]), yes: true }, new DefaultsPrompter())).toBe(0);
-  writeFileSync(join(root, ".env"), "API_TOKEN=kerstel://custom/API_TOKEN\nNEW_TOKEN=tok-dddd-4444\n");
+  writeFileSync(join(root, ".env"), "API_TOKEN=ks:custom\nNEW_TOKEN=tok-dddd-4444\n");
   expect(await runInit({ ...options(root), yes: true }, new DefaultsPrompter())).toBe(0);
 
-  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NEW_TOKEN=kerstel://custom/NEW_TOKEN");
+  expect(readFileSync(join(root, ".env"), "utf8")).toContain("NEW_TOKEN=ks:custom");
   await openTestVault((vault) => {
     expect(vault.listProjects().map((p) => p.name)).toEqual(["custom"]);
   });
@@ -1256,7 +1256,7 @@ test("a value the vault already holds becomes a reference without being stored a
   // Nothing was stored: the run only registered the folder.
   expect(out).toContain("Registered api with the vault.");
   expect(out).not.toMatch(/Stored \d+ secret/);
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=ks:api\n");
 });
 
 test("a differing value keeps the vault's by default, and the file's on request", async () => {
@@ -1270,7 +1270,7 @@ test("a differing value keeps the vault's by default, and the file's on request"
   expect(first.out).toContain("differs from the vault");
   expect(first.out).not.toContain("tok-file-1111");
   expect(first.out).not.toContain("tok-vault-0000");
-  expect(readFileSync(join(kept, ".env"), "utf8")).toBe("API_TOKEN=kerstel://api/API_TOKEN\n");
+  expect(readFileSync(join(kept, ".env"), "utf8")).toBe("API_TOKEN=ks:api\n");
   await openTestVault((vault) => expect(vault.getSecret({ scope: "api", key: "API_TOKEN" })).toBe("tok-vault-0000"));
 
   const used = makeProject({ "package.json": API_PACKAGE("@acme/api"), ".env": "API_TOKEN=tok-file-2222\n" });
@@ -1332,7 +1332,7 @@ test("an existing global entry sets the destination, and --keep still wins", asy
 
   expect((await initQuietly(root, ["--yes", "--keep", "KEPT_TOKEN"], new DefaultsPrompter())).code).toBe(0);
   const env = readFileSync(join(root, ".env"), "utf8");
-  expect(env).toContain("SHARED_TOKEN=kerstel://global/SHARED_TOKEN");
+  expect(env).toContain("SHARED_TOKEN=ks:global");
   expect(env).toContain("KEPT_TOKEN=tok-kept-6666");
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "api", key: "SHARED_TOKEN" })).toBeNull();
@@ -1364,8 +1364,8 @@ test("a shared value that differs is left alone, and the key stays with this pro
   expect(out).not.toContain("sk-shared-8888");
 
   const env = readFileSync(join(root, ".env"), "utf8");
-  expect(env).toContain("DATABASE_URL=kerstel://api/DATABASE_URL");
-  expect(env).toContain("STRIPE_SECRET_KEY=kerstel://api/STRIPE_SECRET_KEY");
+  expect(env).toContain("DATABASE_URL=ks:api");
+  expect(env).toContain("STRIPE_SECRET_KEY=ks:api");
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "global", key: "DATABASE_URL" })).toBe("postgres://u:pw-other@db.example/other");
     expect(vault.getSecret({ scope: "global", key: "STRIPE_SECRET_KEY" })).toBe("sk-shared-8888");
@@ -1401,10 +1401,10 @@ test("choosing the shared vault for a differing key still asks which value stays
 
   const prompter = new ScriptedPrompter(["keep", "apply"]);
   expect((await initQuietly(root, ["--global", "DATABASE_URL"], prompter)).code).toBe(0);
-  expect(prompter.asked.some((q) => q.includes("kerstel://global/DATABASE_URL already holds a different value"))).toBe(
+  expect(prompter.asked.some((q) => q.includes("ks:global/DATABASE_URL already holds a different value"))).toBe(
     true,
   );
-  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=kerstel://global/DATABASE_URL\n");
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("DATABASE_URL=ks:global\n");
   await openTestVault((vault) => {
     expect(vault.getSecret({ scope: "global", key: "DATABASE_URL" })).toBe("postgres://shared-db");
     expect(vault.getSecret({ scope: "api", key: "DATABASE_URL" })).toBeNull();
@@ -1423,4 +1423,49 @@ test("--dry-run marks a key the vault holds without comparing values", async () 
   expect(row).not.toContain("already in the vault");
   expect(out).not.toContain("differs from the vault");
   expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_TOKEN=tok-file-1111\n");
+});
+
+test("init writes ks:<scope>, and the full form for a variable another line expands", async () => {
+  isolateEnv({ prefix: "init-expand" });
+  await bootLocalDaemon();
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    "package-lock.json": "{}",
+    ".env": [
+      "OPENAI_API_KEY=sk-live-abcdefghijklmnop1234",
+      "OPENAI_KEY=${OPENAI_API_KEY}",
+      "STRIPE_SECRET_KEY=sk_test_abcdefghijklmnop5678",
+      "",
+    ].join("\n"),
+  });
+
+  expect(await runInit(options(root, ["--yes", "--non-interactive", "--keep", "OPENAI_KEY"]), new DefaultsPrompter())).toBe(0);
+
+  const env = readFileSync(join(root, ".env"), "utf8");
+  // OPENAI_KEY=${OPENAI_API_KEY} copies the reference's text, so a bare
+  // ks:<scope> would make OPENAI_KEY look up its own name.
+  expect(env).toMatch(/^OPENAI_API_KEY=ks:[a-z-]+\/OPENAI_API_KEY$/m);
+  expect(env).toContain("OPENAI_KEY=${OPENAI_API_KEY}\n");
+  expect(env).toMatch(/^STRIPE_SECRET_KEY=ks:[a-z-]+$/m);
+  expect(env).not.toContain("sk-live-");
+  expect(env).not.toContain("sk_test_");
+});
+
+test("a re-run of init leaves a kerstel:// line from Kerstel 0.1 as it is", async () => {
+  isolateEnv({ prefix: "init-legacy" });
+  await bootLocalDaemon();
+  await openTestVault((vault) => vault.setSecret({ scope: "demo-app", key: "LEGACY_TOKEN" }, "legacy-value"));
+
+  const root = makeProject({
+    "package.json": NPM_PACKAGE,
+    "package-lock.json": "{}",
+    ".env": "LEGACY_TOKEN=kerstel://demo-app/LEGACY_TOKEN\nNEW_TOKEN=tok_abcdefghijklmnop9012\n",
+  });
+
+  expect(await runInit(options(root, ["--yes", "--non-interactive"]), new DefaultsPrompter())).toBe(0);
+
+  const env = readFileSync(join(root, ".env"), "utf8");
+  expect(env).toContain("LEGACY_TOKEN=kerstel://demo-app/LEGACY_TOKEN\n");
+  expect(env).toMatch(/^NEW_TOKEN=ks:[a-z-]+$/m);
 });

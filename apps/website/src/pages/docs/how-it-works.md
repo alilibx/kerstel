@@ -12,11 +12,22 @@ order: 3
 
 A reference looks like this:
 
-```
-kerstel://<scope>/<KEY>
+```bash
+OPENAI_API_KEY=ks:global              # the key in global named like the variable
+OPENAI_KEY=ks:global/OPENAI_API_KEY   # a key with a different name
 ```
 
-The scope is either `global` or a project name. A reference names exactly one scope and resolves there or fails. There is no fallback chain: `kerstel://myapp/API_KEY` never quietly picks up `global/API_KEY`. If you want a project to use a shared value, point the project's `.env` at the global reference directly.
+`ks:<scope>` takes its key from the name of the variable it is assigned to, and `ks:<scope>/<KEY>` names the key itself. `kerstel init` writes the short form when the names match. `KS:` works too; Kerstel writes it in lowercase.
+
+The scope is either `global` or a project name. A reference names exactly one scope and resolves there or fails. There is no fallback chain: `ks:myapp/API_KEY` never quietly picks up `global/API_KEY`. If you want a project to use a shared value, point the project's `.env` at the global reference directly.
+
+### Copying a reference to another variable
+
+Copy a reference with its key, as `ks:global/OPENAI_API_KEY`, never as the bare `ks:global`. The short form means "the key named like this variable", so under another name it means another key. This matters where a reference is copied as text before Kerstel sees it: `${OPENAI_API_KEY}` expansion in an env file (Next.js, `dotenv-expand` and Docker Compose all do this), or `export OPENAI_KEY=$OPENAI_API_KEY` in a shell. `kerstel init` and `kerstel move` already write the full form for any variable another line of your env files expands. If one slips through, the error says which key Kerstel looked for and how to fix the line.
+
+### References from Kerstel 0.1
+
+Kerstel 0.1 wrote `kerstel://<scope>/<KEY>`. Those lines keep working and are never rewritten for you; `kerstel move` shortens a line when it rewrites it anyway. Kerstel 0.1 reads only that form, so a project with `ks:` references needs Kerstel 0.2.0 or later on every machine that runs it. On an older one, the app receives the text `ks:global` in place of the value. `kerstel doctor` shows how many references a project has in each form.
 
 ## The vault
 
@@ -42,7 +53,7 @@ kerstel run -- next build
 
 ### The runtime hook
 
-The hook is a small, dependency-free preload that runs before your app code. It replaces `process.env` with a proxy. When code reads a key whose value starts with `kerstel://`, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun's native `.env` loader, Next.js env loading, or your shell.
+The hook is a small, dependency-free preload that runs before your app code. It replaces `process.env` with a proxy. When code reads a key whose value is a reference, the hook asks the daemon, memoizes the answer for the life of the process, and returns the real value. Nothing on disk changes, and the hook does not care how the reference got into the environment: dotenv, Bun's native `.env` loader, Next.js env loading, or your shell.
 
 `kerstel init` wires this up for you. Every script in `package.json` becomes `kerstel exec -- <your original command>` — npm lifecycle scripts such as `postinstall` and `prepare` are never wrapped, because that would make `npm install` itself depend on Kerstel . A Bun project is wired the same way: `kerstel exec` passes `--preload` to `bun` itself, so nothing per-machine is written into the project. Kerstel writes the hook's files to `~/.kerstel/hook` the first time any `kerstel` command runs, and the file everything points at is `~/.kerstel/hook/preload.cjs`.
 

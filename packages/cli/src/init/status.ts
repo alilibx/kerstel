@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { formatReference, type SecretRef } from "../reference";
+import { formatReference, referenceSyntax, type SecretRef } from "../reference";
 import { collectKeys, type LoadedEnvFile } from "./collect";
 import { detectProject, type EnvFileInfo, type PackageManager, type Runtime } from "./detect";
 import { parseDotenv } from "./dotenv-file";
@@ -33,7 +33,8 @@ export interface ProjectStatus {
   };
   /** The committed launcher, or null when no script is wired in any form, so there is nothing to check. */
   launcher: LauncherStatus | null;
-  references: { total: number; resolvable: number; unresolved: string[] };
+  /** `long` counts references still in the 0.1 `kerstel://` form; the rest are `ks:`. */
+  references: { total: number; resolvable: number; unresolved: string[]; long: number };
   /** Env files that exist but could not be read, by name. */
   unreadable: string[];
   /** `node_modules/.bin/kerstel` and friends in this project or an ancestor, absolute. See shadow.ts. */
@@ -118,10 +119,12 @@ export function projectStatus(
   const { loaded, unreadable } = readEnvFiles(detected.envFiles);
   let total = 0;
   let resolvable = 0;
+  let long = 0;
   const unresolved: string[] = [];
   for (const key of collectKeys(loaded)) {
     if (!key.reference) continue;
     total += 1;
+    if (referenceSyntax(key.value, key.key) === "long") long += 1;
     if (vault.getSecret(key.reference) !== null) resolvable += 1;
     else unresolved.push(formatReference(key.reference.scope, key.reference.key));
   }
@@ -134,7 +137,7 @@ export function projectStatus(
     envFiles: detected.envFiles.map((file) => file.name),
     scripts: { wrappable: wired + wiring.rewrites.length, wired, oldForm, partlyWired, skipped },
     launcher: anyWired ? launcherStatus(detected.root) : null,
-    references: { total, resolvable, unresolved },
+    references: { total, resolvable, unresolved, long },
     unreadable,
     shadowed: findShadowedBinaries(detected.root),
     otherCheckouts,

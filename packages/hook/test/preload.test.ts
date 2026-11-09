@@ -148,7 +148,7 @@ test("the built hook resolves from a directory outside the repo", async () => {
     script,
     [],
     {
-      OUTSIDE_KEY: "kerstel://global/OUTSIDE_KEY",
+      OUTSIDE_KEY: "ks:global/OUTSIDE_KEY",
       KERSTEL_TIMEOUT_MS: "3000",
       KERSTEL_WORKER_MARKER: marker,
     },
@@ -167,7 +167,7 @@ test("node resolves a reference through process.env", async () => {
   vault.setSecret({ scope: "global", key: "OPENAI_API_KEY" }, "sk-resolved-1");
 
   const { stdout } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["OPENAI_API_KEY"], {
-    OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY",
+    OPENAI_API_KEY: "ks:global/OPENAI_API_KEY",
   });
   expect(stdout).toBe("sk-resolved-1");
 });
@@ -177,9 +177,54 @@ test("bun resolves a reference through process.env", async () => {
   vault.setSecret({ scope: "global", key: "OPENAI_API_KEY" }, "sk-resolved-bun");
 
   const { stdout } = await runHooked("bun", sock, join(FIXTURES, "read-env.cjs"), ["OPENAI_API_KEY"], {
-    OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY",
+    OPENAI_API_KEY: "ks:global/OPENAI_API_KEY",
   });
   expect(stdout).toBe("sk-resolved-bun");
+});
+
+test("the shorthand ks:<scope> resolves the key named like the variable, under node and bun", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "SHORT_KEY" }, "short-value");
+
+  for (const runtime of ["node", "bun"] as const) {
+    const { stdout } = await runHooked(runtime, sock, join(FIXTURES, "read-env.cjs"), ["SHORT_KEY"], {
+      SHORT_KEY: "ks:global",
+    });
+    expect(stdout).toBe("short-value");
+  }
+});
+
+test("bun resolves the shorthand through Bun.env too", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "my-app", key: "BUN_SHORT" }, "bun-short-value");
+
+  const { stdout, stderr } = await runHooked("bun", sock, join(FIXTURES, "read-bun-env.cjs"), ["BUN_SHORT"], {
+    BUN_SHORT: "ks:my-app",
+  });
+  expect(stdout).toBe("bun-short-value|bun-short-value");
+  expect(stderr).toBe("");
+});
+
+test("a kerstel:// reference written by Kerstel 0.1 still resolves", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "OLD_FORM" }, "old-form-value");
+
+  const { stdout } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["OLD_FORM"], {
+    OLD_FORM: "kerstel://global/OLD_FORM",
+  });
+  expect(stdout).toBe("old-form-value");
+});
+
+test("a shorthand copied under another name says why it found nothing", async () => {
+  const { sock, vault } = await boot();
+  // B=${A} in an env file copies A's text, so B looks up global/B, not global/A.
+  vault.setSecret({ scope: "global", key: "A" }, "a-value");
+  const { stdout, code } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["B"], { B: "ks:global" });
+  expect(stdout).toContain("ERROR:not_found");
+  expect(stdout).toContain("B is ks:global, so Kerstel looked for global/B.");
+  expect(stdout).toContain("write ks:global/<KEY>");
+  expect(stdout).not.toContain("a-value");
+  expect(code).toBe(3);
 });
 
 test("plain values pass through untouched", async () => {
@@ -199,10 +244,10 @@ test("an undefined variable stays undefined", async () => {
 test("a missing secret throws an actionable error naming the reference", async () => {
   const { sock } = await boot();
   const { stdout, code } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["GONE"], {
-    GONE: "kerstel://global/GONE",
+    GONE: "ks:global/GONE",
   });
   expect(stdout).toContain("ERROR:not_found");
-  expect(stdout).toContain("kerstel://global/GONE");
+  expect(stdout).toContain("ks:global/GONE");
   expect(code).toBe(3);
 });
 
@@ -210,9 +255,9 @@ test("the reference string is never returned to application code", async () => {
   const { sock, vault } = await boot();
   vault.setSecret({ scope: "global", key: "K" }, "real");
   const { stdout } = await runHooked("node", sock, join(FIXTURES, "read-env.cjs"), ["K"], {
-    K: "kerstel://global/K",
+    K: "ks:global/K",
   });
-  expect(stdout).not.toContain("kerstel://");
+  expect(stdout).not.toContain("ks:");
   expect(stdout).toBe("real");
 });
 
@@ -226,7 +271,7 @@ test("an unhooked grandchild still gets the resolved value, not the reference", 
   // building the grandchild's env -- proving resolution happens at envp
   // construction time, not by propagating the reference downstream.
   const { stdout } = await runHooked("node", sock, join(FIXTURES, "spawn-child.cjs"), ["CHILD_KEY"], {
-    CHILD_KEY: "kerstel://global/CHILD_KEY",
+    CHILD_KEY: "ks:global/CHILD_KEY",
   });
   expect(stdout).toBe("child-value");
 });
@@ -245,7 +290,7 @@ test.skipIf(process.platform === "win32")(
     vault.setSecret({ scope: "global", key: "CHILD_KEY" }, "implicit-envp-value");
 
     const { stdout } = await runHooked("node", sock, join(FIXTURES, "spawn-implicit.cjs"), ["CHILD_KEY"], {
-      CHILD_KEY: "kerstel://global/CHILD_KEY",
+      CHILD_KEY: "ks:global/CHILD_KEY",
     });
     expect(stdout).toBe("implicit-envp-value");
   },
@@ -267,7 +312,7 @@ test("repeated reads of the same key hit the daemon once", async () => {
     "for (let i = 0; i < 3; i++) process.stdout.write(process.env.CACHED);",
   );
 
-  const { stdout } = await runHooked("node", sock, script, [], { CACHED: "kerstel://global/CACHED" });
+  const { stdout } = await runHooked("node", sock, script, [], { CACHED: "ks:global/CACHED" });
   expect(stdout).toBe("cached-valuecached-valuecached-value");
   expect(vault.listAudit(10).filter((e) => e.key === "CACHED").length).toBe(1);
 });
@@ -284,7 +329,7 @@ test("Object.keys and spread still see every variable", async () => {
   );
 
   const { stdout } = await runHooked("node", sock, script, [], {
-    SPREAD_KEY: "kerstel://global/SPREAD_KEY",
+    SPREAD_KEY: "ks:global/SPREAD_KEY",
   });
   expect(stdout).toBe("true:spread-value");
 });
@@ -299,7 +344,7 @@ test("bun resolves a reference through Bun.env", async () => {
   vault.setSecret({ scope: "global", key: "BUN_ENV_KEY" }, "bun-env-value");
 
   const { stdout, stderr } = await runHooked("bun", sock, join(FIXTURES, "read-bun-env.cjs"), ["BUN_ENV_KEY"], {
-    BUN_ENV_KEY: "kerstel://global/BUN_ENV_KEY",
+    BUN_ENV_KEY: "ks:global/BUN_ENV_KEY",
   });
   expect(stdout).toBe("bun-env-value|bun-env-value");
   expect(stderr).toBe("");
@@ -309,9 +354,9 @@ test("under bun, an unresolvable reference stays a reference, warns once, and st
   const { sock } = await boot();
 
   const { stdout, stderr, code } = await runHooked("bun", sock, join(FIXTURES, "read-bun-env.cjs"), ["MISSING_BUN"], {
-    MISSING_BUN: "kerstel://global/MISSING_BUN",
+    MISSING_BUN: "ks:global/MISSING_BUN",
   });
-  expect(stdout).toBe("kerstel://global/MISSING_BUN|ERROR:not_found");
+  expect(stdout).toBe("ks:global/MISSING_BUN|ERROR:not_found");
   expect(stderr).toContain("MISSING_BUN");
   expect(stderr).toContain("kerstel doctor");
   expect(stderr.split("Warning:").length - 1).toBe(1);
@@ -322,7 +367,7 @@ test("under node, an unresolvable reference that is never read costs nothing", a
   const { sock } = await boot();
 
   const { stdout, stderr, code } = await runHooked("node", sock, join(FIXTURES, "read-bun-env.cjs"), ["MISSING_NODE"], {
-    MISSING_NODE: "kerstel://global/MISSING_NODE",
+    MISSING_NODE: "ks:global/MISSING_NODE",
   });
   expect(stdout).toBe("NOBUN");
   expect(stderr).toBe("");
@@ -335,7 +380,7 @@ test("a reference rewritten through Bun.env is not served from the cache", async
   vault.setSecret({ scope: "global", key: "SWAP_B" }, "value-b");
 
   const { stdout } = await runHooked("bun", sock, join(FIXTURES, "swap-bun-env.cjs"), [], {
-    SWAP: "kerstel://global/SWAP_A",
+    SWAP: "ks:global/SWAP_A",
   });
   expect(stdout).toBe("value-a|value-b");
 });
@@ -346,9 +391,9 @@ test("under bun, an unreachable daemon stops eager resolution after one warning"
     join(mkdtempSync(join(tmpdir(), "kerstel-nosock-")), "none.sock"),
     join(FIXTURES, "read-bun-env.cjs"),
     ["FIRST"],
-    { FIRST: "kerstel://global/FIRST", SECOND: "kerstel://global/SECOND", THIRD: "kerstel://global/THIRD" },
+    { FIRST: "ks:global/FIRST", SECOND: "ks:global/SECOND", THIRD: "ks:global/THIRD" },
   );
-  expect(stdout).toBe("kerstel://global/FIRST|ERROR:unreachable");
+  expect(stdout).toBe("ks:global/FIRST|ERROR:unreachable");
   expect(stderr.split("Warning:").length - 1).toBe(1);
   expect(stderr).toContain("left for process.env");
   expect(code).toBe(0);

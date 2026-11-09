@@ -8,7 +8,8 @@ import {
   setLineValue,
   type DotenvPair,
 } from "../init/dotenv-file";
-import { GLOBAL_SCOPE, formatReference, parseReference, type SecretRef } from "../reference";
+import { expandedNames } from "../expansions";
+import { GLOBAL_SCOPE, formatEnvReference, formatReference, parseReference, type SecretRef } from "../reference";
 import type { GitFileStatus } from "./git";
 import type { Place, ScannedRow } from "./scan";
 
@@ -170,6 +171,7 @@ function wouldRestorePlainly(line: DotenvPair, value: string): boolean {
 }
 
 export function planMove(input: PlanInput): MovePlan {
+  const expanded = expandedNames(input.loaded.map((entry) => entry.original));
   const plan: MovePlan = {
     moves: [],
     files: [],
@@ -279,7 +281,9 @@ export function planMove(input: PlanInput): MovePlan {
       }
     }
 
-    const text = toRef ? refId(toRef) : value;
+    // The form init writes, with the same exception: a variable another line
+    // copies with `${NAME}` keeps its key in the reference (spec §5.1).
+    const text = toRef ? formatEnvReference(row.key, toRef.scope, toRef.key, expanded.has(row.key)) : value;
     for (const name of row.files) {
       const file = byName.get(name)!;
       file.lines.forEach((line, i) => {
@@ -316,7 +320,7 @@ export function planMove(input: PlanInput): MovePlan {
       plan.files.push({ name: entry.info.name, path: entry.info.path, before: entry.original, after });
     }
     for (const pair of entries(file)) {
-      const ref = parseReference(pair.value);
+      const ref = parseReference(pair.value, pair.key);
       if (ref) stillReferenced.add(refId(ref));
     }
   }

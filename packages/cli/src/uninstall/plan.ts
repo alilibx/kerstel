@@ -210,7 +210,7 @@ function collapsedValues(
   // be lost. A value any checkout's same-named file gets back is not lost either.
   const loses = (entry: LoadedEnvFile, key: string) => {
     const after = new Set(restored.flatMap((checkout) => [...valuesOf(checkout.get(entry.info.name) ?? "", key)]));
-    return [...valuesOf(entry.original, key)].some((value) => !parseReference(value) && !after.has(value));
+    return [...valuesOf(entry.original, key)].some((value) => !parseReference(value, key) && !after.has(value));
   };
 
   // Report files in backup (precedence) order, not discovery order.
@@ -271,7 +271,7 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       for (let i = 0; i < copy.lines.length; i += 1) {
         const line = copy.lines[i];
         if (!line || line.kind !== "pair") continue;
-        const ref = parseReference(line.value);
+        const ref = parseReference(line.value, line.key);
         if (!ref) continue;
         const reference = formatReference(ref.scope, ref.key);
         const value = vault.getSecret(ref);

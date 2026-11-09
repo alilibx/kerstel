@@ -23,7 +23,7 @@ export function referencesInCheckouts(roots: string[]): Map<string, string> {
     }
     for (const entry of loaded) {
       for (const pair of entries(entry.file)) {
-        const ref = parseReference(pair.value);
+        const ref = parseReference(pair.value, pair.key);
         if (ref && !found.has(refId(ref))) found.set(refId(ref), root);
       }
     }

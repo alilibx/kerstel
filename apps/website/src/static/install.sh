@@ -318,7 +318,7 @@ main() {
 
   say ""
   say "  $(bold "What Kerstel does")"
-  say "  Your .env files keep only kerstel:// references. The real values live in"
+  say "  Your .env files keep only ks: references. The real values live in"
   say "  an encrypted vault on this machine, and your scripts read them as usual."
   say ""
   say "  $(bold "Next steps")"

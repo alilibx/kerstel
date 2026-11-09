@@ -63,7 +63,7 @@ test("the compiled binary stores and lists a secret", async () => {
   expect((await kerstel(["set", "global/OPENAI_API_KEY", "--value", "sk-e2e"])).code).toBe(0);
 
   const list = await kerstel(["ls"]);
-  expect(list.stdout).toContain("kerstel://global/OPENAI_API_KEY");
+  expect(list.stdout).toContain("ks:global/OPENAI_API_KEY");
   expect(list.stdout).not.toContain("sk-e2e");
 });
 
@@ -96,7 +96,7 @@ test("a node app reads the real secret from a reference-only .env", async () => 
   const proc = Bun.spawn(["node", "--require", preload, app], {
     env: env({
       // This is exactly what a committed .env would contain.
-      OPENAI_API_KEY: "kerstel://global/OPENAI_API_KEY",
+      OPENAI_API_KEY: "ks:global/OPENAI_API_KEY",
       KERSTEL_SOCKET: socket,
       // The path, as `kerstel exec` sets it. The value stays in the 0600 file.
       KERSTEL_TOKEN_FILE: join(home, "session.token"),
@@ -120,7 +120,7 @@ test("kerstel run resolves references for an unhooked command", async () => {
   await Bun.write(app, "process.stdout.write(process.env.RUN_KEY);");
 
   const proc = Bun.spawn([BINARY, "run", "--", "node", app], {
-    env: env({ RUN_KEY: "kerstel://global/RUN_KEY" }),
+    env: env({ RUN_KEY: "ks:global/RUN_KEY" }),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -159,7 +159,7 @@ test("resolve starts the daemon by itself and audits the resolution", async () =
   // detached child before it can answer.
   expect((await kerstel(["daemon", "status"])).code).toBe(1);
 
-  const resolved = await kerstel(["resolve", "kerstel://global/AUTO"]);
+  const resolved = await kerstel(["resolve", "ks:global/AUTO"]);
   expect(resolved.code).toBe(0);
   expect(resolved.stdout.trim()).toBe("auto-started");
 
@@ -181,7 +181,7 @@ test("the daemon that resolve starts does not inherit BUN_OPTIONS", async () => 
   );
 
   expect((await kerstel(["daemon", "status"])).code).toBe(1);
-  const resolved = await kerstel(["resolve", "kerstel://global/SCRUB"], { BUN_OPTIONS: `--preload ${preload}` });
+  const resolved = await kerstel(["resolve", "ks:global/SCRUB"], { BUN_OPTIONS: `--preload ${preload}` });
   expect(resolved.code).toBe(0);
   expect(resolved.stdout.trim()).toBe("scrubbed");
   expect((await kerstel(["daemon", "status"])).code).toBe(0);
@@ -219,7 +219,7 @@ test("a foreground daemon serve re-executes itself without BUN_OPTIONS", async (
   }
   expect(up).toBe(true);
 
-  const resolved = await kerstel(["resolve", "kerstel://global/FG"]);
+  const resolved = await kerstel(["resolve", "ks:global/FG"]);
   expect(resolved.stdout.trim()).toBe("foreground");
 
   expect((await kerstel(["daemon", "stop"])).code).toBe(0);
@@ -260,7 +260,7 @@ test("the session token is minted per daemon lifetime and gone while none runs",
   const run = () =>
     Bun.spawn(["node", "--require", join(home, "hook", "preload.cjs"), app], {
       env: env({
-        T: "kerstel://global/T",
+        T: "ks:global/T",
         KERSTEL_SOCKET: join(home, "kerstel.sock"),
         KERSTEL_TOKEN_FILE: tokenFile,
         KERSTEL_HOOK_DIR: join(home, "hook"),
@@ -294,7 +294,7 @@ test("a project's committed .env cannot configure Kerstel itself", async () => {
       // parsers agreeing. A daemon that never relocks.
       "ATTACK=9999999999",
       "KERSTEL_IDLE_MS=$ATTACK",
-      "P=kerstel://global/P",
+      "P=ks:global",
       "",
     ].join("\n"),
   );
@@ -323,7 +323,7 @@ test("a project's committed .env cannot configure Kerstel itself", async () => {
 
   expect(code).toBe(0);
   // The real home answered.
-  expect(stdout).toContain("kerstel://global/P");
+  expect(stdout).toContain("ks:global/P");
   // The injected setting was dropped, and the file named.
   expect(stderr).toContain("KERSTEL_IDLE_MS");
   expect(stderr).toContain(".env");
@@ -382,7 +382,7 @@ test.if(process.platform !== "win32")(
     // secret it is migrating.
     expect(initOut).not.toContain("super-secret-e2e");
 
-    expect(await Bun.file(join(project, ".env")).text()).toBe("APP_KEY=kerstel://e2e-demo/APP_KEY\n");
+    expect(await Bun.file(join(project, ".env")).text()).toBe("APP_KEY=ks:e2e-demo\n");
 
     const rewritten = JSON.parse(await Bun.file(join(project, "package.json")).text()) as {
       scripts: Record<string, string>;
@@ -395,7 +395,7 @@ test.if(process.platform !== "win32")(
     const run = Bun.spawn(["sh", "-c", rewritten.scripts.printkey as string], {
       cwd: project,
       env: env({
-        APP_KEY: "kerstel://e2e-demo/APP_KEY",
+        APP_KEY: "ks:e2e-demo/APP_KEY",
         PATH: `${dirname(BINARY)}:${process.env.PATH ?? ""}`,
       }),
       stdout: "pipe",
@@ -439,7 +439,7 @@ test("the binary uninstalls: the project gets its values back and Kerstel is gon
   };
 
   expect((await run(["init", "--yes", "--non-interactive", "--keep", "PORT"])).code).toBe(0);
-  expect(await Bun.file(join(project, ".env")).text()).toContain("kerstel://e2e-uninstall/APP_KEY");
+  expect(await Bun.file(join(project, ".env")).text()).toContain("APP_KEY=ks:e2e-uninstall\n");
 
   const result = await run(["uninstall", "--yes"]);
   expect(result.code).toBe(0);
@@ -467,7 +467,7 @@ test("a wired compound script runs every command hooked, with its leading assign
       2,
     ),
   );
-  writeFileSync(join(project, ".env"), "COMPOUND_KEY=kerstel://global/COMPOUND_KEY\n");
+  writeFileSync(join(project, ".env"), "COMPOUND_KEY=ks:global\n");
   mkdirSync(join(project, ".kerstel"));
   writeFileSync(join(project, ".kerstel", "exec.cjs"), launcherSource());
   writeFileSync(join(project, "a.cjs"), 'process.stdout.write(`${process.env.MARK}:${process.env.COMPOUND_KEY}\\n`);');

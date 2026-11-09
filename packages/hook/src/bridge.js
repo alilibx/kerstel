@@ -126,7 +126,7 @@ function createBridge(options) {
             payload.code === "unreachable"
               ? " Is the Kerstel daemon running? Start it with `kerstel daemon start`."
               : "";
-          const error = new Error(`Kerstel: ${payload.message} (kerstel://${scope}/${key}).${hint}`);
+          const error = new Error(`Kerstel: ${payload.message} (ks:${scope}/${key}).${hint}`);
           error.code = payload.code;
           throw error;
         }
@@ -136,7 +136,7 @@ function createBridge(options) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
         const error = new Error(
-          `Kerstel: timed out resolving kerstel://${scope}/${key}. Is the daemon running? Try \`kerstel doctor\`.`,
+          `Kerstel: timed out resolving ks:${scope}/${key}. Is the daemon running? Try \`kerstel doctor\`.`,
         );
         error.code = "timeout";
         throw error;

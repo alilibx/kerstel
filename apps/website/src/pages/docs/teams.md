@@ -14,9 +14,9 @@ Once every value in `.env` is a reference, the file contains nothing sensitive. 
 
 ```bash
 # .env, committed
-DATABASE_URL=kerstel://myapp/DATABASE_URL
-OPENAI_API_KEY=kerstel://global/OPENAI_API_KEY
-STRIPE_SECRET_KEY=kerstel://myapp/STRIPE_SECRET_KEY
+DATABASE_URL=ks:myapp
+OPENAI_API_KEY=ks:global
+STRIPE_SECRET_KEY=ks:myapp
 ```
 
 If `.env` is in `.gitignore`, remove it there only after every value is a reference. `kerstel init` offers to do exactly that at the end of a migration — it defaults to no, and it names any key that still holds a plaintext value instead of calling the files safe to commit. `git grep "=sk-"` and similar checks stay useful as a guard.
