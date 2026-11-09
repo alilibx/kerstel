@@ -266,7 +266,8 @@ function summary(report: ScanReport, options: RenderOptions, theme: Theme, home:
     out.push(...list(by.backup.map(({ file }) => tilde(file.path, home))));
   }
   if (by.init.length > 0) {
-    const projects = [...new Set(by.init.map(({ project }) => project.path))];
+    // A workspace member is set up by one `init` at its root (monorepo spec §4).
+    const projects = [...new Set(by.init.map(({ project }) => project.workspace ?? project.path))];
     const n = projects.length;
     out.push(
       `${warn}${plural(n, "project")} ${n === 1 ? "holds" : "hold"} secrets in plain text. Run ${options.cli} init in ${n === 1 ? "it" : "each"}:`,

@@ -129,7 +129,7 @@ scripts  ~/src/scripts  no package.json
 
 - Counts only by default. `--keys` adds the key names and line numbers under each file, never values.
 - A project with nothing to do (only references that resolve, config, and templates without secrets) collapses into the "more projects" line. `--all` lists it.
-- A workspace with plaintext gets one `kerstel init` line at its root, which #34 makes set up every package. (Between this PR and #34 landing, the line names each package folder instead.)
+- A workspace with plaintext gets one `kerstel init` line at its root, which sets up every package (#34).
 - Each file with secrets is named in exactly one advice group, checked in this order: tracked by git, template (replace the value with a placeholder and rotate the key), backup copy (delete it), a file `init` reads (run `init` in the project, or at its workspace root), and any other file (§4: a nested env file, or one outside any Node or Bun project).
 - A reference this vault lacks gets the same split: in a file `init` reads, run `init` in the project, whose teammate flow asks for the value; anywhere else, store it with `kerstel set <scope>/<KEY>`.
 - The ✗ marks are reserved for secrets git tracks and secrets in templates, since those are likely already shared. `!` is everything else that needs action.

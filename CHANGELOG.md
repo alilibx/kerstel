@@ -6,6 +6,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Added
 
+- `kerstel init` at a monorepo root (a `package.json` with `workspaces`, or a `pnpm-workspace.yaml`) sets up every package with `.env` files in one run. It asks which packages to include, shows one overview with a section per package, asks **Look right?** and the `.gitignore` question once, and applies package by package. A key two packages hold with the same value is suggested for the shared vault. `--from-stdin` accepts values nested by package path.
 - `kerstel scan [path]` finds every env file under a folder, a monorepo, or your home folder (`kerstel scan ~`), and reports what each holds without printing a value: secrets still in plain text, lines it can't classify, references this vault lacks, backup copies like `.env.bak`, templates like `.env.example` with real keys in them, and files git tracks. The summary says what to do with each, `--keys` names the keys and line numbers, `--json` gives scripts the same report, and it exits `1` when it finds a secret, so it can run in CI.
 
 ### Changed

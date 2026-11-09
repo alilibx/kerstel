@@ -103,6 +103,10 @@ If the same key appears in more than one file with different values, the highest
 
 Afterwards, `npm run dev` is still `npm run dev`. Run `ks doctor` in the project to confirm the wiring. Commit `.kerstel/exec.cjs` along with `package.json`: it is what lets the same scripts run on a deploy host that has no Kerstel. See [Deploying](/docs/deploying).
 
+### In a monorepo
+
+Run `ks init` at the root of a workspace (a `package.json` with `workspaces`, or a `pnpm-workspace.yaml`) and it sets up every package with `.env` files in one run. It lists them and asks which to set up, shows one overview with a section per package, and asks **Look right?** once. A key that several packages hold with the same value, like one Stripe account, is suggested for the shared vault; a key whose value differs stays with each package. Then it applies package by package, each with its own scope, backup, and wired scripts. Running it again is safe, and running it inside one package sets up only that package, as before.
+
 ### Finding what's left
 
 `ks scan` walks a folder and lists every env file in it, so you can see which projects still hold secrets in plain text. Run `ks scan ~` to cover your whole home folder. For each file it counts secrets, unclear lines and references, and it names the backup copies (`.env.bak`) and templates (`.env.example`) that hold real keys, and the files git tracks. The summary says what to do: run `ks init` in a project, delete a backup, or untrack a file and rotate its keys. It never prints a value. `--keys` adds key names and line numbers. See the [CLI reference](/docs/cli) for every flag and the `--json` shape.

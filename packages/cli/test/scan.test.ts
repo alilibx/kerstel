@@ -265,6 +265,8 @@ test("the report: collapsed clean projects, advice groups in order, exit 1", asy
   expect(order.every((i) => i !== -1)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(out).toContain("scripts/.env (no package.json)");
+  // The workspace is set up by one init at its root, not one per package.
+  expect(out).toContain(`Run kerstel init in it:\n     ${join(root, "shop")}\n`);
   expect(out).toContain("1 line is unclear");
   expect(out).not.toContain("API_TOKEN");
 });

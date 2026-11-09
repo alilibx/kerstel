@@ -54,9 +54,10 @@
 <span class="release-date release-unreleased">In development</span>
 </div>
 <details class="release-details">
-<summary><span class="release-count">2 changes</span></summary>
+<summary><span class="release-count">3 changes</span></summary>
 <div class="release-body">
 <section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
+<li><code>kerstel init</code> at a monorepo root (a <code>package.json</code> with <code>workspaces</code>, or a <code>pnpm-workspace.yaml</code>) sets up every package with <code>.env</code> files in one run. It asks which packages to include, shows one overview with a section per package, asks <strong>Look right?</strong> and the <code>.gitignore</code> question once, and applies package by package. A key two packages hold with the same value is suggested for the shared vault. <code>--from-stdin</code> accepts values nested by package path.</li>
 <li><code>kerstel scan [path]</code> finds every env file under a folder, a monorepo, or your home folder (<code>kerstel scan ~</code>), and reports what each holds without printing a value: secrets still in plain text, lines it can&#39;t classify, references this vault lacks, backup copies like <code>.env.bak</code>, templates like <code>.env.example</code> with real keys in them, and files git tracks. The summary says what to do with each, <code>--keys</code> names the keys and line numbers, <code>--json</code> gives scripts the same report, and it exits <code>1</code> when it finds a secret, so it can run in CI.</li>
 </ul></section>
 <section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
