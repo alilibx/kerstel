@@ -17,6 +17,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Fixed
 
+- `kerstel uninstall` now waits for the daemon to finish shutting down before deleting `~/.kerstel`, and says so if the folder could not be deleted. Before, it could report the folder deleted while the daemon's last writes kept it in place.
 - Before offering to remove the `.env` lines from `.gitignore`, `kerstel init` now also names the plaintext keys in env files those lines hide but `init` doesn't rewrite, such as a nested `docker/.env` or a `.env.bak` backup, so the question no longer calls the files safe to commit when they aren't.
 
 ## 0.1.5 (2026-11-08)

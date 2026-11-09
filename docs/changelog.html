@@ -54,7 +54,7 @@
 <span class="release-date release-unreleased">In development</span>
 </div>
 <details class="release-details">
-<summary><span class="release-count">6 changes</span></summary>
+<summary><span class="release-count">7 changes</span></summary>
 <div class="release-body">
 <section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
 <li><code>kerstel ui</code> opens a full-screen view of the vault in the terminal: a <strong>Secrets</strong> screen with every secret masked, and a <strong>References</strong> screen that shows which project files use each one, with a jump from a reference to its secret. It needs no daemon, listens on nothing, and restores the terminal however it exits.</li>
@@ -66,6 +66,7 @@
 <li>References are shorter. <code>kerstel init</code> and <code>ks move</code> now write <code>OPENAI_API_KEY=ks:global</code> when the variable and the vault key share a name, and <code>ks:global/OPENAI_API_KEY</code> when they don&#39;t, or when another line of your env files copies the variable with <code>${OPENAI_API_KEY}</code>. References in the <code>kerstel://global/OPENAI_API_KEY</code> form keep working everywhere and are never rewritten for you. Messages show references as <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code>, and <code>ks get</code>, <code>set</code>, <code>rm</code> and <code>resolve</code> accept every form. A project with <code>ks:</code> references needs this version of Kerstel on every machine that runs it, because older versions pass <code>ks:global</code> to the app as text; <code>kerstel doctor</code> shows how many references a project has in each form. If a short reference reaches a variable with another name and finds nothing, the error says which key it looked for and how to write the line.</li>
 </ul></section>
 <section class="change-group change-fixed"><h3 class="change-type">Fixed</h3><ul>
+<li><code>kerstel uninstall</code> now waits for the daemon to finish shutting down before deleting <code>~/.kerstel</code>, and says so if the folder could not be deleted. Before, it could report the folder deleted while the daemon&#39;s last writes kept it in place.</li>
 <li>Before offering to remove the <code>.env</code> lines from <code>.gitignore</code>, <code>kerstel init</code> now also names the plaintext keys in env files those lines hide but <code>init</code> doesn&#39;t rewrite, such as a nested <code>docker/.env</code> or a <code>.env.bak</code> backup, so the question no longer calls the files safe to commit when they aren&#39;t.</li>
 </ul></section>
 </div>

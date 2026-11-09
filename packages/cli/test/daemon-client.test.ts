@@ -140,3 +140,51 @@ test("a request issued after close rejects instead of hanging", async () => {
     clearTimeout(timer);
   }
 });
+
+test("stopDaemonIfRunning waits for the daemon to clear its token, not only to close its socket", async () => {
+  const { isolateEnv, restoreEnv } = await import("./helpers/isolate-env");
+  const { startDaemon } = await import("../src/daemon/server");
+  const { clearTokenIf, readToken, writeToken, createToken } = await import("../src/daemon/token");
+  const { stopDaemonIfRunning } = await import("../src/daemon/client");
+  const { socketPath } = await import("../src/paths");
+  const { openVault } = await import("../src/vault/store");
+  const { generateDataKey } = await import("../src/vault/crypto");
+  const { rmSync } = await import("node:fs");
+  const home = isolateEnv({ prefix: "daemon-stop" });
+  const vault = openVault(generateDataKey(), join(home, "vault.db"));
+  const token = writeToken(createToken());
+  const handle = await startDaemon({ vault, socketPath: socketPath(), token, backendName: "file" });
+  // What `daemon serve` does after its socket closes: close the vault, then,
+  // a little later here, clear the token.
+  void handle.closed.then(async () => {
+    vault.close();
+    await Bun.sleep(300);
+    clearTokenIf(token);
+  });
+  try {
+    expect(await stopDaemonIfRunning()).toBe(true);
+    expect(readToken()).toBeNull();
+  } finally {
+    restoreEnv();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a daemon already shutting down, with its socket gone, is still waited on", async () => {
+  const { isolateEnv, restoreEnv } = await import("./helpers/isolate-env");
+  const { clearTokenIf, readToken, writeToken, createToken } = await import("../src/daemon/token");
+  const { stopDaemonIfRunning } = await import("../src/daemon/client");
+  const { rmSync } = await import("node:fs");
+  const home = isolateEnv({ prefix: "daemon-closing" });
+  // No socket: an idle timeout has closed it. The vault is still closing.
+  const token = writeToken(createToken());
+  setTimeout(() => clearTokenIf(token), 300);
+  try {
+    expect(await stopDaemonIfRunning({ settle: true })).toBe(false);
+    expect(readToken()).toBeNull();
+  } finally {
+    restoreEnv();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+

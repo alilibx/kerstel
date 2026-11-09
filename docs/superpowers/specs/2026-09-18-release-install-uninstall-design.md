@@ -130,7 +130,7 @@ Finally compute **backup-only values**. `init` collapses a key defined in severa
 5. Delete the binary, only when running as the compiled executable (`process.execPath`'s file name is `kerstel` and the process is not the `bun` runtime). Otherwise print where the binary is.
 6. Print each restored project, and a warning that its `.env` files now hold plaintext and must stay out of git. For each restored `.env` file that `git -C <root> ls-files` reports as tracked, name it and say to run `git rm --cached <file>` before the next commit, since a `.gitignore` entry does not untrack it. Without git, or outside a repository, only the generic warning is printed.
 
-Between steps 2 and 3, wait (up to 5 seconds) for the daemon to stop answering before deleting the home.
+Between steps 2 and 3, wait (up to 5 seconds) for the daemon to stop answering, then (up to 5 more) for it to clear its token, which it does last, after closing the vault: deleting the home while SQLite is still writing its journal can leave the folder behind. The token is read before checking the socket, so a daemon already shutting down from its idle timeout is waited on too, for up to 1 second (only `uninstall` asks for this, so a token a crashed daemon left behind never slows `daemon stop`). The home is deleted with retries, and if it still exists afterwards `uninstall` says so and exits `1` rather than reporting it deleted.
 
 ## 7. Testing
 
