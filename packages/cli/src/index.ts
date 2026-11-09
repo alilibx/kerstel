@@ -7,6 +7,7 @@ import { refsCommand } from "./commands/refs";
 import { runCommand } from "./commands/run";
 import { uiCommand } from "./commands/ui";
 import { scanCommand } from "./commands/scan";
+import { syncCommand } from "./commands/sync";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
 import { updateCommand, versionCommand } from "./commands/update";
@@ -37,6 +38,9 @@ const COMMANDS = `Usage:
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
   ${cliName()} resolve ks:<scope>/<KEY>             Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
+  ${cliName()} sync setup <url> | status | devices | off
+                                                Sync the vault between your devices
+  ${cliName()} sync [--keep local|remote]            Pull, push, and settle conflicts
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
   ${cliName()} scan [path] [--keys] [--all] [--json]
                                                 Find env files that still hold secrets
@@ -124,6 +128,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await daemonCommand(args);
       case "doctor":
         return await doctorCommand(args);
+      case "sync":
+        return await syncCommand(args);
       case "scan":
         return await scanCommand(args);
       case "uninstall":

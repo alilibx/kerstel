@@ -143,7 +143,7 @@ Upload the vault? (Y/n)
 ✓ Synced 214 secrets. Add another device with: ks sync add-device
 ```
 
-`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`.
+`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server started with an enroll token gets it from `KERSTEL_SYNC_ENROLL_TOKEN`. Without a terminal, `setup` needs `--yes` to upload. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`.
 
 **Adding a device.** On a device that is already in the vault:
 
@@ -208,6 +208,7 @@ The client asks for every record with a revision higher than the highest it has 
 
 | Local row | Action |
 |---|---|
+| Any, when the record's revision is at or below the local copy's base revision | Nothing: it is this device's own push coming back, or a record already seen. |
 | Clean, or missing | Apply the remote value or deletion. A local value that a remote deletion or change replaces is saved in a sync backup first (§8.5). |
 | Dirty, same value as remote | Adopt the remote revision and clear `dirty`. |
 | Dirty, different value | A conflict (§8.4). |
@@ -235,7 +236,7 @@ The value that loses is saved in the sync backup. Without a terminal, `ks sync` 
 
 ### 8.5 The sync backup
 
-A value that a pull replaces or deletes, and the losing side of a conflict, go to `~/.kerstel/backups/sync/<timestamp>/`, encrypted with the data key in the same format as `init` backups. `uninstall`'s loss check reads these backups too, so it names any value that exists only there before deleting it.
+A value that a pull replaces or deletes, and the losing side of a conflict, go to `~/.kerstel/backups/_sync/<timestamp>/` (a leading `_` is never a scope name, so it cannot share a folder with a project's backups), encrypted with the data key in the same format as `init` backups. `uninstall`'s loss check reads these backups too, so it names any value that exists only there before deleting it.
 
 ## 9. The server
 

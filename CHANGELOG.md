@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.2.1 (unreleased)
 
+### Added
+
+- `kerstel sync`, the first part of end-to-end encrypted sync between your own devices through a `kerstel-server` you run: `sync setup <url>` uploads the vault, encrypted on this device with a key the server never sees; `sync` pulls and pushes changes, keeps a value changed on two devices as a conflict until you choose (`--keep local|remote`), and backs up any value it replaces; `sync status`, `sync devices` and `sync off` report on and leave the vault. Pairing a second device comes next.
+
 ## 0.2.0 (2026-11-09)
 
 ### Added

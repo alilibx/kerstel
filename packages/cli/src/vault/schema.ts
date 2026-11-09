@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Ordered migrations. Index 0 takes the database from version 0 to version 1.
@@ -105,6 +105,24 @@ const MIGRATIONS: string[] = [
   DROP TABLE projects;
   ALTER TABLE projects_v3 RENAME TO projects;
   CREATE INDEX projects_name_idx ON projects(name);
+  `,
+
+  // v4: sync between devices (sync spec §6.3). One table and no columns on
+  // `secrets`, so a vault that never syncs is unchanged. A row exists only
+  // once sync is on: `setSecret` and `removeSecret` mark the key dirty and
+  // raise `change` in the same transaction as the write, and a push clears
+  // `dirty` only if `change` is still what it read.
+  `
+  CREATE TABLE sync_state (
+    scope      TEXT    NOT NULL,
+    key        TEXT    NOT NULL,
+    base_rev   INTEGER NOT NULL,
+    dirty      INTEGER NOT NULL,
+    change     INTEGER NOT NULL,
+    -- While a conflict is open: the other device's record as JSON, {"rev", "blob"}.
+    conflict   BLOB,
+    PRIMARY KEY (scope, key)
+  );
   `,
 ];
 
