@@ -1,6 +1,6 @@
 # `kerstel scan`: find every env file and what it holds
 
-- **Status:** draft for review, 2026-11-09
+- **Status:** approved design, 2026-11-09
 - **Release:** 0.2.0
 - **Issue:** [#52](https://github.com/alilibx/kerstel/issues/52)
 - **Builds on:** the product spec (`2026-09-17-kerstel-secrets-manager-design.md`, §5 the `init` classifier), the monorepo spec (`2026-09-19-monorepo-and-checkouts-design.md`, §2 and §3 workspace detection), the short references spec (`2026-11-09-short-references-design.md`)
@@ -37,9 +37,20 @@ Each line gets one verdict. A new `judge(key, value)` in `init/classify.ts` deci
 | unclear | `explain()` says the vault only because it could not tell (`Might be a secret, so it's safer in the vault`) | `APP_NAME=Northwind Traders` |
 | config | `explain()` says plaintext | `PORT=3000` |
 
-In a template only the certain signals count: a known token prefix, a URL with a password, and a PEM block. Everything else in a template is config, since `STRIPE_SECRET_KEY=sk_test_xxx` and `DATABASE_URL=postgres://localhost/app` are what templates are for. A placeholder that still matches a token prefix (`sk_test_xxx`) is judged by `TOKEN_PREFIX` as it is today; §7 question 3 covers this.
+In a template only the certain signals count, since `STRIPE_SECRET_KEY=sk_test_xxx` and `DATABASE_URL=postgres://postgres:postgres@localhost/app` are what templates are for. `isTemplateSecret(value)` is true for:
 
-A line `parseDotenv` can't read (an unclosed quote, a line that is not `KEY=value`) is listed as unreadable with its line number, not judged.
+- a known token prefix,
+- a URL with a password in its userinfo,
+- a URL with a credential in its query (`SECRET_QUERY`, as `explain()` uses it),
+- a PEM block (below),
+
+and, for the first three, only when the credential part (the text after the prefix, the password, or the query parameter's value) looks real: 16 or more characters, mixing letters and digits, with no run of three or more `x`, `X`, `*` or `0`, and none of the words `your`, `here`, `replace`, `example`, `changeme` in any case. So `sk_test_xxx`, `ghp_your_token_here` and `postgres:postgres@` are placeholders, and `?token=8f3kQ2...` is not. Everything else in a template is config.
+
+`parseDotenv` puts a value it can't read in `unsupported` and never hands its text on, on purpose: inspecting it would mean reading key material. `scan` judges those entries without their values:
+
+- **A PEM block is a secret.** The parser already recognises an unquoted one by its `-----BEGIN ...-----` header. This PR has it also recognise a quoted value whose first line is a PEM header (`KEY="-----BEGIN PRIVATE KEY-----`, then the body), and mark both entries `pem: true` on `UnsupportedValue`. The judgement reads that flag, so the body is never inspected. This applies in templates too.
+- **Any other value that spans lines** is judged by its key's name alone: a name that announces a credential (`SECRET_KEYS`) makes it a secret, any other name makes it unclear.
+- **A line that is not `KEY=value`** is listed as an unreadable line with its line number, not judged.
 
 ### 2.3 References
 
@@ -74,6 +85,7 @@ Files are grouped by project, so the report says what to run where.
 - **Project:** the nearest folder at or above the env file, up to the scan root, that holds a `package.json`. An env file with no such folder is grouped under its own folder and marked `no package.json`.
 - **Workspace:** a project whose `package.json` has a `workspaces` field or that has a `pnpm-workspace.yaml`. Its members are grouped under it. This PR builds `detectWorkspace()` in `init/workspace.ts` exactly as monorepo spec §3 specifies it, so #34 only has to use it. There is no upward search for a workspace root: scanning inside `apps/web` reports `apps/web` as its own project, as `init` there would treat it.
 - **Set up:** a project whose folder has a `projects` row (`readProjectRows`, no key needed) shows its scope.
+- **Where `init` reaches.** `init` reads env files directly in a package folder, never in its subfolders. An env file in a project's own folder is one `init` would migrate. A nested one (`repo/config/.env`, `repo/docker/.env`) is still grouped under the project, but the summary gives it its own advice (§5.1), since running `init` would leave it as it is.
 
 ## 5. Output
 
@@ -89,6 +101,7 @@ shop  ~/src/shop  workspace, 3 packages
   apps/api
     .env            ! 2 secrets, 1 unclear · not ignored by git
     .env.bak        ! backup copy · 3 secrets
+    docker/.env     ! 1 secret
   packages/db
     .env.example    ✗ template · 1 secret · tracked by git
 
@@ -104,9 +117,12 @@ scripts  ~/src/scripts  no package.json
   then rotate the keys: they stay in git history.
     ~/src/shop/apps/web/.env
     ~/src/shop/packages/db/.env.example
-! 2 projects hold secrets in plain text. Run kerstel init in each:
+! 1 project holds secrets in plain text. Run kerstel init in it:
     ~/src/shop
-    ~/src/scripts (not a Node or Bun project: move the values by hand)
+! 2 files kerstel init doesn't read hold secrets. Store each value with
+  kerstel set, then replace it with its ks: reference, or delete the file:
+    ~/src/shop/apps/api/docker/.env
+    ~/src/scripts/.env (no package.json)
 ! 1 backup copy holds secrets. Delete it:
     ~/src/shop/apps/api/.env.bak
 ```
@@ -114,6 +130,7 @@ scripts  ~/src/scripts  no package.json
 - Counts only by default. `--keys` adds the key names and line numbers under each file, never values.
 - A project with nothing to do (only references that resolve, config, and templates without secrets) collapses into the "more projects" line. `--all` lists it.
 - A workspace with plaintext gets one `kerstel init` line at its root, which #34 makes set up every package. (Between this PR and #34 landing, the line names each package folder instead.)
+- Each file with secrets is named in exactly one advice group, checked in this order: tracked by git, template (replace the value with a placeholder and rotate the key), backup copy (delete it), a file `init` reads (run `init` in the project, or at its workspace root), and any other file (§4: a nested env file, or one outside any Node or Bun project).
 - The ✗ marks are reserved for secrets git tracks and secrets in templates, since those are likely already shared. `!` is everything else that needs action.
 - Nothing found at all: `No env files under ~/src.` and exit `0`.
 
@@ -162,13 +179,13 @@ One object on stdout, for CI and scripts. It always includes key names and line 
 
 So `kerstel scan` works as a CI step or a cron job as it is. An unresolved reference is `doctor`'s concern, as it is for `refs`.
 
-## 7. Questions, with recommendations
+## 7. Decisions
 
-1. **Do unclear lines fail the scan?** Recommend no. `explain()` sends anything it can't place to the vault, which is the right default for `init` but would make `scan` fail on `APP_NAME=Northwind Traders` forever, with no way to say "this one is fine". They are shown, and `--keys` names them. A `--strict` flag can come later if people ask.
-2. **An allow list for keys kept in plain text on purpose?** Not in 0.2.0. Every secret line is a finding. If a team keeps one on purpose, the right fix is the vault. If this turns out to be noisy, a `# kerstel: plaintext` comment on the line is the likely shape later.
-3. **Template placeholders that look like tokens** (`sk_test_xxx`, `ghp_your_token_here`). Recommend treating a token-prefixed value in a template as a secret only when the part after the prefix is at least 16 characters with no `x` runs or `your`/`here`/`replace` words. The test fixture lists the placeholders seen in popular starters.
-4. **Does `kerstel ui` show a scan?** Not in 0.2.0. The References screen stays as the terminal UI spec defines it: registered checkouts only. A Scan screen would reuse this module, but it is not part of #8, #9, or #10.
-5. **`scan --init`, chaining into migration.** Later. 0.2.0 only reports.
+1. **Unclear lines don't fail the scan.** `explain()` sends anything it can't place to the vault, which is the right default for `init` but would make `scan` fail on `APP_NAME=Northwind Traders` forever, with no way to say "this one is fine". They are shown, and `--keys` names them. A `--strict` flag can come later if people ask.
+2. **No allow list for keys kept in plain text on purpose in 0.2.0.** Every secret line is a finding. If a team keeps one on purpose, the right fix is the vault. If this turns out to be noisy, a `# kerstel: plaintext` comment on the line is the likely shape later.
+3. **Template placeholders that look like tokens** (`sk_test_xxx`, `ghp_your_token_here`) are not secrets. The rule is in §2.2. The test fixture lists the placeholders seen in popular starters.
+4. **`kerstel ui` gets no Scan screen in 0.2.0.** The References screen stays as the terminal UI spec defines it: registered checkouts only. A Scan screen would reuse this module, but it is not part of #8, #9, or #10.
+5. **`scan --init`, chaining into migration, comes later.** 0.2.0 only reports.
 
 ## 8. Changes by area
 
@@ -176,6 +193,7 @@ So `kerstel scan` works as a CI step or a cron job as it is. An unresolved refer
 - **`init/workspace.ts`** (new): `detectWorkspace()`, monorepo spec §3.
 - **`init/classify.ts`:** `judge(key, value)` and `isTemplateSecret(value)`, next to `explain()`.
 - **`init/detect.ts`:** exports the template test (`isTemplateEnvFileName`), and moves the `.swp`/`.swo` names into a helper so `scan` knows not to read them.
+- **`init/dotenv-file.ts`:** `UnsupportedValue` gains `pem?: true`, set for an unquoted PEM block and for a quoted value whose first line is a PEM header. `init`'s messages don't change.
 - **`move/git.ts`:** a batched `gitStatuses(repo, files)` beside `gitFileStatus`, which `move` keeps using.
 - **`commands/scan.ts`** and **`index.ts`:** the command, its flags (`--keys`, `--all`, `--json`, `--verbose`), and the `--help` line.
 - **Copy:** the CLI docs page (command row, the JSON shape, the macOS prompt note), getting started (a "Find what's left" step), the security page (scan as an audit), and the README command list.
@@ -184,7 +202,8 @@ So `kerstel scan` works as a CI step or a cron job as it is. An unresolved refer
 ## 9. Tests
 
 - **Walk:** a temp tree with nested projects, `node_modules` and `.git` holding env files that must be skipped, a symlinked directory that must not be followed, a symlinked env file that is read, an unreadable directory counted without failing, and a tree with no env files.
-- **Judgement:** `judge()` on every row of §2.2, including a token-prefixed value under a `NEXT_PUBLIC_` key, a PEM block, a shorthand reference, and the template rules with real keys and placeholders.
+- **Judgement:** `judge()` on every row of §2.2, including a token-prefixed value under a `NEXT_PUBLIC_` key, a shorthand reference, and the template rules with real keys, real query tokens, and placeholders. A complete multi-line PEM file, unquoted and quoted, in an env file and in a template, counts as a secret through the report and makes the scan exit `1`.
+- **Advice:** a nested env file with a secret gets the `kerstel set` advice, not `init`; each advice group in §5.1's order.
 - **Workspaces:** the monorepo spec §8 detection fixtures, and members grouped under their root.
 - **Git:** tracked, not ignored, and ignored files in a temp repo, a file in a nested repository, and git missing from `PATH`.
 - **References:** in the vault, not in it, and no vault at all, with no `~/.kerstel` created.
