@@ -19,6 +19,8 @@ const META = {
   head: "sync_head",
   lastOk: "sync_last_ok",
   lastError: "sync_last_error",
+  /** Set with a new key until the full pull that follows it finishes. */
+  fullPull: "sync_full_pull",
 } as const;
 
 export interface SyncConfig {
@@ -65,8 +67,16 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
   };
 }
 
-/** Writes every setting. The vault ID goes last: it is what turns sync, and change tracking, on. */
+/**
+ * Writes every setting in one transaction, so an interrupted write never pairs
+ * a new epoch with the old key. The vault ID turns sync, and change tracking, on.
+ */
 export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
+  vault.transaction(() => writeSync(vault, dataKey, config));
+}
+
+/** `saveSync` without its own transaction, for a caller that holds one. */
+export function writeSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
   vault.setMeta(META.server, config.server);
   vault.setMeta(META.deviceId, config.deviceId);
   vault.setMeta(META.epoch, String(config.epoch));
@@ -75,6 +85,15 @@ export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): voi
   vault.setMeta(META.encKey, sealed(exportPrivateKey(config.keys.enc), dataKey));
   vault.setMeta(META.head, String(config.head));
   vault.setMeta(META.vaultId, config.vaultId);
+}
+
+export function needsFullPull(vault: Vault): boolean {
+  return vault.getMeta(META.fullPull) !== null;
+}
+
+export function setFullPull(vault: Vault, on: boolean): void {
+  if (on) vault.setMeta(META.fullPull, "1");
+  else vault.deleteMeta(META.fullPull);
 }
 
 export function saveHead(vault: Vault, head: number): void {

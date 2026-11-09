@@ -59,11 +59,25 @@ export function syncClient(options: ClientOptions) {
     };
     let response: Response;
     try {
+      // Never followed: a redirect would carry the enroll token and the
+      // signed request to wherever it points, plain http included.
       response = await doFetch(
-        new Request(`${options.server}${PROTOCOL_PREFIX}${path}`, { method, headers, body: body === undefined ? undefined : raw }),
+        new Request(`${options.server}${PROTOCOL_PREFIX}${path}`, {
+          method,
+          headers,
+          body: body === undefined ? undefined : raw,
+          redirect: "manual",
+        }),
       );
     } catch (error) {
       throw new SyncHttpError(0, "unreachable", `Could not reach ${options.server}: ${(error as Error).message}`);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw new SyncHttpError(
+        response.status,
+        "redirect",
+        `${options.server} answered with a redirect, which Kerstel does not follow for sync. Set sync up with the server's final URL.`,
+      );
     }
     const text = await response.text();
     if (!response.ok) {

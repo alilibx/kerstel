@@ -14,6 +14,7 @@ import {
 import { conflictValue, describe, openConflicts, push, settle, syncOnce, type SyncContext, type SyncReport } from "../sync/engine";
 import { SyncHttpError, syncClient, type Fetch } from "../sync/http";
 import { forgetSync, isSafeServerUrl, lastResult, loadSync, normaliseServerUrl, recordResult, saveSync } from "../sync/state";
+import type { SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
 import { newId } from "../../../server/src/protocol";
 
@@ -228,6 +229,15 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
         const after: SyncReport = { applied: [], pushed: [], conflicts: [], backups: [] };
         await push(sync, after);
         if (after.pushed.length > 0) ok(`Pushed ${plural(after.pushed.length, "settled value")}.`);
+        // Another device may have changed a key again while you were choosing.
+        const still = openConflicts(sync.vault);
+        if (still.length > 0) {
+          fail(`${plural(still.length, "key was", "keys were")} changed on another device again while you chose:`);
+          for (const ref of still) console.log(`  ${describe(ref)}`);
+          console.log(`Run ${cliName()} sync again to choose.`);
+          recordResult(ctx.vault, null);
+          return 1;
+        }
       } catch (error) {
         recordResult(ctx.vault, explain(error));
         fail(`Sync failed: ${explain(error)}`);
@@ -254,7 +264,8 @@ async function settleConflicts(
 ): Promise<number | null> {
   const conflicts = openConflicts(sync.vault);
   if (options.keep) {
-    for (const ref of conflicts) settle(sync, ref, options.keep, report);
+    const keep = options.keep;
+    settle(sync, conflicts.map((ref) => ({ ref, keep })), report);
     ok(`Kept the ${options.keep === "local" ? "value on this device" : "other device's value"} for ${plural(conflicts.length, "conflict")}.`);
     return conflicts.length;
   }
@@ -268,6 +279,8 @@ async function settleConflicts(
   const prompter = options.deps.prompter ?? new ClackPrompter();
   const shown = (value: string | null) =>
     value === null ? "deleted" : options.reveal ? value : `${plural(value.length, "character")}`;
+  // Every answer first; then one backup of every losing value, then the changes.
+  const choices: { ref: SecretRef; keep: "local" | "remote" }[] = [];
   for (const ref of conflicts) {
     const row = sync.vault.sync.row(ref)!;
     const local = sync.vault.getSecret(ref);
@@ -280,8 +293,9 @@ async function settleConflicts(
       ],
       "local",
     );
-    settle(sync, ref, answer as "local" | "remote", report);
+    choices.push({ ref, keep: answer as "local" | "remote" });
   }
+  settle(sync, choices, report);
   ok(`Settled ${plural(conflicts.length, "conflict")}. The value that lost is in the sync backup.`);
   return conflicts.length;
 }

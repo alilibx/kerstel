@@ -1,10 +1,10 @@
-import { createBackup, type BackupVaultValue } from "../init/backup";
+import { backupTimestamp, createBackup, type BackupVaultValue } from "../init/backup";
 import { formatReference, type SecretRef } from "../reference";
 import type { Vault } from "../vault/store";
 import type { RecordOut } from "../../../server/src/protocol";
 import { openPayload, openSyncKey, recordId, sealPayload, type Payload } from "./crypto";
 import { SyncHttpError, type SyncClient } from "./http";
-import { saveHead, saveSync, type SyncConfig } from "./state";
+import { needsFullPull, saveHead, setFullPull, writeSync, type SyncConfig } from "./state";
 
 /**
  * Pull, push, and conflicts. Sync spec §8. A sync never chooses between two
@@ -61,21 +61,30 @@ function readRecord(ctx: SyncContext, record: RecordOut, ids: Map<string, Secret
   return { ref: { scope: payload.scope, key: payload.key }, value: payload.deleted ? null : payload.value };
 }
 
-/** The other device's value in an open conflict. */
-export function conflictValue(ctx: SyncContext, ref: SecretRef, conflict: { rev: number; blob: string | null }): string | null {
-  if (conflict.blob === null) return null;
-  const id = recordId(ctx.config.syncKey, ref.scope, ref.key);
-  const payload = openPayload(ctx.config.syncKey, conflict.blob, {
-    vaultId: ctx.config.vaultId,
-    recordId: id,
-    epoch: ctx.config.epoch,
-  });
+function openConflict(syncKey: Buffer, epoch: number, vaultId: string, ref: SecretRef, blob: string | null): string | null {
+  if (blob === null) return null;
+  const payload = openPayload(syncKey, blob, { vaultId, recordId: recordId(syncKey, ref.scope, ref.key), epoch });
   return payload.deleted ? null : payload.value;
 }
 
+/** The other device's value in an open conflict; null when the other device deleted the key. */
+export function conflictValue(ctx: SyncContext, ref: SecretRef, conflict: { rev: number; blob: string | null }): string | null {
+  return openConflict(ctx.config.syncKey, ctx.config.epoch, ctx.config.vaultId, ref, conflict.blob);
+}
+
+/** Never the same millisecond twice in one process, so two backups never race for one folder. */
+let lastBackup = 0;
+
 function backup(ctx: SyncContext, values: BackupVaultValue[], report: SyncReport): void {
   if (values.length === 0) return;
-  const result = createBackup({ scope: SYNC_BACKUP_SCOPE, dataKey: ctx.dataKey, files: [], vault: values });
+  lastBackup = Math.max(Date.now(), lastBackup + 1);
+  const result = createBackup({
+    scope: SYNC_BACKUP_SCOPE,
+    dataKey: ctx.dataKey,
+    files: [],
+    vault: values,
+    timestamp: backupTimestamp(new Date(lastBackup)),
+  });
   report.backups.push(result.dir);
 }
 
@@ -84,13 +93,18 @@ type Plan =
   | { kind: "adopt"; ref: SecretRef; rev: number; change: number }
   | { kind: "conflict"; ref: SecretRef; conflict: { rev: number; blob: string | null } };
 
-/** Sync spec §8.3: what to do with one pulled record, decided before anything is written. */
-function planRecord(ctx: SyncContext, ref: SecretRef, value: string | null, record: RecordOut): Plan | null {
+/**
+ * Sync spec §8.3: what to do with one record, decided before anything is
+ * written. `fromPush` marks the server's copy returned for a stale push,
+ * which is news whatever its revision: a record that no longer exists comes
+ * back as revision 0.
+ */
+function planRecord(ctx: SyncContext, ref: SecretRef, value: string | null, record: RecordOut, fromPush = false): Plan | null {
   const row = ctx.vault.sync.row(ref);
   // A revision this copy is already based on is not news: a device pulling
   // back its own push, or a record pulled twice. Treating it as remote would
   // call this device's newer local change a conflict with itself.
-  if (row && !row.conflict && record.rev <= row.baseRev) return null;
+  if (!fromPush && row && !row.conflict && record.rev <= row.baseRev) return null;
   const local = ctx.vault.getSecret(ref);
   if (row?.conflict) {
     // Still open: keep this device's value, and track the other side's latest.
@@ -122,22 +136,50 @@ function applyPlans(ctx: SyncContext, plans: Plan[], report: SyncReport): void {
   }
 }
 
-/** A rotation on another device: fetch this device's sealed copy of the new key. */
+/**
+ * A rotation on another device: fetch this device's sealed copy of the new
+ * key. Base revisions stay as they are: the server gives the re-uploaded
+ * records revisions above every earlier one, and a copy that was on the
+ * server before is how the full pull that follows spots a deletion made
+ * before the rotation. Open conflicts are sealed again under the new key,
+ * since the old one is about to go. All of it, and the full-pull flag, lands
+ * in one transaction.
+ */
 async function adoptEpoch(ctx: SyncContext, epoch: number): Promise<void> {
   const sealed = await ctx.client.keys();
   if (sealed.epoch !== epoch) throw new Error(`The server is at key epoch ${epoch} but sealed epoch ${sealed.epoch} to this device.`);
-  ctx.config.syncKey = openSyncKey(sealed.sealedKey, ctx.config.keys.enc, {
+  const oldKey = ctx.config.syncKey;
+  const oldEpoch = ctx.config.epoch;
+  const newKey = openSyncKey(sealed.sealedKey, ctx.config.keys.enc, {
     vaultId: ctx.config.vaultId,
     deviceId: ctx.config.deviceId,
     epoch,
   });
-  ctx.config.epoch = epoch;
-  ctx.config.head = 0;
-  saveSync(ctx.vault, ctx.dataKey, ctx.config);
-  ctx.vault.sync.resetBaseRevs();
+  ctx.vault.transaction(() => {
+    for (const row of ctx.vault.sync.rows()) {
+      if (!row.conflict) continue;
+      const value = openConflict(oldKey, oldEpoch, ctx.config.vaultId, row, row.conflict.blob);
+      const id = recordId(newKey, row.scope, row.key);
+      const blob =
+        value === null
+          ? null
+          : sealPayload(
+              newKey,
+              { v: 1, scope: row.scope, key: row.key, value, deleted: false, updatedAt: Date.now(), device: "" },
+              { vaultId: ctx.config.vaultId, recordId: id, epoch },
+            );
+      ctx.vault.sync.setConflict(row, { rev: row.conflict.rev, blob });
+    }
+    ctx.config.syncKey = newKey;
+    ctx.config.epoch = epoch;
+    writeSync(ctx.vault, ctx.dataKey, ctx.config);
+    setFullPull(ctx.vault, true);
+  });
 }
 
 export async function pull(ctx: SyncContext, report: SyncReport, full = false): Promise<void> {
+  // A key change that a crash interrupted before its full pull finished.
+  if (!full && needsFullPull(ctx.vault)) full = true;
   const ids = idMap(ctx);
   const seen = new Set<string>();
   let since = full ? 0 : ctx.config.head;
@@ -169,19 +211,29 @@ export async function pull(ctx: SyncContext, report: SyncReport, full = false): 
   }
 
   if (full) {
-    // A full pull reconciles by absence: a key the server no longer holds at
-    // all was deleted elsewhere, and its tombstone has since been dropped.
+    // A full pull reconciles by absence: a key the server held for this copy
+    // and holds no longer was deleted elsewhere, its tombstone since dropped
+    // (or left behind by a rotation). A clean copy follows the deletion; a
+    // copy changed here, or already in conflict, becomes a conflict with it,
+    // so whoever runs `ks sync` chooses whether the key stays.
     const plans: Plan[] = [];
     for (const row of ctx.vault.sync.rows()) {
-      if (row.dirty || row.conflict || row.baseRev === 0) continue;
+      if (row.baseRev === 0 && !row.conflict) continue;
       if (seen.has(recordId(ctx.config.syncKey, row.scope, row.key))) continue;
+      if (row.conflict || row.dirty) {
+        plans.push({ kind: "conflict", ref: row, conflict: { rev: 0, blob: null } });
+        continue;
+      }
       const local = ctx.vault.getSecret(row);
       plans.push({ kind: "apply", ref: row, value: null, rev: 0, change: row.change, loser: local });
     }
     applyPlans(ctx, plans, report);
   }
   ctx.config.head = head;
-  saveHead(ctx.vault, head);
+  ctx.vault.transaction(() => {
+    saveHead(ctx.vault, head);
+    if (full) setFullPull(ctx.vault, false);
+  });
 }
 
 export async function push(ctx: SyncContext, report: SyncReport): Promise<void> {
@@ -226,7 +278,7 @@ export async function push(ctx: SyncContext, report: SyncReport): Promise<void> 
     for (const record of result.conflicts) {
       const read = readRecord(ctx, record, ids);
       if (!read) continue;
-      const plan = planRecord(ctx, read.ref, read.value, record);
+      const plan = planRecord(ctx, read.ref, read.value, record, true);
       if (plan) plans.push(plan);
     }
     applyPlans(ctx, plans, report);
@@ -250,21 +302,26 @@ export function openConflicts(vault: Vault): SecretRef[] {
 }
 
 /**
- * Settles one conflict. `local` keeps this device's value, to be pushed over
- * the other one; `remote` takes the other device's. The losing value goes to
- * the sync backup. Sync spec §8.4.
+ * Settles conflicts. `local` keeps this device's value, to be pushed over the
+ * other one; `remote` takes the other device's. Every losing value goes into
+ * one sync backup, written before any choice is applied. Sync spec §8.4.
  */
-export function settle(ctx: SyncContext, ref: SecretRef, keep: "local" | "remote", report: SyncReport): void {
-  const row = ctx.vault.sync.row(ref);
-  if (!row?.conflict) return;
-  const remote = conflictValue(ctx, ref, row.conflict);
-  const local = ctx.vault.getSecret(ref);
-  if (keep === "local") {
-    backup(ctx, remote === null ? [] : [{ ...ref, value: remote }], report);
-    ctx.vault.sync.keepLocal(ref, row.conflict.rev);
-  } else {
-    backup(ctx, local === null ? [] : [{ ...ref, value: local }], report);
-    ctx.vault.sync.applyRemote(ref, remote, row.conflict.rev, row.change);
+export function settle(ctx: SyncContext, choices: { ref: SecretRef; keep: "local" | "remote" }[], report: SyncReport): void {
+  const plans = choices.flatMap(({ ref, keep }) => {
+    const row = ctx.vault.sync.row(ref);
+    if (!row?.conflict) return [];
+    const remote = conflictValue(ctx, ref, row.conflict);
+    const local = ctx.vault.getSecret(ref);
+    return [{ ref, keep, row, remote, loser: keep === "local" ? remote : local }];
+  });
+  backup(
+    ctx,
+    plans.flatMap((p) => (p.loser === null ? [] : [{ ...p.ref, value: p.loser }])),
+    report,
+  );
+  for (const p of plans) {
+    if (p.keep === "local") ctx.vault.sync.keepLocal(p.ref, p.row.conflict!.rev);
+    else ctx.vault.sync.applyRemote(p.ref, p.remote, p.row.conflict!.rev, p.row.change);
   }
 }
 

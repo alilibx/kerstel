@@ -65,12 +65,6 @@ export interface SyncTable {
   setConflict(ref: SecretRef, conflict: { rev: number; blob: string | null } | null): void;
   /** Keep this device's value over an open conflict: based on the other device's revision, still dirty. */
   keepLocal(ref: SecretRef, rev: number): void;
-  /**
-   * After a key rotation every record has a new ID and revision, so no copy
-   * is based on anything the server still holds: every base revision goes
-   * back to 0 before the full pull that follows.
-   */
-  resetBaseRevs(): void;
   /** Forget every row: sync is off. */
   clear(): void;
 }
@@ -90,6 +84,8 @@ export interface Vault {
   setMeta(key: string, value: string): void;
   /** Removes a `vault_meta` row. */
   deleteMeta(key: string): void;
+  /** Runs `work` in one SQLite transaction: every write in it lands, or none does. */
+  transaction<T>(work: () => T): T;
   sync: SyncTable;
   close(): void;
 }
@@ -228,9 +224,6 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
         "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
       ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
     },
-    resetBaseRevs() {
-      db.exec("UPDATE sync_state SET base_rev = 0");
-    },
     clear() {
       db.exec("DELETE FROM sync_state");
     },
@@ -342,6 +335,10 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
         .query<{ value: string }, { $key: string }>("SELECT value FROM vault_meta WHERE key = $key")
         .get({ $key: key });
       return row?.value ?? null;
+    },
+
+    transaction<T>(work: () => T): T {
+      return db.transaction(work)();
     },
 
     deleteMeta(key: string): void {

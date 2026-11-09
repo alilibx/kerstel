@@ -213,7 +213,9 @@ The client asks for every record with a revision higher than the highest it has 
 | Dirty, same value as remote | Adopt the remote revision and clear `dirty`. |
 | Dirty, different value | A conflict (§8.4). |
 
-A device whose last pull is older than the tombstone window pulls the whole vault and reconciles row by row, using the same table.
+A device whose last pull is older than the tombstone window pulls the whole vault and reconciles row by row, using the same table. A key the server held for a local copy and no longer holds at all was deleted elsewhere: a clean copy follows the deletion, and a copy changed here, or already in conflict, becomes a conflict with that deletion, so the user chooses whether the key stays. The server's copy returned for a stale push is handled the same way, whatever its revision.
+
+After a rotation on another device, a pull sees the new epoch, fetches its sealed copy of the new key, and does a full pull. Base revisions are kept: the server gives the re-uploaded records revisions above every earlier one, and the old base revision is what marks a key that existed before the rotation, so a deletion made just before it is still applied. Open conflicts are sealed again under the new key. The new key, the epoch and a full-pull flag are written in one transaction, and the flag is cleared only when the full pull finishes, so a crash in between is finished on the next sync.
 
 ### 8.4 Conflicts
 
@@ -252,7 +254,7 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 
 ### 9.2 API
 
-JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carries `Kerstel-Device`, `Kerstel-Timestamp` and `Kerstel-Signature`, an Ed25519 signature over the method, the path with its query string, the timestamp and the SHA-256 of the body. The server rejects a timestamp more than five minutes off and a repeated signature. A signature must be in canonical base64url, since 64 bytes leave unused bits in the last character and a re-encoded spelling would otherwise pass as new. It is spent only once the request passes the rate limit, so a refused request writes nothing. An unknown vault and an unknown device both answer 401, so IDs cannot be probed. Creating a vault is signed by the key it registers, which proves the caller holds it. The wire types live in `packages/server/src/protocol.ts`, which the client imports.
+JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carries `Kerstel-Device`, `Kerstel-Timestamp` and `Kerstel-Signature`, an Ed25519 signature over the method, the path with its query string, the timestamp and the SHA-256 of the body. The server rejects a timestamp more than five minutes off and a repeated signature. A signature must be in canonical base64url, since 64 bytes leave unused bits in the last character and a re-encoded spelling would otherwise pass as new. It is spent only once the request passes the rate limit, so a refused request writes nothing. An unknown vault and an unknown device both answer 401, so IDs cannot be probed. Creating a vault is signed by the key it registers, which proves the caller holds it. The wire types live in `packages/server/src/protocol.ts`, which the client imports. The client never follows a redirect: it would carry the enroll token and a signed request to wherever it points.
 
 | Method and path | Purpose |
 |---|---|

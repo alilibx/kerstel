@@ -390,3 +390,167 @@ test("uninstall names a value that only a sync backup still holds", async () => 
   const plan = a.with((v) => planUninstall(v, a.key));
   expect(plan.backupOnly.map((b) => [b.project, b.key])).toContainEqual([SYNC_BACKUP_SCOPE, "LOST"]);
 });
+
+describe("review fixes", () => {
+  async function pair() {
+    const s = server();
+    const a = device();
+    const b = device();
+    a.with((v) => v.setSecret(ref("app", "DB"), "db-a-1"));
+    await setUp(a, s);
+    await addSecond(a, b, s);
+    await sync(b, s);
+    return { s, a, b };
+  }
+
+  /** What `remove-device` will do (#82), minus the removal: device A replaces the sync key. */
+  async function rotate(a: Device, s: Server): Promise<void> {
+    const config = a.with((v) => loadSync(v, a.key))!;
+    const client = syncClient({ server: SERVER, vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: () => (s.clock.t += 1) });
+    const page = await client.pull(0, true);
+    const newKey = generateSyncKey();
+    const epoch = config.epoch + 1;
+    const records = page.records.flatMap((r) => {
+      if (r.blob === null) return [];
+      const p = openPayload(config.syncKey, r.blob, { vaultId: config.vaultId, recordId: r.id, epoch: config.epoch });
+      const id = recordId(newKey, p.scope, p.key);
+      return [{ id, blob: sealPayload(newKey, p, { vaultId: config.vaultId, recordId: id, epoch }) }];
+    });
+    const devices = (await client.devices()).devices;
+    const sealedKeys = Object.fromEntries(
+      devices.map((d) => [d.id, sealSyncKey(newKey, d.encPub, { vaultId: config.vaultId, deviceId: d.id, epoch })]),
+    );
+    const sealedNames = Object.fromEntries(
+      devices.map((d) => [d.id, sealName(newKey, config.vaultId, d.id, openName(config.syncKey, config.vaultId, d.id, d.sealedName)!)]),
+    );
+    const path = `/v1/vaults/${config.vaultId}/epochs`;
+    const raw = new TextEncoder().encode(
+      JSON.stringify({ baseRevision: page.head, epoch, removeDevices: [], sealedKeys, sealedNames, records }),
+    );
+    const res = await s.fetch(
+      new Request(`${SERVER}${path}`, {
+        method: "POST",
+        headers: { ...signRequest(config.keys.sign, config.deviceId, "POST", path, raw, (s.clock.t += 1)), "content-type": "application/json" },
+        body: raw,
+      }),
+    );
+    expect(res.status).toBe(200);
+    a.with((v) => saveSync(v, a.key, { ...config, syncKey: newKey, epoch }));
+  }
+
+  test("a redirect is never followed, so the enroll token and signature go nowhere else", async () => {
+    const a = device();
+    a.with((v) => v.setSecret(ref("app", "A"), "1"));
+    const seen: string[] = [];
+    const redirecting: Fetch = async (request) => {
+      seen.push(request.redirect);
+      return new Response(null, { status: 307, headers: { location: "http://evil.example/v1/vaults" } });
+    };
+    process.env.KERSTEL_SYNC_ENROLL_TOKEN = "enroll-secret";
+    try {
+      const { result, out } = await quiet(() =>
+        syncCommand(["setup", SERVER, "--yes"], { fetch: redirecting, context: a.context, interactive: false }),
+      );
+      expect(result).toBe(1);
+      expect(out).toContain("redirect");
+      expect(seen).toEqual(["manual"]);
+    } finally {
+      delete process.env.KERSTEL_SYNC_ENROLL_TOKEN;
+    }
+  });
+
+  test("an edit made while the other device's deletion expired becomes a conflict, not a stuck key", async () => {
+    const { s, a, b } = await pair();
+    a.with((v) => v.removeSecret(ref("app", "DB")));
+    await sync(a, s);
+    // B edits offline; the tombstone expires before B syncs.
+    b.with((v) => v.setSecret(ref("app", "DB"), "db-b-offline"));
+    s.clock.t += TIMING.tombstoneTtlMs + 1;
+    s.app.maintain();
+    a.with((v) => v.setSecret(ref("app", "OTHER"), "o"));
+    await sync(a, s);
+    const out = await sync(b, s);
+    expect(out.code).toBe(1);
+    expect(out.out).toContain("ks:app/DB");
+    expect(b.with((v) => v.sync.row(ref("app", "DB"))!.conflict)).toEqual({ rev: 0, blob: null });
+    // Keeping B's value brings the key back for both.
+    expect((await sync(b, s, ["--keep", "local"])).code).toBe(0);
+    await sync(a, s);
+    expect(a.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-b-offline");
+  });
+
+  test("after a rotation elsewhere: a deletion made before it reaches this device, and an open conflict stays readable", async () => {
+    const { s, a, b } = await pair();
+    a.with((v) => v.setSecret(ref("app", "GONE"), "gone-1"));
+    a.with((v) => v.setSecret(ref("app", "BOTH"), "both-1"));
+    await sync(a, s);
+    await sync(b, s);
+    // A conflict opens on B for BOTH.
+    a.with((v) => v.setSecret(ref("app", "BOTH"), "both-a"));
+    await sync(a, s);
+    b.with((v) => v.setSecret(ref("app", "BOTH"), "both-b"));
+    expect((await sync(b, s)).code).toBe(1);
+    // A deletes GONE, then rotates: the new epoch has no record for GONE at all.
+    a.with((v) => v.removeSecret(ref("app", "GONE")));
+    await sync(a, s);
+    await rotate(a, s);
+
+    const out = await sync(b, s, ["--keep", "remote"]);
+    expect(out.code).toBe(0);
+    expect(b.with((v) => v.getSecret(ref("app", "GONE")))).toBeNull();
+    expect(b.with((v) => v.getSecret(ref("app", "BOTH")))).toBe("both-a");
+    expect(b.with((v) => loadSync(v, b.key)!.epoch)).toBe(2);
+    // And it keeps syncing under the new key.
+    b.with((v) => v.setSecret(ref("app", "NEW"), "new-b"));
+    await sync(b, s);
+    await sync(a, s);
+    expect(a.with((v) => v.getSecret(ref("app", "NEW")))).toBe("new-b");
+  });
+
+  test("a conflict that reopens while you choose is reported, not called success", async () => {
+    const { s, a, b } = await pair();
+    a.with((v) => v.setSecret(ref("app", "DB"), "db-a-2"));
+    await sync(a, s);
+    b.with((v) => v.setSecret(ref("app", "DB"), "db-b-2"));
+    await sync(b, s);
+    let raced = false;
+    const racing: Fetch = async (request) => {
+      if (!raced && request.method === "POST" && request.url.endsWith("/records")) {
+        raced = true;
+        a.with((v) => v.setSecret(ref("app", "DB"), "db-a-3"));
+        await sync(a, s);
+      }
+      return s.fetch(request);
+    };
+    const { result, out } = await quiet(() =>
+      syncCommand(["--keep", "local"], { fetch: racing, context: b.context, interactive: false, now: () => (s.clock.t += 1) }),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain("changed on another device again");
+  });
+
+  test("settling several conflicts writes one backup holding every losing value", async () => {
+    const { s, a, b } = await pair();
+    a.with((v) => v.setSecret(ref("app", "X"), "x-1"));
+    a.with((v) => v.setSecret(ref("app", "Y"), "y-1"));
+    await sync(a, s);
+    await sync(b, s);
+    a.with((v) => {
+      v.setSecret(ref("app", "X"), "x-a");
+      v.setSecret(ref("app", "Y"), "y-a");
+    });
+    await sync(a, s);
+    b.with((v) => {
+      v.setSecret(ref("app", "X"), "x-b");
+      v.setSecret(ref("app", "Y"), "y-b");
+    });
+    await sync(b, s);
+    const before = listBackups(SYNC_BACKUP_SCOPE).length;
+    expect((await sync(b, s, ["--keep", "remote"])).code).toBe(0);
+    const after = listBackups(SYNC_BACKUP_SCOPE);
+    expect(after.length).toBe(before + 1);
+    const { readBackupVault } = await import("../src/init/backup");
+    const saved = b.with(() => readBackupVault(SYNC_BACKUP_SCOPE, after.at(-1)!, b.key));
+    expect(saved.map((v) => [v.key, v.value]).sort()).toEqual([["X", "x-b"], ["Y", "y-b"]]);
+  });
+});
