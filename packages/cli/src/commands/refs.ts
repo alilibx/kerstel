@@ -4,7 +4,7 @@ import { vaultPath } from "../paths";
 import { scanProjectRefs, type ProjectRefs } from "../project-refs";
 import { cliName } from "../ui/cli-name";
 import { SYMBOLS, theme, type Theme } from "../ui/theme";
-import { readStoredReferences } from "../vault/meta";
+import { readStoredReferences, vaultReadError } from "../vault/meta";
 import { readProjectRows } from "../vault/projects";
 
 /**
@@ -44,12 +44,13 @@ export function renderByProject(refs: ProjectRefs, t: Theme): string[] {
   for (const checkout of refs.checkouts) {
     if (out.length > 0) out.push("");
     out.push(`${t.bold(checkout.scope)}  ${t.dim(checkout.rootPath)}`);
-    if (checkout.files.length === 0) {
+    const files = checkout.files.filter((file) => file.references.length > 0);
+    if (files.length === 0) {
       out.push(`  ${t.dim("no references")}`);
       continue;
     }
     const rows: string[][] = [];
-    for (const file of checkout.files) {
+    for (const file of files) {
       const seen = new Set<string>();
       for (const r of file.references) {
         if (seen.has(r.reference)) continue;
@@ -107,9 +108,21 @@ function tail(refs: ProjectRefs, t: Theme): string[] {
       ),
     );
   }
+  if (refs.unreadable.length > 0) {
+    out.push("", t.bold("Could not read"));
+    out.push(
+      ...pad(refs.unreadable.map((u) => [u.scope, t.dim(u.file), u.reason])).map(
+        (line) => `  ${t.red(SYMBOLS.problem)} ${line}`,
+      ),
+    );
+  }
   if (refs.unused.length > 0) {
-    out.push("", t.bold("Referenced by no project"));
+    // Only the files that could be read were searched: a secret listed here
+    // may still be used by a folder above, so it is not safe to delete yet.
+    const partial = refs.unreachable.length + refs.unreadable.length > 0;
+    out.push("", t.bold(partial ? "Referenced by no project that could be read" : "Referenced by no project"));
     out.push(...refs.unused.map((ref) => `  ${ref}`));
+    if (partial) out.push(t.dim("  Check the folders and files above before deleting any of these."));
   }
   return out;
 }
@@ -128,6 +141,11 @@ export async function refsCommand(
   if (!existsSync(file)) {
     info(`No vault yet. Run \`${cliName()} init\` in a project to start one.`);
     return 0;
+  }
+  const problem = vaultReadError(file);
+  if (problem) {
+    fail(`Could not read the vault at ${file}: ${problem}. Run \`${cliName()} doctor\`.`);
+    return 1;
   }
   const refs = scanProjectRefs(readProjectRows(file), readStoredReferences(file));
   if (refs.checkouts.length + refs.unreachable.length + refs.unused.length === 0) {

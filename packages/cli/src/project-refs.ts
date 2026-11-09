@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadEnvFiles } from "./init/collect";
 import { detectProject, readPackageJson } from "./init/detect";
 import { parseDotenv } from "./init/dotenv-file";
 import { formatReference, parseReference, type SecretRef } from "./reference";
@@ -59,6 +58,12 @@ export interface FileReferences {
   path: string;
   /** The file's name, e.g. `.env.local`. */
   name: string;
+  /**
+   * The bytes this scan read. `uninstall` restores from these same bytes, so
+   * what it calls used and what it puts back come from one read of the file.
+   */
+  original: string;
+  /** Empty for an env file with no references; it is still listed, for `uninstall`. */
   references: (LineReference & { inVault: boolean })[];
 }
 
@@ -74,6 +79,14 @@ export interface UnreachableCheckout {
   reason: string;
 }
 
+/** An env file in a reachable checkout that could not be read, such as one with no read permission. */
+export interface UnreadableFile {
+  scope: string;
+  rootPath: string;
+  file: string;
+  reason: string;
+}
+
 export interface UnresolvableReference {
   scope: string;
   rootPath: string;
@@ -85,6 +98,8 @@ export interface ProjectRefs {
   /** Reachable checkouts, in row order. */
   checkouts: CheckoutReferences[];
   unreachable: UnreachableCheckout[];
+  /** Env files that could not be read. Their references are unknown, so nothing they might use is "unused" for sure. */
+  unreadable: UnreadableFile[];
   /** References whose secret the vault does not hold. */
   unresolvable: UnresolvableReference[];
   /** Stored secrets no reachable checkout references, as full references, sorted. */
@@ -96,7 +111,7 @@ export interface ProjectRefs {
  * the vault holds (`readStoredReferences`, or `listSecrets` on an open vault).
  */
 export function scanProjectRefs(projects: ProjectRecord[], stored: Set<string>): ProjectRefs {
-  const result: ProjectRefs = { checkouts: [], unreachable: [], unresolvable: [], unused: [] };
+  const result: ProjectRefs = { checkouts: [], unreachable: [], unreadable: [], unresolvable: [], unused: [] };
   const used = new Set<string>();
 
   for (const project of projects) {
@@ -106,21 +121,44 @@ export function scanProjectRefs(projects: ProjectRecord[], stored: Set<string>):
       continue;
     }
     const checkout: CheckoutReferences = { scope: project.name, rootPath: project.rootPath, files: [] };
-    for (const loaded of loadEnvFiles(detectProject(project.rootPath).envFiles)) {
-      const references = lineReferences(loaded.original).map((line) => {
+    const detected = detectProject(project.rootPath);
+    for (const name of detected.unreadableEnvFiles) {
+      result.unreadable.push({
+        scope: project.name,
+        rootPath: project.rootPath,
+        file: join(project.rootPath, name),
+        reason: "it could not be read (a broken symlink?)",
+      });
+    }
+    for (const info of detected.envFiles) {
+      // One unreadable file must not hide every other checkout's references.
+      let original: string;
+      try {
+        original = readFileSync(info.path, "utf8");
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        result.unreadable.push({
+          scope: project.name,
+          rootPath: project.rootPath,
+          file: info.path,
+          reason: code === "EACCES" || code === "EPERM" ? "permission denied" : `it could not be read (${code ?? "error"})`,
+        });
+        continue;
+      }
+      const references = lineReferences(original).map((line) => {
         const inVault = stored.has(`${line.ref.scope}/${line.ref.key}`);
         if (inVault) used.add(`${line.ref.scope}/${line.ref.key}`);
         else {
           result.unresolvable.push({
             scope: project.name,
             rootPath: project.rootPath,
-            file: loaded.info.path,
+            file: info.path,
             reference: line.reference,
           });
         }
         return { ...line, inVault };
       });
-      if (references.length > 0) checkout.files.push({ path: loaded.info.path, name: loaded.info.name, references });
+      checkout.files.push({ path: info.path, name: info.name, original, references });
     }
     result.checkouts.push(checkout);
   }

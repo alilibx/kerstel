@@ -57,7 +57,8 @@ Lists which project files reference which secrets, and which secrets nothing ref
   ```
 
 - `--by-key` inverts it: each secret, then the files that reference it, then the unresolvable references at the end.
-- Exit code `0` always. An unresolvable reference is information, not a failure; `doctor` is the tool that judges.
+- Exit code `0` whatever the scan finds. An unresolvable reference is information, not a failure; `doctor` is the tool that judges. The one exception is a vault whose names cannot be read (corrupt, or permission denied): that exits `1` naming the problem, rather than passing for an empty vault.
+- An env file in a reachable checkout that cannot be read is listed under "Could not read" and the scan goes on with the rest. While any checkout or file could not be read, the unused list is headed "Referenced by no project that could be read" with a note to check those first, since a secret on it may be used there. `uninstall` stops on an unreadable env file, since it cannot restore it, and restores from the same bytes the scan read, so its used and unused lists describe exactly the files it rewrites.
 
 ### 3.2 Audit rows (Next)
 

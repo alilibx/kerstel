@@ -96,7 +96,8 @@ test("the default view groups by scope, checkout and file", async () => {
   expect(out).toMatch(/\.env\.local\s+ks:web\/SESSION_SECRET\s+✗ not in the vault/);
   expect(out).toContain("Unreachable");
   expect(out).toMatch(new RegExp(`✗ legacy\\s+${join(base, "gone")}\\s+the folder no longer exists`));
-  expect(out).toContain("Referenced by no project\n  ks:global/OPENAI_API_KEY");
+  // legacy could not be read, so the unused list says it may be incomplete.
+  expect(out).toContain("Referenced by no project that could be read\n  ks:global/OPENAI_API_KEY");
   expect(out.startsWith("\n")).toBe(false);
   for (const value of VALUES) expect(out).not.toContain(value);
 });
@@ -142,4 +143,44 @@ test("uninstall's unresolvable and unused lists are the scan's", () => {
   } finally {
     vault.close();
   }
+});
+
+test.skipIf(process.getuid?.() === 0)("an unreadable env file is listed and the rest of the report goes on", async () => {
+  const { web, vaultFile, key } = fixture();
+  const { chmodSync } = await import("node:fs");
+  chmodSync(join(web, ".env.local"), 0o000);
+  try {
+    const { code, out } = await run([], vaultFile);
+    expect(code).toBe(0);
+    expect(out).toMatch(/Could not read\n\s+✗ web\s+\S+\.env\.local\s+permission denied/);
+    expect(out).toContain("ks:global/STRIPE_SECRET_KEY");
+    expect(out).toContain("Referenced by no project that could be read");
+    expect(out).toContain("Check the folders and files above before deleting any of these.");
+
+    // uninstall cannot restore a file it cannot read, so it stops.
+    const vault = openVault(key, vaultFile);
+    try {
+      expect(() => planUninstall(vault, key)).toThrow(/Cannot read .*\.env\.local: permission denied/);
+    } finally {
+      vault.close();
+    }
+  } finally {
+    chmodSync(join(web, ".env.local"), 0o644);
+  }
+});
+
+test("a vault that cannot be read is an error, not an empty vault", async () => {
+  const home = temp();
+  const vault = join(home, "vault.db");
+  writeFileSync(vault, "this is not a database");
+  const log = console.log;
+  const printed: string[] = [];
+  console.log = (...args: unknown[]) => printed.push(args.join(" "));
+  try {
+    expect((await run([], vault)).code).toBe(1);
+  } finally {
+    console.log = log;
+  }
+  expect(printed.join("\n")).toContain(`Could not read the vault at ${vault}`);
+  expect(printed.join("\n")).not.toContain("vault is empty");
 });
