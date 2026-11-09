@@ -41,7 +41,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [ ] See which project files reference which keys, in the UI and with `kerstel refs` ([#10](https://github.com/alilibx/kerstel/issues/10))
 - [ ] `kerstel init` at a monorepo root sets up every package with `.env` files in one run ([#34](https://github.com/alilibx/kerstel/issues/34))
 - [x] Shorter references: `KEY=ks:<scope>` when the variable and the vault key share a name, `ks:<scope>/<KEY>` otherwise, with `kerstel://` still accepted ([#36](https://github.com/alilibx/kerstel/issues/36))
-- [ ] `kerstel scan`: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value ([#52](https://github.com/alilibx/kerstel/issues/52))
+- [x] `kerstel scan`: find and classify every env file in a folder, a monorepo, or the whole machine, without printing a value ([#52](https://github.com/alilibx/kerstel/issues/52))
 
 ## 0.3.0: sync between your devices
 

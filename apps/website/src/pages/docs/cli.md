@@ -32,6 +32,21 @@ order: 2
 
 When the same key appears in several files, the highest-precedence one is stored: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence points at that single reference.
 
+## Finding secrets
+
+| Command | What it does |
+| --- | --- |
+| `kerstel scan [path] [--keys] [--all] [--json] [--verbose]` | Find every env file under a folder (the current one by default; `kerstel scan ~` covers your home folder) and report what each one holds, without printing a value or changing anything. It reads env files (`.env`, `.env.local`, `.env.production`, ...), backup copies (`.env.bak`, `.env~`, swap files, which are listed but not read), and templates (`.env.example`, `.env.sample`, ...). Each line is a **reference** (any of the three forms, checked against this vault by name, so there's no Keychain prompt and no `~/.kerstel` is created), a **secret** (what `init` would store because of the key's name, a URL with a password or a token in it, a known token prefix like `sk_live_` under any name, or a private key), **unclear** (`init` would store it only because it can't tell), or **config**. In a template only a real-looking token, URL password, query token or private key counts; `sk_test_xxx` and `postgres:postgres@localhost` are placeholders. Inside a git repository it says whether a file with secrets is tracked by git (flagged first, with the advice to rotate the keys, since they stay in history) or not ignored. Files are grouped by project (the nearest folder with a `package.json`) and monorepo, and the summary says what to do with each: run `kerstel init` in a project, delete a backup, or store the value of a nested env file `init` doesn't read with `kerstel set`. It never enters `node_modules`, `.git`, package manager caches, `~/.kerstel`, or `~/Library` on macOS, never follows a symlinked folder, and stays on one disk. On macOS, scanning `~` reads Desktop, Documents and Downloads, so the system may ask once whether your terminal can access them; folders you don't allow are counted as unreadable. Exits `1` when any secret is in plain text, `0` otherwise, and `2` for a folder that doesn't exist; unclear lines and unresolved references don't change the exit code, so it can run in CI or a cron job. |
+
+| Flag | What it does |
+| --- | --- |
+| `--keys` | Name each finding's key and line number under its file. Values are never shown. |
+| `--all` | List projects with nothing to do too. By default they're counted in one line. |
+| `--json` | Print one JSON object, described below, instead of the report. It always includes key names and line numbers. |
+| `--verbose` | List the folders that could not be read. |
+
+`--json` prints `{ root, folders, unreadable, git, projects }`. `git` is false when git isn't installed. Each project has `path`, `name`, `workspace` (its monorepo root, or `null`), `packageJson`, `scope` (the scope it's set up under, or `null`), and `files`. Each file has `name` (relative to the project, such as `docker/.env`), `kind` (`env`, `template`, or `backup`), `read`, `git` (`tracked`, `not-ignored`, `ignored`, or `null` outside a repository), `secrets` and `unclear` (lists of `{ key, line }`), `config` (a count), `references` (lists of `{ key, line, ref, inVault }`, with `ref` always in the full `ks:<scope>/<KEY>` form), and `unreadableLines` (line numbers). A change to this shape is a breaking change.
+
 ## Secrets
 
 | Command | What it does |

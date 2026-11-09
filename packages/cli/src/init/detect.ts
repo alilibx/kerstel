@@ -69,6 +69,17 @@ export function isBackupEnvFileName(name: string): boolean {
   return BACKUP_SUFFIXES.some((suffix) => base.endsWith(suffix));
 }
 
+/** `.env.example`, `.env.sample`, ... and their `.local` forms. Nothing loads them, but they are usually committed. */
+export function isTemplateEnvFileName(name: string): boolean {
+  if (!hasEnvPrefix(name) || isBackupEnvFileName(name)) return false;
+  return TEMPLATE_SUFFIXES.some((suffix) => withoutLocal(name).endsWith(suffix));
+}
+
+/** Vim's swap files are binary: listed by `scan`, never parsed. */
+export function isBinaryBackupName(name: string): boolean {
+  return isBackupEnvFileName(name) && /\.sw[po]$/.test(withoutLocal(name));
+}
+
 export function isEnvFileName(name: string): boolean {
   if (!hasEnvPrefix(name)) return false;
   if (isBackupEnvFileName(name)) return false;

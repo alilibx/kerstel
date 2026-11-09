@@ -52,6 +52,7 @@ ks exec -- <command>                              # Run a command with the hook 
 ks resolve ks:<scope>/<KEY>                       # Print one resolved value
 ks daemon <serve|start|stop|status>               # Manage the resolver daemon
 ks doctor [--verbose]                             # Diagnose this machine's setup
+ks scan [path] [--keys] [--all] [--json]          # Find env files that still hold secrets
 ks update [--check]                               # Install the latest release
 ks uninstall [--dry-run] [--yes] [--force]        # Restore every project, then remove Kerstel
 ks --version                                      # Print the version, and whether it's current
@@ -103,6 +104,14 @@ Useful flags:
 | `--from-stdin` | Reads `{"KEY": "value"}` JSON for keys this machine is missing. |
 
 `ks init` is idempotent: run it again after adding a key and it migrates only what is new.
+
+### Finding what's left
+
+```bash
+ks scan ~
+```
+
+`ks scan` walks a folder and reports every env file in it, grouped by project and monorepo: how many secrets each still holds in plain text, which references this vault lacks, which backup copies (`.env.bak`) and templates (`.env.example`) hold real keys, and which of those files git tracks. It prints counts, plus key names and line numbers with `--keys`, but never a value, and it changes nothing. It exits `1` when it finds a secret in plain text, so it works as a CI step; `--json` gives scripts the same report.
 
 ### One key, several files
 

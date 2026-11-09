@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.1.6 (unreleased)
 
+### Added
+
+- `kerstel scan [path]` finds every env file under a folder, a monorepo, or your home folder (`kerstel scan ~`), and reports what each holds without printing a value: secrets still in plain text, lines it can't classify, references this vault lacks, backup copies like `.env.bak`, templates like `.env.example` with real keys in them, and files git tracks. The summary says what to do with each, `--keys` names the keys and line numbers, `--json` gives scripts the same report, and it exits `1` when it finds a secret, so it can run in CI.
+
 ### Changed
 
 - References are shorter. `kerstel init` and `ks move` now write `OPENAI_API_KEY=ks:global` when the variable and the vault key share a name, and `ks:global/OPENAI_API_KEY` when they don't, or when another line of your env files copies the variable with `${OPENAI_API_KEY}`. References in the `kerstel://global/OPENAI_API_KEY` form keep working everywhere and are never rewritten for you. Messages show references as `ks:<scope>/<KEY>`, and `ks get`, `set`, `rm` and `resolve` accept every form. A project with `ks:` references needs this version of Kerstel on every machine that runs it, because older versions pass `ks:global` to the app as text; `kerstel doctor` shows how many references a project has in each form. If a short reference reaches a variable with another name and finds nothing, the error says which key it looked for and how to write the line.
