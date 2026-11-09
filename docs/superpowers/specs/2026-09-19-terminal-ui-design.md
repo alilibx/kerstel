@@ -36,7 +36,8 @@ Every screen in the UI has a plain command for pipes and scripts: `ls` for Secre
 Lists which project files reference which secrets, and which secrets nothing references.
 
 - For every registered checkout (one `projects` row each, see the monorepo spec), it runs `detectProject(root)` and `loadEnvFiles`, parses each `.env*` file with `parseDotenv`, and collects every reference value, `kerstel://` and the shorter `ks:` form that ships in the same release ([#36](https://github.com/alilibx/kerstel/issues/36)). The scan lives in a new module, `packages/cli/src/project-refs.ts`, which `uninstall`'s planner also calls for its `unresolvable` and `unused` lists, so the two cannot drift.
-- Existence comes from `listSecrets()`, so `refs` never decrypts a value. It reads project files and never writes them.
+- Existence is judged by name: `refs` reads the vault's `projects` rows and stored `scope/KEY` pairs without the data key (`readProjectRows`, `readStoredReferences`), the way `init --dry-run` does, so it never decrypts a value, never shows a Keychain prompt, and with no vault says so and creates nothing. `uninstall`'s planner passes the same pairs from `listSecrets()` on its open vault. It reads project files and never writes them.
+- A checkout is unreachable for the reasons `uninstall` gives (`unreachableReason` in `project-refs.ts`): its folder is gone, or it has no readable `package.json`. Unused secrets are listed by scope, then key, as `ks ls` lists them.
 - Default output groups by scope, then by checkout root, then by file:
 
   ```

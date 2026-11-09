@@ -152,6 +152,10 @@
 <td>List stored references, optionally for one scope. Values are never listed.</td>
 </tr>
 <tr>
+<td><code>kerstel refs [--by-key]</code></td>
+<td>Show which project files reference which secrets, across every folder <code>init</code> set up: grouped by scope, then folder, then env file, with each reference in the <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code> form. A reference the vault doesn&#39;t hold is marked <code>✗ not in the vault</code>. Then come the set-up folders it can&#39;t read (gone, or without a readable <code>package.json</code>) and the secrets no project references, which are the ones safe to delete. <code>--by-key</code> turns it around: each secret, then the files that reference it, which tells you what a rotation or <code>rm</code> touches. It reads only key names from the vault, never values, so it needs no Keychain access and works before any vault exists. It never changes a file, and it always exits <code>0</code>; <code>kerstel doctor</code> is the command that judges.</td>
+</tr>
+<tr>
 <td><code>kerstel rm &lt;scope&gt;/&lt;KEY&gt; --yes</code></td>
 <td>Remove a secret. <code>--yes</code> is required; there is no interactive confirmation.</td>
 </tr>

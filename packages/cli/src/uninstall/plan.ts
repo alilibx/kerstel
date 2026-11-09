@@ -6,6 +6,7 @@ import { collectKeys, loadEnvFiles, type LoadedEnvFile } from "../init/collect";
 import { detectProject, envFileRank } from "../init/detect";
 import { maskForDisplay } from "../init/display";
 import { entries, parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
+import { lineReferences, scanProjectRefs, unreachableReason } from "../project-refs";
 import { backupsDir } from "../paths";
 import { formatReference, parseReference } from "../reference";
 import type { Vault } from "../vault/store";
@@ -235,26 +236,31 @@ function collapsedValues(
  */
 export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   const plan = emptyPlan();
-  const used = new Set<string>();
+  const projects = vault.listProjects();
+  // Unresolvable and unused come from the same scan `kerstel refs` shows, so
+  // the two can never disagree about what is referenced. Terminal UI spec §3.1.
+  const refs = scanProjectRefs(
+    projects,
+    new Set(vault.listSecrets().map((secret) => `${secret.scope}/${secret.key}`)),
+  );
+  plan.unresolvable = refs.unresolvable.map((u) => ({ project: u.scope, file: u.file, reference: u.reference }));
+  plan.unused = refs.unused;
   // Every checkout of a scope shares its backups, so they are scanned once per
   // scope, after all its checkouts are restored. Insertion order is row order.
   const restoredByScope = new Map<string, Map<string, string>[]>();
   const registeredScopes = new Set<string>();
 
-  for (const project of vault.listProjects()) {
+  for (const project of projects) {
     registeredScopes.add(project.name);
     const root = project.rootPath;
     const unreachable = (reason: string) => plan.unreachable.push({ name: project.name, rootPath: root, reason });
 
-    if (!existsSync(root)) {
-      unreachable("the folder no longer exists");
+    const reason = unreachableReason(root);
+    if (reason) {
+      unreachable(reason);
       continue;
     }
     const packagePath = join(root, "package.json");
-    if (!existsSync(packagePath)) {
-      unreachable("it has no package.json");
-      continue;
-    }
     const packageSource = readFileSync(packagePath, "utf8");
     let unwired: ReturnType<typeof unwirePackageJson>;
     try {
@@ -268,19 +274,10 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
     const restoredContents = new Map<string, string>();
     for (const loaded of loadEnvFiles(detectProject(root).envFiles)) {
       const copy = parseDotenv(loaded.original);
-      for (let i = 0; i < copy.lines.length; i += 1) {
-        const line = copy.lines[i];
-        if (!line || line.kind !== "pair") continue;
-        const ref = parseReference(line.value, line.key);
-        if (!ref) continue;
-        const reference = formatReference(ref.scope, ref.key);
-        const value = vault.getSecret(ref);
-        if (value === null) {
-          plan.unresolvable.push({ project: project.name, file: loaded.info.path, reference });
-          continue;
-        }
-        used.add(reference);
-        restoreLineValue(copy, i, value);
+      for (const line of lineReferences(loaded.original)) {
+        // A secret the vault lacks is already in `plan.unresolvable`.
+        const value = vault.getSecret(line.ref);
+        if (value !== null) restoreLineValue(copy, line.index, value);
       }
       const after = serializeDotenv(copy);
       restoredContents.set(loaded.info.name, after);
@@ -352,11 +349,6 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
   // against everything the restore puts back.
   const everyRestored = [...restoredByScope.values()].flat();
   for (const scope of orphanBackupScopes(registeredScopes)) scan(scope, everyRestored);
-
-  plan.unused = vault
-    .listSecrets()
-    .map((secret) => formatReference(secret.scope, secret.key))
-    .filter((reference) => !used.has(reference));
 
   return plan;
 }
