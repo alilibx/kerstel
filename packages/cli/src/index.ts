@@ -5,6 +5,7 @@ import { initCommand } from "./commands/init";
 import { moveCommand } from "./commands/move";
 import { refsCommand } from "./commands/refs";
 import { runCommand } from "./commands/run";
+import { uiCommand } from "./commands/ui";
 import { scanCommand } from "./commands/scan";
 import { getCommand, lsCommand, resolveCommand, rmCommand, setCommand } from "./commands/secrets";
 import { uninstallCommand } from "./commands/uninstall";
@@ -30,6 +31,7 @@ const COMMANDS = `Usage:
   ${cliName()} get <scope>/<KEY> [--reveal]          Read a secret
   ${cliName()} ls [--scope <scope>]                  List stored references
   ${cliName()} refs [--by-key]                       Show which project files reference which secrets
+  ${cliName()} ui                                    Browse the vault and its references full screen
   ${cliName()} rm <scope>/<KEY> --yes                Remove a secret
   ${cliName()} run -- <command>                      Run a command with references resolved
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
@@ -105,6 +107,8 @@ export async function runCli(argv: string[]): Promise<number> {
       case "ls":
       case "list":
         return await lsCommand(args);
+      case "ui":
+        return await uiCommand(args);
       case "refs":
         return await refsCommand(args);
       case "rm":
