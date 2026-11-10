@@ -12,6 +12,7 @@ import { printBanner } from "../ui/banner";
 import { note, step } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
+import { glanceSync } from "../sync/background";
 import { githubReleases } from "../update/release-source";
 import { VERSION } from "../version";
 import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
@@ -190,6 +191,8 @@ export async function doctorCommand(
       releaseProblem: deps.releaseProblem ?? null,
       // Set-but-empty injects nothing, so it is not worth a warning.
       bunOptions: process.env.BUN_OPTIONS?.trim() ? process.env.BUN_OPTIONS : null,
+      sync: glanceSync(ctx.vault.file),
+      now: Date.now(),
     };
 
     const checks = gatherChecks(facts);

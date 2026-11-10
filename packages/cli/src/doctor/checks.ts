@@ -1,6 +1,7 @@
 import { LAUNCHER_FORMAT, LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
+import { STALE_SYNC_MS, type SyncGlance } from "../sync/background";
 import { compareVersions } from "../update/versions";
 
 /** A path as the shell needs it pasted: unchanged when safe, single-quoted otherwise. */
@@ -47,6 +48,10 @@ export interface DoctorFacts {
   releaseProblem?: string | null;
   /** `BUN_OPTIONS` as this process saw it, or null when unset. */
   bunOptions: string | null;
+  /** Sync, as `vault.db` records it. Omitted: the row is left out. */
+  sync?: SyncGlance;
+  /** The time `sync` is judged against. */
+  now?: number;
 }
 
 /** "macos" -> "macOS Keychain", etc. Falls back to the raw name if new. */
@@ -159,6 +164,44 @@ function daemonCheck(facts: DoctorFacts): Check {
     label: "Daemon",
     detail: "idle — starts on its own the first time a script needs a secret",
   };
+}
+
+/** "3 minutes ago", for a time in the past. */
+export function ago(ms: number, now: number): string {
+  const minutes = Math.floor((now - ms) / 60_000);
+  if (minutes < 1) return "just now";
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"} ago`;
+  if (minutes < 60) return unit(minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return unit(hours, "hour");
+  return unit(Math.floor(hours / 24), "day");
+}
+
+/** Sync spec §10: off; or the server, the last successful sync, pending pushes and open conflicts. */
+function syncCheck(facts: DoctorFacts): Check | null {
+  const sync = facts.sync;
+  if (!sync) return null;
+  if (!sync.on) return { group: "machine", status: "info", label: "Sync", detail: "off" };
+  const now = facts.now ?? Date.now();
+  const parts = [
+    sync.server ?? "unknown server",
+    sync.lastOk === null ? "never synced" : `last synced ${ago(sync.lastOk, now)}`,
+  ];
+  if (sync.pending > 0) parts.push(`${sync.pending} change${sync.pending === 1 ? "" : "s"} to push`);
+  if (sync.conflicts > 0) parts.push(`${sync.conflicts} conflict${sync.conflicts === 1 ? "" : "s"}`);
+  const fix = `${facts.cli} sync`;
+  const detail = parts.join(" · ");
+  if (sync.conflicts > 0) {
+    return { group: "machine", status: "warn", label: "Sync", detail, fix: `${fix}, to choose which value stays` };
+  }
+  // A failure only matters while it is the latest word: one a later sync got past is history.
+  if (sync.lastError !== null) {
+    return { group: "machine", status: "warn", label: "Sync", detail: `${detail} · the last sync failed: ${sync.lastError}`, fix };
+  }
+  if (sync.lastOk === null || now - sync.lastOk > STALE_SYNC_MS) {
+    return { group: "machine", status: "warn", label: "Sync", detail: `${detail} · more than 7 days without a sync`, fix };
+  }
+  return { group: "machine", status: "pass", label: "Sync", detail };
 }
 
 function runtimeHookCheck(facts: DoctorFacts): Check {
@@ -388,6 +431,9 @@ export function gatherChecks(facts: DoctorFacts): Check[] {
     runtimeHookCheck(facts),
     permissionsCheck(facts),
   ];
+
+  const sync = syncCheck(facts);
+  if (sync) checks.push(sync);
 
   const environment = environmentCheck(facts);
   if (environment) checks.push(environment);

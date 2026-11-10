@@ -2,7 +2,7 @@
 
 The self-hostable sync server for Kerstel. It stores only ciphertext. It never sees a scope name, a key name, a value, a project path or a hostname. The design is in [`docs/superpowers/specs/2026-11-08-sync-between-devices-design.md`](../../docs/superpowers/specs/2026-11-08-sync-between-devices-design.md).
 
-> **Preview.** No release includes the server yet, and the `ks sync` client has not shipped. The protocol may change before 0.3.0.
+> **Preview.** No release includes the server or the `ks sync` client yet; both ship in 0.3.0. The protocol may change before then. The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflicts.
 
 ## Run it
 

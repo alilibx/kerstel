@@ -89,6 +89,8 @@ export interface Vault {
   /** Runs `work` in one SQLite transaction: every write in it lands, or none does. */
   transaction<T>(work: () => T): T;
   sync: SyncTable;
+  /** The vault file, so a sync can take the lock beside it. */
+  readonly file: string;
   close(): void;
 }
 
@@ -239,6 +241,7 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
   };
 
   return {
+    file: target,
     sync,
 
     setSecret(ref: SecretRef, value: string): void {

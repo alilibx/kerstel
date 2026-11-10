@@ -2,7 +2,7 @@
 title: Deploying
 description: Deploy hosts do not need Kerstel. What the launcher does there, where the values come from, and the one mistake to avoid.
 section: docs
-order: 5
+order: 6
 ---
 # Deploying
 

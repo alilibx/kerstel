@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { howItWorksNote } from "../src/commands/doctor";
 import { backendLabel, exitCode, gatherChecks, type DoctorFacts } from "../src/doctor/checks";
 import type { ProjectStatus } from "../src/init/status";
+import type { SyncGlance } from "../src/sync/background";
 
 const HOME = "/home/kerstel/.kerstel";
 const TOKEN = `${HOME}/session.token`;
@@ -560,4 +561,43 @@ test("Checkouts: named when other checkouts of the scope exist, absent otherwise
     detail: "Also checked out at /wt/api, /b/api",
   });
   expect(gatherChecks(allPassFacts()).some((c) => c.label === "Checkouts")).toBe(false);
+});
+
+describe("Sync", () => {
+  const NOW = Date.UTC(2026, 10, 10, 12);
+  const on: SyncGlance = {
+    on: true,
+    pending: 0,
+    conflicts: 0,
+    server: "https://sync.example.com",
+    lastOk: NOW - 3 * 60_000,
+    lastTry: NOW - 3 * 60_000,
+    lastError: null,
+  };
+  const sync = (state: Partial<SyncGlance>) => checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, now: NOW })), "Sync");
+
+  test("absent when not gathered, and off when sync is off", () => {
+    expect(checkFor(gatherChecks(allPassFacts()), "Sync")).toBeUndefined();
+    expect(sync({ on: false })).toMatchObject({ status: "info", detail: "off" });
+  });
+
+  test("on and current: the server, the last sync, and what waits", () => {
+    expect(sync({})).toMatchObject({ status: "pass", detail: "https://sync.example.com · last synced 3 minutes ago" });
+    expect(sync({ pending: 2 })?.detail).toContain("2 changes to push");
+  });
+
+  test("warns on an open conflict, a failed last sync, and a week without one", () => {
+    const conflict = sync({ conflicts: 1 });
+    expect(conflict).toMatchObject({ status: "warn", fix: "ks sync, to choose which value stays" });
+    expect(conflict?.detail).toContain("1 conflict");
+    const failed = sync({ lastError: "Could not reach https://sync.example.com: connect ECONNREFUSED" });
+    expect(failed?.status).toBe("warn");
+    expect(failed?.detail).toContain("the last sync failed: Could not reach");
+    const stale = sync({ lastOk: NOW - 8 * 24 * 60 * 60_000 });
+    expect(stale?.status).toBe("warn");
+    expect(stale?.detail).toContain("last synced 8 days ago · more than 7 days without a sync");
+    expect(sync({ lastOk: null })?.detail).toContain("never synced");
+    // Warnings, not problems: doctor still exits 0.
+    expect(exitCode(gatherChecks(allPassFacts({ sync: { ...on, conflicts: 1 }, now: NOW })))).toBe(0);
+  });
 });

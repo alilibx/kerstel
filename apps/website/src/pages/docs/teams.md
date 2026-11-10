@@ -43,7 +43,7 @@ printf %s "$DATABASE_URL" | kerstel set myapp/DATABASE_URL
 kerstel ls --scope myapp
 ```
 
-`kerstel ls --scope myapp` shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no sync, no shared account, and nothing to configure between teammates.
+`kerstel ls --scope myapp` shows what your vault already holds, which is a good way to confirm every key landed before you run the app. The vault stays on that machine. Kerstel has no shared account and nothing to configure between teammates.
 
 ## Share values out of band
 
@@ -61,4 +61,4 @@ No project file changes, no commit, no redeploy of configuration. Restart the ap
 
 ## Coming later
 
-The roadmap includes optional end-to-end encrypted sync and shared vaults, with keys that stay on your devices. Until then the workflow above needs nothing beyond git and the CLI.
+[Sync](/docs/sync) keeps one person's vault on all their devices; it is not a way to share one between teammates. Shared vaults are on the roadmap. Until they ship, the workflow above needs nothing beyond git and the CLI.
