@@ -14,6 +14,7 @@ import { updateCommand, versionCommand } from "./commands/update";
 import { isScrubbedEnvironment } from "./daemon/env";
 import { bold, fail } from "./output";
 import { ignoreProjectSettings } from "./project-env";
+import { conflictLine, syncAfterCommand, syncBeforeCommand } from "./sync/background";
 import { printBanner } from "./ui/banner";
 import { cliName } from "./ui/cli-name";
 import { detectTheme, makeTheme, theme } from "./ui/theme";
@@ -40,6 +41,8 @@ const COMMANDS = `Usage:
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
   ${cliName()} sync setup <url> | status | devices | off
                                                 Sync the vault between your devices
+  ${cliName()} sync add-device | join <url> <code> | remove-device <name>
+                                                Pair a device, or remove one
   ${cliName()} sync [--keep local|remote]            Pull, push, and settle conflicts
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
   ${cliName()} scan [path] [--keys] [--all] [--json]
@@ -98,52 +101,66 @@ export async function runCli(argv: string[]): Promise<number> {
     });
   }
 
+  // Not in a background sync or the daemon: nobody reads their stderr, and they start no sync of their own.
+  const background = isScrubbedEnvironment();
+  if (!background) {
+    const conflicts = conflictLine(command, cliName());
+    // stderr, so a value `resolve` prints on stdout stays clean.
+    if (conflicts) process.stderr.write(`${makeTheme(detectTheme(process.stderr)).yellow(conflicts)}\n`);
+    syncBeforeCommand(command);
+  }
   try {
-    switch (command) {
-      case "init":
-        return await initCommand(args);
-      case "move":
-        return await moveCommand(args);
-      case "set":
-        return await setCommand(args);
-      case "get":
-        return await getCommand(args);
-      case "ls":
-      case "list":
-        return await lsCommand(args);
-      case "ui":
-        return await uiCommand(args);
-      case "refs":
-        return await refsCommand(args);
-      case "rm":
-      case "remove":
-        return await rmCommand(args);
-      case "run":
-        return await runCommand(args);
-      case "exec":
-        return await execCommand(args);
-      case "resolve":
-        return await resolveCommand(args);
-      case "daemon":
-        return await daemonCommand(args);
-      case "doctor":
-        return await doctorCommand(args);
-      case "sync":
-        return await syncCommand(args);
-      case "scan":
-        return await scanCommand(args);
-      case "uninstall":
-        return await uninstallCommand(args);
-      case "update":
-        return await updateCommand(args);
-      default:
-        fail(`Unknown command "${command}".`);
-        console.log(COMMANDS);
-        return 2;
-    }
+    return await dispatch(command, args);
   } catch (error) {
     fail((error as Error).message);
     return 1;
+  } finally {
+    if (!background) syncAfterCommand(command, args);
+  }
+}
+
+async function dispatch(command: string, args: string[]): Promise<number> {
+  switch (command) {
+    case "init":
+      return await initCommand(args);
+    case "move":
+      return await moveCommand(args);
+    case "set":
+      return await setCommand(args);
+    case "get":
+      return await getCommand(args);
+    case "ls":
+    case "list":
+      return await lsCommand(args);
+    case "ui":
+      return await uiCommand(args);
+    case "refs":
+      return await refsCommand(args);
+    case "rm":
+    case "remove":
+      return await rmCommand(args);
+    case "run":
+      return await runCommand(args);
+    case "exec":
+      return await execCommand(args);
+    case "resolve":
+      return await resolveCommand(args);
+    case "daemon":
+      return await daemonCommand(args);
+    case "doctor":
+      return await doctorCommand(args);
+    case "sync":
+      return await syncCommand(args);
+    case "scan":
+      return await scanCommand(args);
+    case "uninstall":
+      return await uninstallCommand(args);
+    case "update":
+      return await updateCommand(args);
+    default:
+      fail(`Unknown command "${command}".`);
+      console.log(COMMANDS);
+      return 2;
   }
 }
 

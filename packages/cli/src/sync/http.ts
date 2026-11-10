@@ -24,6 +24,9 @@ import {
 
 export type Fetch = (request: Request) => Promise<Response>;
 
+/** How long one request may take. A server that never answers must not hold the sync lock, or a background sync, forever. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
 export class SyncHttpError extends Error {
   constructor(
     readonly status: number,
@@ -57,6 +60,7 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
         headers: raw === null ? headers : { ...headers, "content-type": "application/json" },
         body: raw ?? undefined,
         redirect: "manual",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       }),
     );
   } catch (error) {
@@ -69,7 +73,12 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
       `${server} answered with a redirect, which Kerstel does not follow for sync. Use the server's final URL.`,
     );
   }
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new SyncHttpError(0, "unreachable", `Could not read ${server}'s answer: ${(error as Error).message}`);
+  }
   if (!response.ok) {
     let parsed: Partial<ErrorBody> = {};
     try {

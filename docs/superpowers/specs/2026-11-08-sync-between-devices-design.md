@@ -193,9 +193,11 @@ The secret is long because the server could otherwise guess it offline from the 
 ### 8.1 When it runs
 
 - `ks sync` runs a pull and then a push in the foreground, and reports what changed.
-- After any command that writes the vault (`set`, `rm`, `init`, `move`), Kerstel starts a detached `kerstel sync --background`.
-- `run` and `exec` start a background pull when the last successful sync is more than five minutes old. The command never waits for it, so a value pulled after the app starts reaches the next run.
-- One lock file, `~/.kerstel/sync.lock`, keeps background syncs from overlapping.
+- After any command that writes the vault (`set`, `rm`, `init`, `move`, `ui`) and leaves changes to push, Kerstel starts a detached `kerstel sync --background`: a pull and a push, in its own session so closing the terminal does not end it.
+- `run` and `exec` start the same background sync when no sync has finished, successfully or not, in the last five minutes. Counting failures too keeps an unreachable server from costing a process on every run. It also pushes whatever an earlier offline write left pending. The command never waits for it, so a value pulled after the app starts reaches the next run.
+- A background sync prints nothing. It records its result in `vault_meta` for `ks sync status` and `doctor`, and keeps a conflict open rather than choosing (§8.4).
+- Its environment is the daemon's allowlist plus proxy and CA settings (`HTTPS_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and the like). Like the daemon, it never inherits `BUN_OPTIONS`, `NODE_OPTIONS`, or values an outer `exec` resolved.
+- One lock file, `~/.kerstel/sync.lock`, beside the vault, keeps syncs from overlapping. The lock is an exclusive SQLite transaction on that file, so the operating system holds it and frees it when the process ends, however it ends; nothing ever judges a lock stale and takes it over. A background sync that finds it held waits up to two minutes, because the holder may have collected its changes before the write that started this one. Once it has the lock, it exits if a sync finished after it started and left nothing to push. Pairing (`add-device`, `join`) can hold the lock for longer than that, so when it finishes it starts a background sync of its own if changes wait to be pushed. A sync you start waits up to 30 seconds. Every request times out after 60 seconds, so no sync holds the lock for long.
 
 The daemon does not sync and opens no network connection. It reads `vault.db` on each resolve, but a running app keeps the values it already has: the hook caches each resolved value for the life of the process, and under Bun it writes every value into `Bun.env` at startup. A pulled value reaches an app when the app restarts, or when it reads a key it hasn't read yet. This keeps network code out of the process that holds the data key for every running app.
 

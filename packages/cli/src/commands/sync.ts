@@ -33,6 +33,7 @@ import {
   type SyncContext,
   type SyncReport,
 } from "../sync/engine";
+import { syncLockPath, waitForSyncLock } from "../sync/background";
 import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
 import {
   forgetSync,
@@ -43,6 +44,7 @@ import {
   recordResult,
   saveSync,
   setFullPull,
+  SYNC_META,
   writeSync,
   type SyncConfig,
 } from "../sync/state";
@@ -143,13 +145,46 @@ async function waitFor<T>(check: () => Promise<T | null>, everyMs: number, deps:
   return null;
 }
 
+/** How long a sync you started waits for a background one to finish. */
+const LOCK_WAIT_MS = 30_000;
+/** How long a background sync waits for the one before it, which may be a pairing that takes minutes. */
+const BACKGROUND_LOCK_WAIT_MS = 2 * 60_000;
+
+/**
+ * Opens the vault and takes the sync lock beside it (§8.1), so this sync and a
+ * background one never pull, push or rotate at the same time. Closing the
+ * vault releases the lock.
+ */
+function lockedOpen(open: () => Promise<CliContext>): () => Promise<CliContext> {
+  return async () => {
+    const ctx = await open();
+    const lock = syncLockPath(ctx.vault.file);
+    const release = await waitForSyncLock(lock, LOCK_WAIT_MS);
+    if (!release) {
+      ctx.vault.close();
+      throw new Error(`Another sync is still running on this device. Try again in a moment, or delete ${lock} if none is.`);
+    }
+    const close = ctx.vault.close;
+    ctx.vault.close = () => {
+      try {
+        close();
+      } finally {
+        release();
+      }
+    };
+    return ctx;
+  };
+}
+
 export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
-  const open = deps.context ?? (() => openContext());
+  const plain = deps.context ?? (() => openContext());
+  const open = lockedOpen(plain);
 
+  if (sub === "--background") return background(rest, deps, plain);
   if (sub === "setup") return setup(rest, deps, open);
-  if (sub === "status") return status(rest, open);
-  if (sub === "devices") return devices(rest, deps, open);
+  if (sub === "status") return status(rest, plain);
+  if (sub === "devices") return devices(rest, deps, plain);
   if (sub === "off") return off(rest, deps, open);
   if (sub === "add-device") return addDevice(rest, deps, open);
   if (sub === "join") return join(rest, deps, open);
@@ -301,6 +336,45 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       return 1;
     }
     return await finish(sync, report, { keep, reveal, deps });
+  } finally {
+    ctx.vault.close();
+  }
+}
+
+/**
+ * `kerstel sync --background`, started detached after a write and before
+ * `run` or `exec` (§8.1). Nobody sees its output, so it prints nothing: the
+ * result goes to `vault_meta` for `sync status` and `doctor`, and a conflict
+ * is kept, never chosen (§8.4), for the line every command prints. When
+ * another sync holds the lock, that one does the work.
+ */
+async function background(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
+  if (args.length > 0) return 2;
+  const started = Date.now();
+  const ctx = await open();
+  try {
+    if (ctx.vault.getMeta(SYNC_META.vaultId) === null) return 0;
+    // Waits rather than leaving the work to the holder: it may have collected
+    // its changes before the write that started this sync.
+    const release = await waitForSyncLock(syncLockPath(ctx.vault.file), BACKGROUND_LOCK_WAIT_MS);
+    if (!release) return 0;
+    try {
+      // Read after the wait: the holder may have replaced the key, or turned sync off.
+      const sync = contextFor(ctx, deps);
+      if (!sync) return 0;
+      // A sync that finished after this one started, and left nothing to push, did its work.
+      const lastTry = Number(ctx.vault.getMeta(SYNC_META.lastTry) ?? "0");
+      const pending = ctx.vault.sync.rows().some((row) => row.dirty && row.conflict === null);
+      if (lastTry >= started && !pending) return 0;
+      await syncOnce(sync);
+      recordResult(ctx.vault, null);
+    } catch (error) {
+      recordResult(ctx.vault, explain(error));
+      return 1;
+    } finally {
+      release();
+    }
+    return 0;
   } finally {
     ctx.vault.close();
   }

@@ -75,12 +75,13 @@ describe("build output", () => {
   });
 
   test("docs pages share the docs navigation in a fixed order", () => {
-    const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams", "/docs/deploying"];
+    const expectedOrder = ["/docs/getting-started", "/docs/cli", "/docs/how-it-works", "/docs/teams", "/docs/sync", "/docs/deploying"];
     for (const file of [
       "docs/getting-started.html",
       "docs/cli.html",
       "docs/how-it-works.html",
       "docs/teams.html",
+      "docs/sync.html",
       "docs/deploying.html",
     ]) {
       const html = readFileSync(join(out, file), "utf8");

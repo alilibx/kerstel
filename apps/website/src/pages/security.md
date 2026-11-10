@@ -34,7 +34,7 @@ No plaintext secret sits in a project file. Your `.env`, `.env.local`, and their
 
 The values live in one vault on your machine, at `~/.kerstel/vault.db`. Kerstel has no account, collects no telemetry, and listens on no network port.
 
-The only network traffic is the update check and download against GitHub Releases, or the mirror named by `KERSTEL_RELEASES_URL`. That request carries nothing about your vault or your secrets, and nothing about you beyond what any web request carries: your IP address, and for the download the platform in the binary's filename. Only `kerstel update`, `kerstel --version` (or `kerstel version`) on a terminal, and `kerstel doctor` make it. Every other command, the runtime hook, and the resolver daemon never touch the network.
+Kerstel is offline apart from the update check, and sync if you turn it on. The update check and download go to GitHub Releases, or the mirror named by `KERSTEL_RELEASES_URL`. That request carries nothing about your vault or your secrets, and nothing about you beyond what any web request carries: your IP address, and for the download the platform in the binary's filename. Only `kerstel update`, `kerstel --version` (or `kerstel version`) on a terminal, and `kerstel doctor` make it. Sync talks only to the server you set it up with, and sends it only ciphertext; see **Sync** below. The runtime hook and the resolver daemon never touch the network.
 
 ## Encryption at rest
 
@@ -55,6 +55,31 @@ The resolver daemon unlocks the vault once and answers over a Unix socket inside
 The daemon is started with a small allowlisted environment of its own and from `~/.kerstel` rather than your project, so neither a `BUN_OPTIONS` set in your shell nor any env file can run code in, or reconfigure, the process holding the vault key. `kerstel doctor` warns when `BUN_OPTIONS` is set, because the one-shot commands still honour it.
 
 Kerstel's own `KERSTEL_*` settings are never taken from the project it is protecting. The binary is a Bun runtime, so it loads the working directory's `.env`, and that file is committed by design; a cloned repository could otherwise point your vault at a directory inside itself or force the weaker key file. Any `KERSTEL_*` an env file there names is dropped before a command reads it, and named on stderr.
+
+## Sync
+
+Sync is off until you run `kerstel sync setup <url>`, and it talks only to a `kerstel-server` you choose: an `https://` URL, or `http://` to this machine. Values are encrypted on your device with a sync key that only your devices hold. A device already in the vault seals it to each new one when you pair them, and you confirm the new device by its key fingerprint first. The daemon never syncs and never opens a network connection.
+
+| The server sees | The server never sees |
+| --- | --- |
+| A random vault ID | Scope names, key names, values |
+| Each device's random ID and public keys | Device names and hostnames |
+| How many records a vault holds, their sizes, and when they change | Project paths, `.env` contents, backups |
+| Opaque record IDs, and which of them are deletions | Which record is which key |
+| The IP address of each request | The sync key or any data key |
+
+What a hostile server, or anyone who takes it over, can do:
+
+| Attack | Result |
+| --- | --- |
+| Read or change a record | Fails. Each record is AES-256-GCM with the vault ID, record ID and key epoch as associated data, so a changed or moved record fails to decrypt and is reported. |
+| Add a device of its own | Fails. Adding a device takes a signature from a device already in the vault, and the sync key is sealed only to a device you confirmed. |
+| List a key of its own for a device, so that removing a device seals the new sync key to the server | Fails. Each device's name is sealed with the sync key together with the public keys it was added with, and the new key is sealed only to devices whose listed keys match. `kerstel sync devices` marks a device whose keys don't match. |
+| Serve an old copy of a value | Partly detected. Each device refuses a vault revision lower than the highest it has seen, but the server could resend an older record under a new revision. The value it replaces is kept in the sync backup. |
+| Withhold changes from one device | Not prevented. Sync stops making progress, and `kerstel doctor` shows when each device last synced. |
+| Delete the vault | Possible. Every device still has its full local vault, and `kerstel sync setup` can upload it to a new server. |
+
+Removing a device replaces the sync key, but the removed device already had every value. Rotate a secret at its provider if that device should no longer hold it.
 
 ## Supply chain
 

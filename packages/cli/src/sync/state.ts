@@ -8,7 +8,7 @@ import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
  * key, as every value in the vault is; the rest is not secret.
  */
 
-const META = {
+export const SYNC_META = {
   vaultId: SYNC_VAULT_META,
   server: "sync_server",
   deviceId: "sync_device_id",
@@ -19,6 +19,8 @@ const META = {
   head: "sync_head",
   lastOk: "sync_last_ok",
   lastError: "sync_last_error",
+  /** When a sync last finished, either way: background syncs wait five minutes after it. */
+  lastTry: "sync_last_try",
   /** Set with a new key until the full pull that follows it finishes. */
   fullPull: "sync_full_pull",
 } as const;
@@ -46,7 +48,7 @@ function unsealed(value: string, dataKey: Buffer): string {
 
 export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
   const get = (k: string) => vault.getMeta(k);
-  const vaultId = get(META.vaultId);
+  const vaultId = get(SYNC_META.vaultId);
   if (vaultId === null) return null;
   const need = (k: string): string => {
     const v = get(k);
@@ -54,16 +56,16 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
     return v;
   };
   return {
-    server: need(META.server),
+    server: need(SYNC_META.server),
     vaultId,
-    deviceId: need(META.deviceId),
-    epoch: Number(need(META.epoch)),
-    syncKey: Buffer.from(unsealed(need(META.syncKey), dataKey), "base64"),
+    deviceId: need(SYNC_META.deviceId),
+    epoch: Number(need(SYNC_META.epoch)),
+    syncKey: Buffer.from(unsealed(need(SYNC_META.syncKey), dataKey), "base64"),
     keys: {
-      sign: importPrivateKey(unsealed(need(META.signKey), dataKey)),
-      enc: importPrivateKey(unsealed(need(META.encKey), dataKey)),
+      sign: importPrivateKey(unsealed(need(SYNC_META.signKey), dataKey)),
+      enc: importPrivateKey(unsealed(need(SYNC_META.encKey), dataKey)),
     },
-    head: Number(get(META.head) ?? "0"),
+    head: Number(get(SYNC_META.head) ?? "0"),
   };
 }
 
@@ -77,47 +79,48 @@ export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): voi
 
 /** `saveSync` without its own transaction, for a caller that holds one. */
 export function writeSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
-  vault.setMeta(META.server, config.server);
-  vault.setMeta(META.deviceId, config.deviceId);
-  vault.setMeta(META.epoch, String(config.epoch));
-  vault.setMeta(META.syncKey, sealed(config.syncKey.toString("base64"), dataKey));
-  vault.setMeta(META.signKey, sealed(exportPrivateKey(config.keys.sign), dataKey));
-  vault.setMeta(META.encKey, sealed(exportPrivateKey(config.keys.enc), dataKey));
-  vault.setMeta(META.head, String(config.head));
-  vault.setMeta(META.vaultId, config.vaultId);
+  vault.setMeta(SYNC_META.server, config.server);
+  vault.setMeta(SYNC_META.deviceId, config.deviceId);
+  vault.setMeta(SYNC_META.epoch, String(config.epoch));
+  vault.setMeta(SYNC_META.syncKey, sealed(config.syncKey.toString("base64"), dataKey));
+  vault.setMeta(SYNC_META.signKey, sealed(exportPrivateKey(config.keys.sign), dataKey));
+  vault.setMeta(SYNC_META.encKey, sealed(exportPrivateKey(config.keys.enc), dataKey));
+  vault.setMeta(SYNC_META.head, String(config.head));
+  vault.setMeta(SYNC_META.vaultId, config.vaultId);
 }
 
 export function needsFullPull(vault: Vault): boolean {
-  return vault.getMeta(META.fullPull) !== null;
+  return vault.getMeta(SYNC_META.fullPull) !== null;
 }
 
 export function setFullPull(vault: Vault, on: boolean): void {
-  if (on) vault.setMeta(META.fullPull, "1");
-  else vault.deleteMeta(META.fullPull);
+  if (on) vault.setMeta(SYNC_META.fullPull, "1");
+  else vault.deleteMeta(SYNC_META.fullPull);
 }
 
 export function saveHead(vault: Vault, head: number): void {
-  vault.setMeta(META.head, String(head));
+  vault.setMeta(SYNC_META.head, String(head));
 }
 
 export function recordResult(vault: Vault, error: string | null): void {
+  vault.setMeta(SYNC_META.lastTry, String(Date.now()));
   if (error === null) {
-    vault.setMeta(META.lastOk, String(Date.now()));
-    vault.deleteMeta(META.lastError);
+    vault.setMeta(SYNC_META.lastOk, String(Date.now()));
+    vault.deleteMeta(SYNC_META.lastError);
   } else {
-    vault.setMeta(META.lastError, error);
+    vault.setMeta(SYNC_META.lastError, error);
   }
 }
 
 export function lastResult(vault: Vault): { lastOk: number | null; lastError: string | null } {
-  const ok = vault.getMeta(META.lastOk);
-  return { lastOk: ok === null ? null : Number(ok), lastError: vault.getMeta(META.lastError) };
+  const ok = vault.getMeta(SYNC_META.lastOk);
+  return { lastOk: ok === null ? null : Number(ok), lastError: vault.getMeta(SYNC_META.lastError) };
 }
 
 /** Turns sync off here: every setting and every row of `sync_state`. Secrets stay. */
 export function forgetSync(vault: Vault): void {
-  vault.deleteMeta(META.vaultId);
-  for (const key of Object.values(META)) vault.deleteMeta(key);
+  vault.deleteMeta(SYNC_META.vaultId);
+  for (const key of Object.values(SYNC_META)) vault.deleteMeta(key);
   vault.sync.clear();
 }
 

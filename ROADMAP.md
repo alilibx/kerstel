@@ -45,7 +45,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## 0.3.0: sync between your devices
 
-- [ ] Optional end-to-end encrypted sync of the vault between your own devices with `ks sync`, with keys that stay on your devices and conflicts asked about, never overwritten ([#18](https://github.com/alilibx/kerstel/issues/18))
+- [x] Optional end-to-end encrypted sync of the vault between your own devices with `ks sync`, with keys that stay on your devices and conflicts asked about, never overwritten ([#18](https://github.com/alilibx/kerstel/issues/18))
 - [ ] `kerstel-server`: a self-hostable sync server, as a binary and a Docker image, that stores only ciphertext ([#81](https://github.com/alilibx/kerstel/issues/81))
 - [x] Pair a new device with a one-time code confirmed on a device you already have, and remove a device, which replaces the sync key ([#82](https://github.com/alilibx/kerstel/issues/82))
 
