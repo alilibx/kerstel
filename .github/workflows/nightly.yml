@@ -157,7 +157,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > notes.md <<NOTES
-          **Preview build of \`kerstel-server\` from \`main\` at ${SHA:0:7}.** Not a release: it can change or break at any time, and the protocol may change before 0.3.0. The \`ks sync\` client has not shipped yet.
+          **Preview build of \`kerstel-server\` from \`main\` at ${SHA:0:7}.** Not a release: it can change or break at any time, and the protocol may change before 0.3.0. The \`ks sync\` client that talks to it is on \`main\` and ships in 0.3.0; until then, build the CLI from source to try it.
 
           Version \`$VERSION\`. Verify a download with \`SHA256SUMS\`.
 
