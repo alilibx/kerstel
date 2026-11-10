@@ -815,6 +815,11 @@ describe("pairing, joining and removing devices", () => {
     expect((await sync(c, s, ["off"])).code).toBe(0);
     expect(c.with((v) => [loadSync(v, c.key), v.getSecret(ref("app", "DB"))])).toEqual([null, "db-1"]);
 
+    // Before B syncs, the new names are sealed with a key it does not have yet: that is not a mismatch.
+    const stale = (await sync(b, s, ["devices"])).out;
+    expect(stale).toContain("name sealed with a newer key");
+    expect(stale).not.toContain("unverified");
+
     // B adopts the new key and sees both the pushed change and the deletion.
     expect((await sync(b, s)).code).toBe(0);
     expect(b.with((v) => [v.getSecret(ref("app", "DB")), v.getSecret(ref("app", "GONE"))])).toEqual(["db-2", null]);

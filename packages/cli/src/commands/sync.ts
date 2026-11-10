@@ -7,6 +7,7 @@ import {
   generateDeviceKeys,
   generateSyncKey,
   newPairingSecret,
+  openName,
   verifiedName,
   openPairingAnswer,
   openSyncKey,
@@ -441,7 +442,13 @@ async function devices(args: string[], deps: SyncDeps, open: () => Promise<CliCo
     }
     for (const d of list) {
       const name = verifiedName(sync.config.syncKey, sync.config.vaultId, d);
-      const label = name ? `${name.name}${name.platform ? ` (${name.platform})` : ""}` : yellow("(unverified: its keys do not match its sealed name)");
+      // A name this key cannot open was sealed after a rotation elsewhere: a sync picks up the new key.
+      // A name it opens whose keys differ from the listed ones is a real mismatch.
+      const label = name
+        ? `${name.name}${name.platform ? ` (${name.platform})` : ""}`
+        : openName(sync.config.syncKey, sync.config.vaultId, d.id, d.sealedName)
+          ? yellow("(unverified: its keys do not match its sealed name)")
+          : dim(`(name sealed with a newer key: run ${cliName()} sync to read it)`);
       const me = d.id === sync.config.deviceId ? `  ${dim("this device")}` : "";
       console.log(
         `${label}  ${dim(fingerprint(d.signPub))}  added ${when(d.addedAt)}  last seen ${when(d.lastSeen)}${me}`,
