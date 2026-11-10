@@ -5,13 +5,13 @@ import type { RecordOut } from "../../../server/src/protocol";
 import { cliName } from "../ui/cli-name";
 import {
   generateSyncKey,
-  openName,
   openPayload,
   openSyncKey,
   recordId,
   sealName,
   sealPayload,
   sealSyncKey,
+  verifiedName,
   type Payload,
 } from "./crypto";
 import { SyncHttpError, type SyncClient } from "./http";
@@ -399,7 +399,18 @@ async function rotateOnce(ctx: SyncContext, removeDevices: string[], report: Syn
   for (const id of removeDevices) {
     if (!devices.some((d) => d.id === id)) throw new Error("That device is no longer in this vault.");
   }
-  const staying = devices.filter((d) => !removeDevices.includes(d.id));
+  const staying = devices
+    .filter((d) => !removeDevices.includes(d.id))
+    .map((d) => ({ device: d, name: verifiedName(oldKey, vaultId, d) }));
+  // The new key goes only to keys a device in this vault sealed into a name.
+  // A key the server listed in place of a device's own, or a device it added
+  // itself, has no such name: refuse rather than hand it every secret.
+  if (staying.some((d) => d.name === null)) {
+    throw new Error(
+      "The server lists a device whose keys do not match the ones your devices sealed. Nothing was changed. " +
+        `Run ${cliName()} sync devices to see which one, and do not trust this server until you know why.`,
+    );
+  }
   const newKey = generateSyncKey();
   const epoch = oldEpoch + 1;
   const entries = [...live.values()].map((p) => {
@@ -410,13 +421,10 @@ async function rotateOnce(ctx: SyncContext, removeDevices: string[], report: Syn
     epoch,
     baseRevision: base!,
     removeDevices,
-    sealedKeys: Object.fromEntries(staying.map((d) => [d.id, sealSyncKey(newKey, d.encPub, { vaultId, deviceId: d.id, epoch })])),
-    sealedNames: Object.fromEntries(
-      staying.map((d) => [
-        d.id,
-        sealName(newKey, vaultId, d.id, openName(oldKey, vaultId, d.id, d.sealedName) ?? { name: "unnamed device", platform: "" }),
-      ]),
+    sealedKeys: Object.fromEntries(
+      staying.map(({ device: d, name }) => [d.id, sealSyncKey(newKey, name!.encPub, { vaultId, deviceId: d.id, epoch })]),
     ),
+    sealedNames: Object.fromEntries(staying.map(({ device: d, name }) => [d.id, sealName(newKey, vaultId, d.id, name!)])),
     records: entries.map(({ id, blob }) => ({ id, blob })),
   });
 

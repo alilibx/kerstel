@@ -371,15 +371,23 @@ export async function uninstallCommand(
       return 0;
     }
     if (synced && (await deviceCount(synced, syncDeps)) === 1) {
-      const remove = await prompter.select(
-        `This is the last device in the synced vault on ${synced.server}. Delete the vault from the server too?`,
-        [
-          { value: "no", label: "No, leave it on the server" },
-          { value: "yes", label: "Yes, delete it from the server" },
-        ],
-        "no",
-      );
-      deleteRemote = remove === "yes";
+      try {
+        const remove = await prompter.select(
+          `This is the last device in the synced vault on ${synced.server}. Delete the vault from the server too?`,
+          [
+            { value: "no", label: "No, leave it on the server" },
+            { value: "yes", label: "Yes, delete it from the server" },
+          ],
+          "no",
+        );
+        deleteRemote = remove === "yes";
+      } catch (error) {
+        if (error instanceof CancelledError) {
+          fail(error.message);
+          return 130;
+        }
+        throw error;
+      }
     }
   }
 

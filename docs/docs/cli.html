@@ -208,7 +208,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync devices</code></td>
-<td>Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced.</td>
+<td>Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced. A device whose listed keys don&#39;t match the ones sealed with its name is marked unverified: no device in the vault added it with those keys.</td>
 </tr>
 <tr>
 <td><code>kerstel sync add-device</code></td>
@@ -220,7 +220,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync remove-device &lt;name&gt;</code></td>
-<td>Remove another device, named as <code>sync devices</code> lists it (or by its key fingerprint, when two share a name). It replaces the sync key: every record is encrypted again under a new key that only the remaining devices receive, and the removed device&#39;s requests are refused from then on. If another device pushes meanwhile, it pulls and starts again, so that change is kept. It refuses while a conflict is open. The removed device already had every value, so it reminds you to rotate any secret it should no longer hold. To remove this device, use <code>sync off</code>.</td>
+<td>Remove another device, named as <code>sync devices</code> lists it (or by its key fingerprint, when two share a name). It replaces the sync key: every record is encrypted again under a new key that only the remaining devices receive, and the removed device&#39;s requests are refused from then on. If another device pushes meanwhile, it pulls and starts again, so that change is kept. It refuses while a conflict is open, and stops without changing anything if a device the server lists is unverified, so the new key never goes to a key the server swapped in. The removed device already had every value, so it reminds you to rotate any secret it should no longer hold. To remove this device, use <code>sync off</code>.</td>
 </tr>
 <tr>
 <td><code>kerstel sync off [--delete-vault]</code></td>

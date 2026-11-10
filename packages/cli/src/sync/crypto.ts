@@ -168,14 +168,22 @@ export function openPayload(syncKey: Buffer, blob: string, context: RecordContex
 
 // ---- Device names --------------------------------------------------------------
 
+/**
+ * A device's name and platform, and the public keys it was added with. The
+ * keys are sealed in with the name: only a device holding the sync key can
+ * seal one, so a server that swaps a device's listed key for its own breaks
+ * the match, and a key rotation refuses to seal the new key to it.
+ */
 export interface DeviceName {
   name: string;
   platform: string;
+  signPub: string;
+  encPub: string;
 }
 
 const nameAd = (vaultId: string, deviceId: string) => concat("kerstel device-name v1\0", vaultId, "\0", deviceId);
 
-/** A device's name and platform, sealed with the sync key: the server never sees them. */
+/** Sealed with the sync key: the server never sees the name, and cannot make one. */
 export function sealName(syncKey: Buffer, vaultId: string, deviceId: string, name: DeviceName): string {
   return seal(syncKey, Buffer.from(JSON.stringify(name)), nameAd(vaultId, deviceId)).toString("base64url");
 }
@@ -183,10 +191,26 @@ export function sealName(syncKey: Buffer, vaultId: string, deviceId: string, nam
 export function openName(syncKey: Buffer, vaultId: string, deviceId: string, sealed: string): DeviceName | null {
   try {
     const parsed = JSON.parse(open(syncKey, Buffer.from(sealed, "base64url"), nameAd(vaultId, deviceId)).toString("utf8"));
-    return typeof parsed?.name === "string" ? { name: parsed.name, platform: String(parsed.platform ?? "") } : null;
+    const fields = [parsed?.name, parsed?.platform, parsed?.signPub, parsed?.encPub];
+    return fields.every((f) => typeof f === "string")
+      ? { name: parsed.name, platform: parsed.platform, signPub: parsed.signPub, encPub: parsed.encPub }
+      : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A device as the server lists it, checked: its name, only when the name
+ * opens under the sync key and the keys sealed in it are the keys listed.
+ */
+export function verifiedName(
+  syncKey: Buffer,
+  vaultId: string,
+  device: { id: string; signPub: string; encPub: string; sealedName: string },
+): DeviceName | null {
+  const name = openName(syncKey, vaultId, device.id, device.sealedName);
+  return name && name.signPub === device.signPub && name.encPub === device.encPub ? name : null;
 }
 
 /** Constant-time equality for HMACs and other secrets. */

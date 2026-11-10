@@ -7,7 +7,7 @@ import {
   generateDeviceKeys,
   generateSyncKey,
   newPairingSecret,
-  openName,
+  verifiedName,
   openPairingAnswer,
   openSyncKey,
   pairingCode,
@@ -223,7 +223,11 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
           id: deviceId,
           signPub: publicKeyOf(keys.sign),
           encPub: publicKeyOf(keys.enc),
-          sealedName: sealName(syncKey, vaultId, deviceId, device),
+          sealedName: sealName(syncKey, vaultId, deviceId, {
+            ...device,
+            signPub: publicKeyOf(keys.sign),
+            encPub: publicKeyOf(keys.enc),
+          }),
         },
         sealedKey: sealSyncKey(syncKey, publicKeyOf(keys.enc), { vaultId, deviceId, epoch: 1 }),
       },
@@ -436,8 +440,8 @@ async function devices(args: string[], deps: SyncDeps, open: () => Promise<CliCo
       return 1;
     }
     for (const d of list) {
-      const name = openName(sync.config.syncKey, sync.config.vaultId, d.id, d.sealedName);
-      const label = name ? `${name.name}${name.platform ? ` (${name.platform})` : ""}` : "(name sealed with another key)";
+      const name = verifiedName(sync.config.syncKey, sync.config.vaultId, d);
+      const label = name ? `${name.name}${name.platform ? ` (${name.platform})` : ""}` : yellow("(unverified: its keys do not match its sealed name)");
       const me = d.id === sync.config.deviceId ? `  ${dim("this device")}` : "";
       console.log(
         `${label}  ${dim(fingerprint(d.signPub))}  added ${when(d.addedAt)}  last seen ${when(d.lastSeen)}${me}`,
@@ -525,6 +529,9 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
     }
 
     let added = false;
+    /** False while the server may have added the device without saying so. */
+    let settled = true;
+    let answerId: string | null = null;
     try {
       console.log("On the new device, run:");
       console.log("");
@@ -542,6 +549,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
         fail("A device answered without this code's secret, so it was not added. Nothing was changed.");
         return 1;
       }
+      answerId = answer.deviceId;
       const label = `${answer.name}${answer.platform ? ` (${answer.platform})` : ""}`;
       console.log(`New device: ${bold(label)}, key fingerprint ${fingerprint(answer.signPub)}`);
       const prompter = deps.prompter ?? new ClackPrompter();
@@ -560,12 +568,22 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
 
       const { vaultId, epoch, syncKey } = sync.config;
       const sealedKey = sealSyncKey(syncKey, answer.encPub, { vaultId, deviceId: answer.deviceId, epoch });
+      // Past this point a failure may not mean the device was refused: the
+      // server may have added it and lost the answer. The slot then holds the
+      // confirmation the new device is waiting for, so it stays unless the
+      // device is known not to be in the vault.
+      settled = false;
       await sync.client.addDevice({
         device: {
           id: answer.deviceId,
           signPub: answer.signPub,
           encPub: answer.encPub,
-          sealedName: sealName(syncKey, vaultId, answer.deviceId, { name: answer.name, platform: answer.platform }),
+          sealedName: sealName(syncKey, vaultId, answer.deviceId, {
+            name: answer.name,
+            platform: answer.platform,
+            signPub: answer.signPub,
+            encPub: answer.encPub,
+          }),
         },
         epoch,
         sealedKey,
@@ -576,6 +594,23 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
       ok(`Added ${label}. It pulls the vault as it finishes joining.`);
       return 0;
     } catch (error) {
+      if (!settled) {
+        const refused = error instanceof SyncHttpError && error.status >= 400 && error.status < 500;
+        if (refused) settled = true;
+        else {
+          try {
+            const listed = (await sync.client.devices()).devices.some((d) => d.id === answerId);
+            if (listed) {
+              added = true;
+              ok("Added the device. It pulls the vault as it finishes joining.");
+              return 0;
+            }
+            settled = true;
+          } catch {
+            // Still unknown: leave the slot to expire, so a device that was added can finish joining.
+          }
+        }
+      }
       if (error instanceof SyncHttpError && error.code === "epoch_mismatch") {
         fail(`The sync key changed while you were pairing. Run ${cliName()} sync add-device again.`);
       } else {
@@ -583,8 +618,8 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
       }
       return 1;
     } finally {
-      // Declined, expired or failed: the slot goes, and the new device's wait ends.
-      if (!added) await sync.client.closePairing(pairingId).catch(() => undefined);
+      // Declined, expired or refused: the slot goes, and the new device's wait ends.
+      if (!added && settled) await sync.client.closePairing(pairingId).catch(() => undefined);
     }
   } finally {
     ctx.vault.close();
@@ -730,17 +765,21 @@ async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<
       notOn();
       return 1;
     }
+    const report = emptyReport();
     let list;
     try {
+      // Names are sealed with the current key: after a rotation elsewhere, only a pull can read them.
+      await pull(sync, report);
       list = (await sync.client.devices()).devices;
     } catch (error) {
+      recordResult(ctx.vault, explain(error));
       fail(`Could not list devices: ${explain(error)}`);
       return 1;
     }
     // A name, or a fingerprint for two devices with the same name.
     const compact = (s: string) => s.replace(/\s/g, "").toUpperCase();
     const matches = list
-      .map((d) => ({ device: d, name: openName(sync.config.syncKey, sync.config.vaultId, d.id, d.sealedName) }))
+      .map((d) => ({ device: d, name: verifiedName(sync.config.syncKey, sync.config.vaultId, d) }))
       .filter((d) => d.name?.name === wanted || compact(fingerprint(d.device.signPub)) === compact(wanted));
     if (matches.length === 0) {
       fail(`No device in this vault is called "${wanted}". Run ${cliName()} sync devices to see their names.`);
@@ -758,7 +797,6 @@ async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<
 
     const fp = fingerprint(target.device.signPub);
     const label = target.name ? `${target.name.name} (${fp})` : fp;
-    const report = emptyReport();
     try {
       await rotateKey(sync, [target.device.id], report);
       // Changes made here before the rotation go out under the new key.
