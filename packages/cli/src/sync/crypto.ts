@@ -193,3 +193,121 @@ export function openName(syncKey: Buffer, vaultId: string, deviceId: string, sea
 export function same(a: Buffer, b: Buffer): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+// ---- Pairing (§7.1) ----------------------------------------------------------
+
+/** 120 bits: long enough that the server, which sees the pairing post, cannot guess it offline. */
+export const PAIRING_SECRET_BYTES = 15;
+/** Crockford's base32: no I, L, O or U, so a code read aloud or retyped survives. */
+const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+export function newPairingSecret(): Buffer {
+  return randomBytes(PAIRING_SECRET_BYTES);
+}
+
+/** `KS-7Q2M-XR4P-9DKT-BW3H-6YFN-CJ8A`: the secret, 24 base32 characters in groups of four. */
+export function pairingCode(secret: Buffer): string {
+  let bits = 0;
+  let acc = 0;
+  let out = "";
+  for (const byte of secret) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32[(acc >> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  return `KS-${out.match(/.{4}/g)!.join("-")}`;
+}
+
+/**
+ * The secret in a pairing code, or null when it is not one. Case, dashes and
+ * spaces don't matter, and the letters people misread as digits (O, I, L) count as them.
+ */
+export function parsePairingCode(code: string): Buffer | null {
+  const body = code
+    .trim()
+    .toUpperCase()
+    .replace(/^KS-?/, "")
+    .replace(/[\s-]/g, "")
+    .replace(/O/g, "0")
+    .replace(/[IL]/g, "1");
+  if (body.length !== (PAIRING_SECRET_BYTES * 8) / 5) return null;
+  const out: number[] = [];
+  let bits = 0;
+  let acc = 0;
+  for (const char of body) {
+    const v = BASE32.indexOf(char);
+    if (v < 0) return null;
+    acc = (acc << 5) | v;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((acc >> (bits - 8)) & 255);
+      bits -= 8;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  return Buffer.from(out);
+}
+
+const derive = (secret: Buffer, info: string, bytes: number) => Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), info, bytes));
+
+/**
+ * The pairing slot's ID, derived from the secret, so the code carries both in
+ * 24 characters. The server sees the ID; one-way derivation keeps it from
+ * telling the server anything about the secret.
+ */
+export function pairingIdOf(secret: Buffer): string {
+  return derive(secret, "kerstel pairing-id v1", 16).toString("base64url");
+}
+
+/** What the new device posts to the pairing slot: its public keys and the name it goes by. */
+export interface PairingAnswer {
+  v: 1;
+  deviceId: string;
+  signPub: string;
+  encPub: string;
+  name: string;
+  platform: string;
+}
+
+const pairingAd = (pairingId: string) => concat("kerstel pairing v1\0", pairingId);
+
+/**
+ * The answer, sealed with a key derived from the pairing secret and padded
+ * like a record. Only a device holding the code can write one the other
+ * device opens, and the server cannot read the name.
+ */
+export function sealPairingAnswer(secret: Buffer, answer: PairingAnswer): string {
+  const json = Buffer.from(JSON.stringify(answer));
+  const padded = Buffer.concat([json, Buffer.alloc((PAD - (json.length % PAD)) % PAD, " ")]);
+  return seal(derive(secret, "kerstel pairing v1", 32), padded, pairingAd(pairingIdOf(secret))).toString("base64url");
+}
+
+/** The answer, or null when it was not sealed with this code's secret. */
+export function openPairingAnswer(secret: Buffer, sealed: string): PairingAnswer | null {
+  try {
+    const parsed = JSON.parse(
+      open(derive(secret, "kerstel pairing v1", 32), Buffer.from(sealed, "base64url"), pairingAd(pairingIdOf(secret))).toString("utf8"),
+    ) as PairingAnswer;
+    const fields = [parsed?.deviceId, parsed?.signPub, parsed?.encPub, parsed?.name, parsed?.platform];
+    return parsed?.v === 1 && fields.every((f) => typeof f === "string") ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Spec §7.1: HMAC(pairing secret, "kerstel pairing-confirm v1" ‖ vault ‖
+ * new device ‖ epoch ‖ sealed key). The device that confirms the pairing
+ * makes it; the new device checks it before trusting the key, so a key the
+ * server sealed itself is refused.
+ */
+export function pairingConfirmation(secret: Buffer, c: { vaultId: string; deviceId: string; epoch: number; sealedKey: string }): string {
+  return createHmac("sha256", secret)
+    .update(concat("kerstel pairing-confirm v1\0", c.vaultId, "\0", c.deviceId, "\0", c.epoch, "\0", c.sealedKey))
+    .digest()
+    .toString("base64url");
+}

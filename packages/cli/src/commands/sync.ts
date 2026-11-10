@@ -6,23 +6,52 @@ import {
   fingerprint,
   generateDeviceKeys,
   generateSyncKey,
+  newPairingSecret,
   openName,
+  openPairingAnswer,
+  openSyncKey,
+  pairingCode,
+  pairingConfirmation,
+  pairingIdOf,
+  parsePairingCode,
   publicKeyOf,
+  same,
   sealName,
+  sealPairingAnswer,
   sealSyncKey,
 } from "../sync/crypto";
-import { conflictValue, describe, openConflicts, push, settle, syncOnce, type SyncContext, type SyncReport } from "../sync/engine";
-import { SyncHttpError, syncClient, type Fetch } from "../sync/http";
-import { forgetSync, isSafeServerUrl, lastResult, loadSync, normaliseServerUrl, recordResult, saveSync } from "../sync/state";
+import {
+  conflictValue,
+  describe,
+  openConflicts,
+  pull,
+  push,
+  rotateKey,
+  settle,
+  syncOnce,
+  type SyncContext,
+  type SyncReport,
+} from "../sync/engine";
+import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
+import {
+  forgetSync,
+  isSafeServerUrl,
+  lastResult,
+  loadSync,
+  normaliseServerUrl,
+  recordResult,
+  saveSync,
+  setFullPull,
+  writeSync,
+  type SyncConfig,
+} from "../sync/state";
 import type { SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
-import { newId } from "../../../server/src/protocol";
+import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
  * devices, through a `kerstel-server` you run. Sync spec §7, §8 and §10.
- * This PR covers one device's side: setup, sync, status, devices, off.
- * Pairing more devices is `add-device` and `join`, next.
  */
 
 export interface SyncDeps {
@@ -33,7 +62,14 @@ export interface SyncDeps {
   context?: () => Promise<CliContext>;
   /** For tests: the clock requests are signed with. */
   now?: () => number;
+  /** For tests: how pairing waits between polls. */
+  sleep?: (ms: number) => Promise<void>;
+  /** For tests: this device's name, in place of the host name. */
+  deviceName?: string;
 }
+
+/** How often each side of a pairing asks the server for news. The new device's polls count against a per-address limit of 30 a minute. */
+const POLL_MS = { addDevice: 2_000, join: 3_000 } as const;
 
 const USAGE = `Usage:
   ${cliName()} sync setup <url> [--yes]      Turn sync on and upload this vault
@@ -41,11 +77,14 @@ const USAGE = `Usage:
                                        Pull, push, and settle conflicts
   ${cliName()} sync status                  Server, pending changes, conflicts, last sync
   ${cliName()} sync devices                 List the devices in this vault
+  ${cliName()} sync add-device              Show a one-time code to pair another device
+  ${cliName()} sync join <url> <code>       Join a synced vault from this device
+  ${cliName()} sync remove-device <name>    Remove a device and replace the sync key
   ${cliName()} sync off [--delete-vault]    Stop syncing this device`;
 
-function thisDevice(): { name: string; platform: string } {
+function thisDevice(deps: SyncDeps): { name: string; platform: string } {
   const platform = process.platform === "darwin" ? "macOS" : process.platform === "linux" ? "Linux" : process.platform;
-  return { name: hostname() || "this device", platform };
+  return { name: deps.deviceName ?? (hostname() || "this device"), platform };
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -57,10 +96,50 @@ function when(ms: number | null): string {
   return new Date(ms).toISOString().replace("T", " ").slice(0, 16);
 }
 
+/** The server no longer knows this device: another device removed it, or the vault was deleted. */
+function isUnknownDevice(error: unknown): boolean {
+  return error instanceof SyncHttpError && error.code === "unauthorized" && error.message.startsWith("Unknown device");
+}
+
 /** One line for a failure: the server's own message, which never carries a value. */
 function explain(error: unknown): string {
-  if (error instanceof SyncHttpError) return error.message;
+  if (isUnknownDevice(error)) {
+    return (
+      "The server no longer knows this device: another device removed it, or the vault was deleted. " +
+      `Run ${cliName()} sync off, then pair it again with ${cliName()} sync join.`
+    );
+  }
   return (error as Error).message;
+}
+
+const emptyReport = (): SyncReport => ({ applied: [], pushed: [], conflicts: [], backups: [] });
+
+const isInteractive = (deps: SyncDeps) => deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+
+/**
+ * Asks `check` until it returns something, for as long as a pairing slot
+ * lives. Null when the slot is gone: it expired, or the other device said no.
+ * A dropped connection or the rate limit only slows it down.
+ */
+async function waitFor<T>(check: () => Promise<T | null>, everyMs: number, deps: SyncDeps): Promise<T | null> {
+  const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
+  const deadline = Date.now() + TIMING.pairingTtlMs + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const found = await check();
+      if (found !== null) return found;
+    } catch (error) {
+      if (!(error instanceof SyncHttpError)) throw error;
+      if (error.code === "not_found") return null;
+      if (error.code === "rate_limited") {
+        await sleep(everyMs * 5);
+        continue;
+      }
+      if (error.code !== "unreachable") throw error;
+    }
+    await sleep(everyMs);
+  }
+  return null;
 }
 
 export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<number> {
@@ -71,6 +150,9 @@ export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<
   if (sub === "status") return status(rest, open);
   if (sub === "devices") return devices(rest, deps, open);
   if (sub === "off") return off(rest, deps, open);
+  if (sub === "add-device") return addDevice(rest, deps, open);
+  if (sub === "join") return join(rest, deps, open);
+  if (sub === "remove-device") return removeDevice(rest, deps, open);
   if (sub === "--help" || sub === "help") {
     console.log(USAGE);
     return 0;
@@ -105,14 +187,13 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     }
     const secrets = ctx.vault.listSecrets();
     const scopes = new Set(secrets.map((s) => s.scope));
-    const device = thisDevice();
+    const device = thisDevice(deps);
     console.log("Kerstel sync, end-to-end encrypted. The server stores ciphertext only.");
     console.log(`  Server       ${server}`);
     console.log(`  Vault        new, ${plural(secrets.length, "secret")} in ${plural(scopes.size, "scope")}`);
     console.log(`  This device  ${device.name} ${dim("(the name is sealed; the server never sees it)")}`);
 
-    const interactive = deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
-    if (!yes && !interactive) {
+    if (!yes && !isInteractive(deps)) {
       fail(`${cliName()} sync setup asks before uploading. Re-run with --yes to upload without asking.`);
       return 2;
     }
@@ -152,10 +233,10 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     const config = { server, vaultId, deviceId, epoch: 1, syncKey, keys, head: 0 };
     saveSync(ctx.vault, ctx.dataKey, config);
     ctx.vault.sync.trackAll();
-    const report: SyncReport = { applied: [], pushed: [], conflicts: [], backups: [] };
+    const report = emptyReport();
     await push({ vault: ctx.vault, dataKey: ctx.dataKey, config, client }, report);
     recordResult(ctx.vault, null);
-    ok(`Synced ${plural(report.pushed.length, "secret")}. Sync stays on for this vault; run ${cliName()} sync any time.`);
+    ok(`Synced ${plural(report.pushed.length, "secret")}. Add another device with: ${cliName()} sync add-device`);
     return 0;
   } catch (error) {
     fail(`Sync setup failed: ${explain(error)}`);
@@ -165,22 +246,22 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
   }
 }
 
+/** A signed client for this device's vault. */
+export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "now"> = {}) {
+  return syncClient({
+    server: config.server,
+    vaultId: config.vaultId,
+    deviceId: config.deviceId,
+    sign: config.keys.sign,
+    fetch: deps.fetch,
+    now: deps.now,
+  });
+}
+
 function contextFor(ctx: CliContext, deps: SyncDeps): SyncContext | null {
   const config = loadSync(ctx.vault, ctx.dataKey);
   if (!config) return null;
-  return {
-    vault: ctx.vault,
-    dataKey: ctx.dataKey,
-    config,
-    client: syncClient({
-      server: config.server,
-      vaultId: config.vaultId,
-      deviceId: config.deviceId,
-      sign: config.keys.sign,
-      fetch: deps.fetch,
-      now: deps.now,
-    }),
-  };
+  return { vault: ctx.vault, dataKey: ctx.dataKey, config, client: clientFor(config, deps) };
 }
 
 const notOn = () => info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup <url>.`);
@@ -214,42 +295,51 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       fail(`Sync failed: ${explain(error)}`);
       return 1;
     }
-    if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
-    if (report.pushed.length > 0) ok(`Pushed ${plural(report.pushed.length, "change")}.`);
-    for (const dir of report.backups) info(`Values a pull replaced are in the encrypted backup at ${dir}`);
-
-    if (report.conflicts.length > 0) {
-      const settled = await settleConflicts(sync, report, { keep, reveal, deps });
-      if (settled === null) {
-        recordResult(ctx.vault, null);
-        return 1;
-      }
-      // Push what was kept here.
-      try {
-        const after: SyncReport = { applied: [], pushed: [], conflicts: [], backups: [] };
-        await push(sync, after);
-        if (after.pushed.length > 0) ok(`Pushed ${plural(after.pushed.length, "settled value")}.`);
-        // Another device may have changed a key again while you were choosing.
-        const still = openConflicts(sync.vault);
-        if (still.length > 0) {
-          fail(`${plural(still.length, "key was", "keys were")} changed on another device again while you chose:`);
-          for (const ref of still) console.log(`  ${describe(ref)}`);
-          console.log(`Run ${cliName()} sync again to choose.`);
-          recordResult(ctx.vault, null);
-          return 1;
-        }
-      } catch (error) {
-        recordResult(ctx.vault, explain(error));
-        fail(`Sync failed: ${explain(error)}`);
-        return 1;
-      }
-    }
-    if (report.applied.length + report.pushed.length + report.conflicts.length === 0) ok("Up to date.");
-    recordResult(ctx.vault, null);
-    return 0;
+    return await finish(sync, report, { keep, reveal, deps });
   } finally {
     ctx.vault.close();
   }
+}
+
+/** Reports a sync, settles its conflicts, and pushes what was settled. The exit code. */
+async function finish(
+  sync: SyncContext,
+  report: SyncReport,
+  options: { keep: "local" | "remote" | null; reveal: boolean; deps: SyncDeps },
+): Promise<number> {
+  if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
+  if (report.pushed.length > 0) ok(`Pushed ${plural(report.pushed.length, "change")}.`);
+  for (const dir of report.backups) info(`Values a pull replaced are in the encrypted backup at ${dir}`);
+
+  if (report.conflicts.length > 0) {
+    const settled = await settleConflicts(sync, report, options);
+    if (settled === null) {
+      recordResult(sync.vault, null);
+      return 1;
+    }
+    // Push what was kept here.
+    try {
+      const after = emptyReport();
+      await push(sync, after);
+      if (after.pushed.length > 0) ok(`Pushed ${plural(after.pushed.length, "settled value")}.`);
+      // Another device may have changed a key again while you were choosing.
+      const still = openConflicts(sync.vault);
+      if (still.length > 0) {
+        fail(`${plural(still.length, "key was", "keys were")} changed on another device again while you chose:`);
+        for (const ref of still) console.log(`  ${describe(ref)}`);
+        console.log(`Run ${cliName()} sync again to choose.`);
+        recordResult(sync.vault, null);
+        return 1;
+      }
+    } catch (error) {
+      recordResult(sync.vault, explain(error));
+      fail(`Sync failed: ${explain(error)}`);
+      return 1;
+    }
+  }
+  if (report.applied.length + report.pushed.length + report.conflicts.length === 0) ok("Up to date.");
+  recordResult(sync.vault, null);
+  return 0;
 }
 
 /**
@@ -269,8 +359,7 @@ async function settleConflicts(
     ok(`Kept the ${options.keep === "local" ? "value on this device" : "other device's value"} for ${plural(conflicts.length, "conflict")}.`);
     return conflicts.length;
   }
-  const interactive = options.deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
-  if (!interactive) {
+  if (!isInteractive(options.deps)) {
     fail(`${plural(conflicts.length, "key was", "keys were")} changed on this device and another one:`);
     for (const ref of conflicts) console.log(`  ${describe(ref)}`);
     console.log(`Run ${cliName()} sync in a terminal to choose, or ${cliName()} sync --keep local|remote.`);
@@ -377,6 +466,12 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       if (deleteVault) await sync.client.deleteVault();
       else await sync.client.removeSelf();
     } catch (error) {
+      if (isUnknownDevice(error)) {
+        // Already out of the vault: there is nothing to leave on the server.
+        forgetSync(ctx.vault);
+        ok("This device was no longer in the synced vault. Sync is off for it; your secrets stay here.");
+        return 0;
+      }
       if (error instanceof SyncHttpError && error.code === "last_device") {
         fail(
           `This is the vault's last device. Run ${cliName()} sync off --delete-vault to delete the vault on the server too, ` +
@@ -389,6 +484,299 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
     }
     forgetSync(ctx.vault);
     ok(deleteVault ? "Deleted the vault on the server. Sync is off; your secrets stay here." : "Sync is off for this device. Your secrets stay here.");
+    return 0;
+  } finally {
+    ctx.vault.close();
+  }
+}
+
+/**
+ * Sync spec §7.1, on a device already in the vault: open a pairing slot,
+ * show its code, wait for the new device's answer, and add that device only
+ * once someone here says yes. The answer is sealed with the code's secret, so
+ * one the server wrote itself does not open.
+ */
+async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
+  if (args.length > 0) {
+    fail(`Usage: ${cliName()} sync add-device`);
+    return 2;
+  }
+  // The question cannot be answered ahead of time: there is no --yes for it.
+  if (!isInteractive(deps)) {
+    fail(`${cliName()} sync add-device asks you to confirm the new device, so it needs a terminal.`);
+    return 2;
+  }
+  const ctx = await open();
+  try {
+    const sync = contextFor(ctx, deps);
+    if (!sync) {
+      notOn();
+      return 1;
+    }
+    const secret = newPairingSecret();
+    const pairingId = pairingIdOf(secret);
+    try {
+      // The key a new device receives must be the current one.
+      await pull(sync, emptyReport());
+      await sync.client.openPairing(pairingId);
+    } catch (error) {
+      fail(`Could not start pairing: ${explain(error)}`);
+      return 1;
+    }
+
+    let added = false;
+    try {
+      console.log("On the new device, run:");
+      console.log("");
+      console.log(`  ${cliName()} sync join ${sync.config.server} ${pairingCode(secret)}`);
+      console.log("");
+      console.log(dim("The code works once and expires in 10 minutes. Waiting for the new device…"));
+
+      const payload = await waitFor(async () => (await sync.client.readPairing(pairingId)).payload, POLL_MS.addDevice, deps);
+      if (payload === null) {
+        fail(`The code expired before a device used it. Run ${cliName()} sync add-device for a new one.`);
+        return 1;
+      }
+      const answer = openPairingAnswer(secret, payload);
+      if (!answer || !isId(answer.deviceId) || !isPublicKey(answer.signPub) || !isPublicKey(answer.encPub)) {
+        fail("A device answered without this code's secret, so it was not added. Nothing was changed.");
+        return 1;
+      }
+      const label = `${answer.name}${answer.platform ? ` (${answer.platform})` : ""}`;
+      console.log(`New device: ${bold(label)}, key fingerprint ${fingerprint(answer.signPub)}`);
+      const prompter = deps.prompter ?? new ClackPrompter();
+      const choice = await prompter.select(
+        "Add it? It will be able to read every secret in this vault.",
+        [
+          { value: "no", label: "No" },
+          { value: "yes", label: "Yes, add it" },
+        ],
+        "no",
+      );
+      if (choice !== "yes") {
+        info("The device was not added.");
+        return 0;
+      }
+
+      const { vaultId, epoch, syncKey } = sync.config;
+      const sealedKey = sealSyncKey(syncKey, answer.encPub, { vaultId, deviceId: answer.deviceId, epoch });
+      await sync.client.addDevice({
+        device: {
+          id: answer.deviceId,
+          signPub: answer.signPub,
+          encPub: answer.encPub,
+          sealedName: sealName(syncKey, vaultId, answer.deviceId, { name: answer.name, platform: answer.platform }),
+        },
+        epoch,
+        sealedKey,
+        pairingId,
+        confirmation: pairingConfirmation(secret, { vaultId, deviceId: answer.deviceId, epoch, sealedKey }),
+      });
+      added = true;
+      ok(`Added ${label}. It pulls the vault as it finishes joining.`);
+      return 0;
+    } catch (error) {
+      if (error instanceof SyncHttpError && error.code === "epoch_mismatch") {
+        fail(`The sync key changed while you were pairing. Run ${cliName()} sync add-device again.`);
+      } else {
+        fail(`Could not add the device: ${explain(error)}`);
+      }
+      return 1;
+    } finally {
+      // Declined, expired or failed: the slot goes, and the new device's wait ends.
+      if (!added) await sync.client.closePairing(pairingId).catch(() => undefined);
+    }
+  } finally {
+    ctx.vault.close();
+  }
+}
+
+/**
+ * Sync spec §7.1 and §10, on the new device: answer the pairing slot, wait
+ * for the other device to confirm, check that the sealed key is the one it
+ * confirmed, then pull the vault and merge this vault's own secrets into it.
+ */
+async function join(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
+  if (args.length !== 2 || args.some((a) => a.startsWith("-"))) {
+    fail(`Usage: ${cliName()} sync join <url> <code>`);
+    return 2;
+  }
+  const server = normaliseServerUrl(args[0]!);
+  if (!isSafeServerUrl(server)) {
+    fail(`${args[0]} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+    return 2;
+  }
+  const secret = parsePairingCode(args[1]!);
+  if (!secret) {
+    fail(`That is not a pairing code. Copy the whole KS-… code that ${cliName()} sync add-device shows.`);
+    return 2;
+  }
+
+  const ctx = await open();
+  try {
+    if (loadSync(ctx.vault, ctx.dataKey)) {
+      fail(`Sync is already on for this vault. To join another one, run ${cliName()} sync off first.`);
+      return 1;
+    }
+    const keys = generateDeviceKeys();
+    const deviceId = newId();
+    const me = thisDevice(deps);
+    const signPub = publicKeyOf(keys.sign);
+    const pairingId = pairingIdOf(secret);
+    const pairing = pairingClient(server, deps.fetch);
+    try {
+      await pairing.answer(
+        pairingId,
+        sealPairingAnswer(secret, { v: 1, deviceId, signPub, encPub: publicKeyOf(keys.enc), ...me }),
+      );
+    } catch (error) {
+      if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
+        fail(`That code expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
+      } else {
+        fail(`Could not join: ${explain(error)}`);
+      }
+      return 1;
+    }
+    console.log(`This device: ${bold(me.name)}, key fingerprint ${fingerprint(signPub)}`);
+    console.log(dim("Confirm it on the other device, and check that it shows the same fingerprint. Waiting…"));
+
+    let accepted;
+    try {
+      accepted = await waitFor(
+        async () => {
+          const state = await pairing.state(pairingId);
+          return state.state === "accepted" ? state : null;
+        },
+        POLL_MS.join,
+        deps,
+      );
+    } catch (error) {
+      fail(`Could not join: ${explain(error)}`);
+      return 1;
+    }
+    if (!accepted) {
+      fail("The code expired, or the other device said no. Nothing was changed.");
+      return 1;
+    }
+
+    const client = syncClient({ server, vaultId: accepted.vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now });
+    let sealed;
+    try {
+      sealed = await client.keys();
+    } catch (error) {
+      fail(`Could not join: ${explain(error)}`);
+      return 1;
+    }
+    // The other device made this HMAC with the code's secret over the key it
+    // sealed. A key the server sealed itself, or a vault it swapped in, fails here.
+    const expected = pairingConfirmation(secret, {
+      vaultId: accepted.vaultId,
+      deviceId,
+      epoch: sealed.epoch,
+      sealedKey: sealed.sealedKey,
+    });
+    if (!same(Buffer.from(expected), Buffer.from(String(accepted.confirmation ?? "")))) {
+      fail(
+        "The key the server sent is not the one the other device confirmed, so this device did not join and nothing " +
+          `was saved. On the other device, remove this one (${cliName()} sync remove-device "${me.name}"), then pair again. ` +
+          "If it happens again, do not trust this server.",
+      );
+      return 1;
+    }
+    const config: SyncConfig = {
+      server,
+      vaultId: accepted.vaultId,
+      deviceId,
+      epoch: sealed.epoch,
+      syncKey: openSyncKey(sealed.sealedKey, keys.enc, { vaultId: accepted.vaultId, deviceId, epoch: sealed.epoch }),
+      keys,
+      head: 0,
+    };
+    // One transaction: the settings, every secret here marked to merge, and a
+    // full pull owed. An interrupted join finishes on the next sync.
+    ctx.vault.transaction(() => {
+      writeSync(ctx.vault, ctx.dataKey, config);
+      ctx.vault.sync.trackAll();
+      setFullPull(ctx.vault, true);
+    });
+    ok(`Joined the vault on ${server}.`);
+
+    const sync: SyncContext = { vault: ctx.vault, dataKey: ctx.dataKey, config, client };
+    let report: SyncReport;
+    try {
+      report = await syncOnce(sync);
+    } catch (error) {
+      recordResult(ctx.vault, explain(error));
+      fail(`The first sync failed: ${explain(error)}. Run ${cliName()} sync to finish it.`);
+      return 1;
+    }
+    return await finish(sync, report, { keep: null, reveal: false, deps });
+  } finally {
+    ctx.vault.close();
+  }
+}
+
+/** Sync spec §7.3: remove another device, which replaces the sync key. */
+async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
+  if (args.length !== 1 || args[0]!.startsWith("-")) {
+    fail(`Usage: ${cliName()} sync remove-device <name>`);
+    return 2;
+  }
+  const wanted = args[0]!;
+  const ctx = await open();
+  try {
+    const sync = contextFor(ctx, deps);
+    if (!sync) {
+      notOn();
+      return 1;
+    }
+    let list;
+    try {
+      list = (await sync.client.devices()).devices;
+    } catch (error) {
+      fail(`Could not list devices: ${explain(error)}`);
+      return 1;
+    }
+    // A name, or a fingerprint for two devices with the same name.
+    const compact = (s: string) => s.replace(/\s/g, "").toUpperCase();
+    const matches = list
+      .map((d) => ({ device: d, name: openName(sync.config.syncKey, sync.config.vaultId, d.id, d.sealedName) }))
+      .filter((d) => d.name?.name === wanted || compact(fingerprint(d.device.signPub)) === compact(wanted));
+    if (matches.length === 0) {
+      fail(`No device in this vault is called "${wanted}". Run ${cliName()} sync devices to see their names.`);
+      return 1;
+    }
+    if (matches.length > 1) {
+      fail(`${matches.length} devices are called "${wanted}". Name one by its fingerprint, from ${cliName()} sync devices.`);
+      return 1;
+    }
+    const target = matches[0]!;
+    if (target.device.id === sync.config.deviceId) {
+      fail(`That is this device. To stop syncing it, run ${cliName()} sync off.`);
+      return 1;
+    }
+
+    const fp = fingerprint(target.device.signPub);
+    const label = target.name ? `${target.name.name} (${fp})` : fp;
+    const report = emptyReport();
+    try {
+      await rotateKey(sync, [target.device.id], report);
+      // Changes made here before the rotation go out under the new key.
+      await push(sync, report);
+    } catch (error) {
+      recordResult(ctx.vault, explain(error));
+      fail(`Could not remove ${label}: ${explain(error)}`);
+      return 1;
+    }
+    recordResult(ctx.vault, null);
+    if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
+    ok(`Removed ${label} and replaced the sync key. Your other devices pick up the new key on their next sync.`);
+    console.log(
+      yellow(
+        `${label} already had every value in this vault. Rotate any secret it should no longer hold, at its provider: ` +
+          "Kerstel cannot do that for you.",
+      ),
+    );
     return 0;
   } finally {
     ctx.vault.close();

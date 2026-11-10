@@ -56,6 +56,8 @@ ks daemon <serve|start|stop|status>               # Manage the resolver daemon
 ks doctor [--verbose]                             # Diagnose this machine's setup
 ks scan [path] [--keys] [--all] [--json]          # Find env files that still hold secrets
 ks sync setup <url> | status | devices | off      # Sync the vault between your devices (end-to-end encrypted)
+ks sync add-device / ks sync join <url> <code>    # Pair another device with a one-time code
+ks sync remove-device <name>                      # Remove a device and replace the sync key
 ks sync [--keep local|remote]                     # Pull, push, and settle conflicts
 ks update [--check]                               # Install the latest release
 ks uninstall [--dry-run] [--yes] [--force]        # Restore every project, then remove Kerstel

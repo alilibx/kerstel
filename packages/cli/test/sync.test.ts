@@ -11,7 +11,14 @@ import { ScriptedPrompter } from "../src/init/prompts";
 import {
   generateDeviceKeys,
   generateSyncKey,
+  newPairingSecret,
   openName,
+  openPairingAnswer,
+  pairingCode,
+  pairingConfirmation,
+  pairingIdOf,
+  parsePairingCode,
+  sealPairingAnswer,
   openPayload,
   openSyncKey,
   publicKeyOf,
@@ -21,9 +28,10 @@ import {
   sealSyncKey,
 } from "../src/sync/crypto";
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
-import { syncClient, type Fetch } from "../src/sync/http";
+import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
 import { loadSync, saveSync } from "../src/sync/state";
 import { generateDataKey } from "../src/vault/crypto";
+import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
 import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
@@ -42,7 +50,7 @@ function server() {
   const db = openDatabase(":memory:");
   const app = createApp({ db, version: "test", now: () => clock.t });
   const fetch: Fetch = (request) => app.fetch(request, "127.0.0.1");
-  return { app, clock, fetch };
+  return { app, clock, fetch, db };
 }
 
 /** One device: its own home, vault file and data key. */
@@ -552,5 +560,358 @@ describe("review fixes", () => {
     const { readBackupVault } = await import("../src/init/backup");
     const saved = b.with(() => readBackupVault(SYNC_BACKUP_SCOPE, after.at(-1)!, b.key));
     expect(saved.map((v) => [v.key, v.value]).sort()).toEqual([["X", "x-b"], ["Y", "y-b"]]);
+  });
+});
+
+describe("pairing crypto", () => {
+  test("a pairing code round-trips, forgives case, dashes and misread letters, and refuses anything else", () => {
+    const secret = newPairingSecret();
+    const code = pairingCode(secret);
+    expect(code).toMatch(/^KS-([0-9A-HJKMNP-TV-Z]{4}-){5}[0-9A-HJKMNP-TV-Z]{4}$/);
+    expect(parsePairingCode(code)!.equals(secret)).toBe(true);
+    expect(parsePairingCode(` ${code.toLowerCase().replace(/-/g, "")} `)!.equals(secret)).toBe(true);
+    expect(parsePairingCode(code.replace(/0/g, "O").replace(/1/g, "I"))!.equals(secret)).toBe(true);
+    expect(parsePairingCode(code.slice(0, -1))).toBeNull();
+    expect(parsePairingCode(`${code.slice(0, -1)}U`)).toBeNull();
+    expect(parsePairingCode("KS-hello")).toBeNull();
+    // The slot's ID comes from the secret, and tells nothing about it.
+    expect(pairingIdOf(secret)).toBe(pairingIdOf(Buffer.from(secret)));
+    expect(pairingIdOf(secret)).not.toBe(pairingIdOf(newPairingSecret()));
+  });
+
+  test("a pairing answer opens only with its own secret; the confirmation binds the sealed key", () => {
+    const secret = newPairingSecret();
+    const answer = { v: 1 as const, deviceId: newId(), signPub: "s", encPub: "e", name: "laptop", platform: "Linux" };
+    const sealed = sealPairingAnswer(secret, answer);
+    expect((Buffer.from(sealed, "base64url").length - 12 - 16) % 256).toBe(0);
+    expect(openPairingAnswer(secret, sealed)).toEqual(answer);
+    expect(openPairingAnswer(newPairingSecret(), sealed)).toBeNull();
+    const c = { vaultId: newId(), deviceId: answer.deviceId, epoch: 1, sealedKey: "abc" };
+    expect(pairingConfirmation(secret, c)).toBe(pairingConfirmation(secret, c));
+    expect(pairingConfirmation(secret, { ...c, sealedKey: "abd" })).not.toBe(pairingConfirmation(secret, c));
+    expect(pairingConfirmation(newPairingSecret(), c)).not.toBe(pairingConfirmation(secret, c));
+  });
+});
+
+describe("pairing, joining and removing devices", () => {
+  const tick = (s: Server) => () => (s.clock.t += 1);
+  /** Pairing waits move the server's clock, so codes age and rate limits refill as they would. */
+  const sleeper = (s: Server) => async () => {
+    s.clock.t += 3_000;
+    await Bun.sleep(1);
+  };
+
+  /** `add-device` on `a` and `join` on `b`, side by side, as two terminals would run them. */
+  async function pairUp(
+    a: Device,
+    b: Device,
+    s: Server,
+    options: { answer?: "yes" | "no"; joinFetch?: Fetch; aName?: string; bName?: string } = {},
+  ) {
+    const log = captureLog();
+    try {
+      const prompter = new ScriptedPrompter([options.answer ?? "yes"]);
+      const adding = syncCommand(["add-device"], {
+        fetch: s.fetch,
+        context: a.context,
+        interactive: true,
+        prompter,
+        now: tick(s),
+        sleep: sleeper(s),
+      });
+      let code: string | undefined;
+      for (let i = 0; i < 500 && !code; i += 1) {
+        await Bun.sleep(1);
+        code = log.text().match(/KS-[0-9A-Z-]{29}/)?.[0];
+      }
+      expect(code).toBeDefined();
+      const joining = syncCommand(["join", SERVER, code!], {
+        fetch: options.joinFetch ?? s.fetch,
+        context: b.context,
+        interactive: false,
+        now: tick(s),
+        sleep: sleeper(s),
+        deviceName: options.bName ?? "second",
+      });
+      const [added, joined] = await Promise.all([adding, joining]);
+      return { added, joined, out: log.text(), asked: prompter.asked };
+    } finally {
+      log.restore();
+    }
+  }
+
+  async function syncedDevice(s: Server, secrets: Record<string, string> = {}): Promise<Device> {
+    const a = device();
+    a.with((v) => {
+      for (const [k, value] of Object.entries(secrets)) v.setSecret(ref("app", k), value);
+    });
+    const { result } = await quiet(() =>
+      syncCommand(["setup", SERVER, "--yes"], { fetch: s.fetch, context: a.context, interactive: false, now: tick(s), deviceName: "first" }),
+    );
+    expect(result).toBe(0);
+    return a;
+  }
+
+  test("add-device and join pair a device; it pulls the vault and merges its own secrets in", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-pair-1", SHARED: "same-value" });
+    const b = device();
+    b.with((v) => {
+      v.setSecret(ref("other", "ONLY_B"), "b-only-value");
+      v.setSecret(ref("app", "SHARED"), "same-value");
+    });
+    const { added, joined, out, asked } = await pairUp(a, b, s);
+    expect([added, joined]).toEqual([0, 0]);
+    expect(asked).toEqual(["Add it? It will be able to read every secret in this vault."]);
+    expect(out).toContain("New device: second");
+    // Both sides show the same fingerprint, for the person pairing to compare.
+    const fingerprints = [...out.matchAll(/key fingerprint ([0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4})/g)].map((m) => m[1]);
+    expect(fingerprints).toHaveLength(2);
+    expect(fingerprints[0]).toBe(fingerprints[1]!);
+    for (const value of ["db-pair-1", "same-value", "b-only-value"]) expect(out).not.toContain(value);
+
+    expect(b.with((v) => [v.getSecret(ref("app", "DB")), v.getSecret(ref("app", "SHARED"))])).toEqual(["db-pair-1", "same-value"]);
+    expect(b.with((v) => v.sync.rows().filter((r) => r.dirty || r.conflict))).toEqual([]);
+    expect((await sync(a, s)).code).toBe(0);
+    expect(a.with((v) => v.getSecret(ref("other", "ONLY_B")))).toBe("b-only-value");
+    const devices = await sync(a, s, ["devices"]);
+    expect(devices.out).toContain("second (");
+    expect(devices.out).toContain("first (");
+    // A code works once.
+    const again = await sync(device(), s, ["join", SERVER, out.match(/KS-[0-9A-Z-]{29}/)![0]]);
+    expect(again.code).toBe(1);
+  });
+
+  test("a key both vaults hold with different values is a conflict on join, never overwritten", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-from-a" });
+    const b = device();
+    b.with((v) => v.setSecret(ref("app", "DB"), "db-from-b"));
+    const { added, joined, out } = await pairUp(a, b, s);
+    expect([added, joined]).toEqual([0, 1]);
+    expect(out).toContain("app/DB");
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-from-b");
+    expect(b.with((v) => v.sync.row(ref("app", "DB"))!.conflict)).not.toBeNull();
+    expect(a.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-from-a");
+  });
+
+  test("saying no adds nothing, and the new device stops waiting", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const { added, joined, out } = await pairUp(a, b, s, { answer: "no" });
+    expect([added, joined]).toEqual([0, 1]);
+    expect(out).toContain("the other device said no");
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
+    expect((await sync(a, s, ["devices"])).out.split("\n").filter((l) => l.includes("added"))).toHaveLength(1);
+  });
+
+  test("add-device needs a terminal, and join refuses a bad code or URL", async () => {
+    const s = server();
+    const a = await syncedDevice(s);
+    expect((await sync(a, s, ["add-device"])).code).toBe(2);
+    const b = device();
+    expect((await sync(b, s, ["join", SERVER, "KS-NOPE"])).code).toBe(2);
+    expect((await sync(b, s, ["join", "http://sync.example.com", pairingCode(newPairingSecret())])).code).toBe(2);
+    // A well-formed code with no slot behind it.
+    expect((await sync(b, s, ["join", SERVER, pairingCode(newPairingSecret())])).code).toBe(1);
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
+  });
+
+  test("an answer sealed without the code's secret is refused before anyone is asked", async () => {
+    const s = server();
+    const a = await syncedDevice(s);
+    const log = captureLog();
+    try {
+      const prompter = new ScriptedPrompter([]);
+      const adding = syncCommand(["add-device"], { fetch: s.fetch, context: a.context, interactive: true, prompter, now: tick(s), sleep: sleeper(s) });
+      let code: string | undefined;
+      for (let i = 0; i < 500 && !code; i += 1) {
+        await Bun.sleep(1);
+        code = log.text().match(/KS-[0-9A-Z-]{29}/)?.[0];
+      }
+      // The server, which sees the slot's ID but not the secret, answers it itself.
+      const forged = sealPairingAnswer(newPairingSecret(), {
+        v: 1,
+        deviceId: newId(),
+        signPub: publicKeyOf(generateDeviceKeys().sign),
+        encPub: publicKeyOf(generateDeviceKeys().enc),
+        name: "forged",
+        platform: "Linux",
+      });
+      await pairingClient(SERVER, s.fetch).answer(pairingIdOf(parsePairingCode(code!)!), forged);
+      expect(await adding).toBe(1);
+      expect(prompter.asked).toEqual([]);
+      expect(log.text()).toContain("without this code's secret");
+    } finally {
+      log.restore();
+    }
+  });
+
+  test("a sync key the server sealed itself fails the confirmation, and the device does not join", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    b.with((v) => v.setSecret(ref("app", "MINE"), "b-secret-never-uploaded"));
+    // A hostile server: it hands the joining device a key of its own, sealed to the device's real public key.
+    const hostile: Fetch = async (request) => {
+      const response = await s.fetch(request);
+      const url = new URL(request.url);
+      if (request.method !== "GET" || !url.pathname.endsWith("/keys") || response.status !== 200) return response;
+      const body = (await response.json()) as { epoch: number; sealedKey: string };
+      const deviceId = request.headers.get("kerstel-device")!;
+      const vaultId = url.pathname.split("/")[3]!;
+      const encPub = (s.db.query("SELECT enc_pub FROM devices WHERE id = ?").get(deviceId) as { enc_pub: string }).enc_pub;
+      const sealedKey = sealSyncKey(generateSyncKey(), encPub, { vaultId, deviceId, epoch: body.epoch });
+      return Response.json({ epoch: body.epoch, sealedKey });
+    };
+    const { added, joined, out } = await pairUp(a, b, s, { joinFetch: hostile });
+    expect([added, joined]).toEqual([0, 1]);
+    expect(out).toContain("not the one the other device confirmed");
+    expect(b.with((v) => [loadSync(v, b.key), v.sync.rows()])).toEqual([null, []]);
+    // Nothing of B's reached the server.
+    const records = s.db.query("SELECT COUNT(*) AS n FROM records").get() as { n: number };
+    expect(records.n).toBe(1);
+  });
+
+  test("remove-device replaces the key: the removed device is locked out, the rest keep syncing", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1", GONE: "gone-1" });
+    const b = device();
+    const c = device();
+    expect((await pairUp(a, b, s, { bName: "laptop" })).joined).toBe(0);
+    expect((await pairUp(a, c, s, { bName: "old-phone" })).joined).toBe(0);
+    await sync(b, s);
+    // A change on A not pushed yet, and a deletion pushed before the rotation.
+    a.with((v) => v.removeSecret(ref("app", "GONE")));
+    await sync(a, s);
+    a.with((v) => v.setSecret(ref("app", "DB"), "db-2"));
+
+    expect((await sync(a, s, ["remove-device", "nobody"])).code).toBe(1);
+    expect((await sync(a, s, ["remove-device", "first"])).out).toContain("That is this device");
+    const removed = await sync(a, s, ["remove-device", "old-phone"]);
+    expect(removed.code).toBe(0);
+    expect(removed.out).toContain("Rotate any secret it should no longer hold");
+    expect(removed.out).not.toContain("db-");
+
+    // C's requests are refused now; its values stay on C.
+    const locked = await sync(c, s);
+    expect(locked.code).toBe(1);
+    expect(locked.out).toContain("no longer knows this device");
+    expect(c.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+    // It can still turn sync off, and keeps its secrets.
+    expect((await sync(c, s, ["off"])).code).toBe(0);
+    expect(c.with((v) => [loadSync(v, c.key), v.getSecret(ref("app", "DB"))])).toEqual([null, "db-1"]);
+
+    // B adopts the new key and sees both the pushed change and the deletion.
+    expect((await sync(b, s)).code).toBe(0);
+    expect(b.with((v) => [v.getSecret(ref("app", "DB")), v.getSecret(ref("app", "GONE"))])).toEqual(["db-2", null]);
+    b.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    await sync(b, s);
+    expect((await sync(a, s)).code).toBe(0);
+    expect(a.with((v) => v.getSecret(ref("app", "NEW")))).toBe("new-1");
+    const names = (await sync(b, s, ["devices"])).out;
+    expect(names).toContain("first (");
+    expect(names).toContain("laptop (");
+    expect(names).not.toContain("old-phone");
+  });
+
+  test("a rotation that another device's push overtakes is prepared again, and keeps that push", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const c = device();
+    await pairUp(a, b, s, { bName: "laptop" });
+    await pairUp(a, c, s, { bName: "old-phone" });
+    let raced = false;
+    const racing: Fetch = async (request) => {
+      if (!raced && request.method === "POST" && new URL(request.url).pathname.endsWith("/epochs")) {
+        raced = true;
+        b.with((v) => v.setSecret(ref("app", "RACE"), "race-1"));
+        expect((await sync(b, s)).code).toBe(0);
+      }
+      return s.fetch(request);
+    };
+    const { result } = await quiet(() =>
+      syncCommand(["remove-device", "old-phone"], { fetch: racing, context: a.context, interactive: false, now: tick(s) }),
+    );
+    expect(result).toBe(0);
+    expect(raced).toBe(true);
+    expect(a.with((v) => v.getSecret(ref("app", "RACE")))).toBe("race-1");
+    expect((await sync(b, s)).code).toBe(0);
+    expect(b.with((v) => v.getSecret(ref("app", "RACE")))).toBe("race-1");
+  });
+
+  test("remove-device refuses while a conflict is open", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const c = device();
+    await pairUp(a, b, s, { bName: "laptop" });
+    await pairUp(a, c, s, { bName: "old-phone" });
+    b.with((v) => v.setSecret(ref("app", "DB"), "db-b"));
+    await sync(b, s);
+    a.with((v) => v.setSecret(ref("app", "DB"), "db-a"));
+    await sync(a, s);
+    const refused = await sync(a, s, ["remove-device", "old-phone"]);
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain("Settle the open sync conflicts first");
+  });
+});
+
+describe("uninstall on a synced device", () => {
+  const NO_BINARY = { path: "/usr/local/bin/bun", compiled: false };
+
+  /** A device whose data key is in its home's credential store, as uninstall reads it. */
+  async function installed(): Promise<Device> {
+    const home = isolateEnv({ prefix: "sync-uninstall" });
+    dirs.push(home);
+    const { key } = await loadOrCreateDataKey();
+    const open = (): Vault => openVault(key);
+    return {
+      home,
+      key,
+      open,
+      context: async () => ({ vault: open(), dataKey: key }) as unknown as CliContext,
+      with<T>(use: (vault: Vault) => T): T {
+        const v = open();
+        try {
+          return use(v);
+        } finally {
+          v.close();
+        }
+      },
+    };
+  }
+
+  test("it leaves the vault first, and the other devices keep it", async () => {
+    const { uninstallCommand } = await import("../src/commands/uninstall");
+    const s = server();
+    const a = device();
+    a.with((v) => v.setSecret(ref("app", "DB"), "db-1"));
+    await setUp(a, s);
+    const b = await installed();
+    await addSecond(a, b, s);
+    const { result, out } = await quiet(() => uninstallCommand(["--yes"], undefined, NO_BINARY, { fetch: s.fetch, now: () => (s.clock.t += 1) }));
+    expect(result).toBe(0);
+    expect(out).toContain("Removed this device from the synced vault");
+    expect((await sync(a, s, ["devices"])).out.split("\n").filter((l) => l.includes("added"))).toHaveLength(1);
+  });
+
+  test("on the last device it asks whether to delete the vault from the server; no keeps it", async () => {
+    const { uninstallCommand } = await import("../src/commands/uninstall");
+    for (const answer of ["no", "yes"] as const) {
+      const s = server();
+      const a = await installed();
+      a.with((v) => v.setSecret(ref("app", "DB"), "db-1"));
+      await setUp(a, s);
+      const prompter = new ScriptedPrompter(["yes", answer]);
+      const { result, out } = await quiet(() => uninstallCommand(["--force"], prompter, NO_BINARY, { fetch: s.fetch, now: () => (s.clock.t += 1) }));
+      expect(result).toBe(0);
+      expect(prompter.asked[1]).toContain("last device");
+      const vaults = (s.db.query("SELECT COUNT(*) AS n FROM vaults").get() as { n: number }).n;
+      expect(vaults).toBe(answer === "yes" ? 0 : 1);
+      expect(out).toContain(answer === "yes" ? "Deleted the synced vault" : "stays on");
+    }
   });
 });

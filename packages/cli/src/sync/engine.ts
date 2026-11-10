@@ -2,7 +2,18 @@ import { backupTimestamp, createBackup, type BackupVaultValue } from "../init/ba
 import { formatReference, type SecretRef } from "../reference";
 import type { Vault } from "../vault/store";
 import type { RecordOut } from "../../../server/src/protocol";
-import { openPayload, openSyncKey, recordId, sealPayload, type Payload } from "./crypto";
+import { cliName } from "../ui/cli-name";
+import {
+  generateSyncKey,
+  openName,
+  openPayload,
+  openSyncKey,
+  recordId,
+  sealName,
+  sealPayload,
+  sealSyncKey,
+  type Payload,
+} from "./crypto";
 import { SyncHttpError, type SyncClient } from "./http";
 import { needsFullPull, saveHead, setFullPull, writeSync, type SyncConfig } from "./state";
 
@@ -323,6 +334,103 @@ export function settle(ctx: SyncContext, choices: { ref: SecretRef; keep: "local
     if (p.keep === "local") ctx.vault.sync.keepLocal(p.ref, p.row.conflict!.rev);
     else ctx.vault.sync.applyRemote(p.ref, p.remote, p.row.conflict!.rev, p.row.change);
   }
+}
+
+/** How many times a key rotation starts over when another device moved the vault meanwhile. */
+const ROTATE_ATTEMPTS = 5;
+
+/**
+ * Sync spec §7.3: a new sync key (the next epoch), sealed to every device
+ * that stays, their names sealed again under it, and every live record
+ * re-encrypted, in one request that also removes `removeDevices`. When
+ * another device pushed or rotated meanwhile, the server refuses it, and this
+ * pulls and prepares it again.
+ */
+export async function rotateKey(ctx: SyncContext, removeDevices: string[], report: SyncReport): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rotateOnce(ctx, removeDevices, report);
+      return;
+    } catch (error) {
+      const moved = error instanceof SyncHttpError && (error.code === "vault_moved" || error.code === "epoch_mismatch");
+      if (!moved || attempt >= ROTATE_ATTEMPTS) throw error;
+    }
+  }
+}
+
+async function rotateOnce(ctx: SyncContext, removeDevices: string[], report: SyncReport): Promise<void> {
+  // Brings this copy up to the server's head, and adopts a key another device rotated to.
+  await pull(ctx, report);
+  if (openConflicts(ctx.vault).length > 0) {
+    throw new Error(`Settle the open sync conflicts first: run ${cliName()} sync.`);
+  }
+
+  // The server's live records, which the rotation re-encrypts. Local changes
+  // not pushed yet are not among them: they stay dirty and go out with the
+  // next push, under the new key.
+  const { vaultId, epoch: oldEpoch, syncKey: oldKey } = ctx.config;
+  const live = new Map<string, Payload>();
+  let base: number | null = null;
+  let since = 0;
+  for (;;) {
+    const page = await ctx.client.pull(since, true);
+    if (page.epoch !== oldEpoch) throw new SyncHttpError(409, "epoch_mismatch", "Another device replaced the sync key meanwhile.");
+    base ??= page.head;
+    for (const record of page.records) {
+      if (record.blob === null) {
+        live.delete(record.id);
+        continue;
+      }
+      const payload = openPayload(oldKey, record.blob, { vaultId, recordId: record.id, epoch: oldEpoch });
+      if (recordId(oldKey, payload.scope, payload.key) !== record.id) {
+        throw new Error("A sync record's name does not match its ID. Another device may be misbehaving.");
+      }
+      if (payload.deleted) live.delete(record.id);
+      else live.set(record.id, payload);
+    }
+    since = page.records.at(-1)?.rev ?? since;
+    if (!page.more) break;
+  }
+  // The rows here must describe exactly the records being re-encrypted, or a
+  // value pushed between the pull and the listing would be rebased unseen.
+  if (base !== ctx.config.head) throw new SyncHttpError(409, "vault_moved", "Another device pushed meanwhile.");
+
+  const devices = (await ctx.client.devices()).devices;
+  for (const id of removeDevices) {
+    if (!devices.some((d) => d.id === id)) throw new Error("That device is no longer in this vault.");
+  }
+  const staying = devices.filter((d) => !removeDevices.includes(d.id));
+  const newKey = generateSyncKey();
+  const epoch = oldEpoch + 1;
+  const entries = [...live.values()].map((p) => {
+    const id = recordId(newKey, p.scope, p.key);
+    return { ref: { scope: p.scope, key: p.key }, id, blob: sealPayload(newKey, p, { vaultId, recordId: id, epoch }) };
+  });
+  const result = await ctx.client.rotate({
+    epoch,
+    baseRevision: base!,
+    removeDevices,
+    sealedKeys: Object.fromEntries(staying.map((d) => [d.id, sealSyncKey(newKey, d.encPub, { vaultId, deviceId: d.id, epoch })])),
+    sealedNames: Object.fromEntries(
+      staying.map((d) => [
+        d.id,
+        sealName(newKey, vaultId, d.id, openName(oldKey, vaultId, d.id, d.sealedName) ?? { name: "unnamed device", platform: "" }),
+      ]),
+    ),
+    records: entries.map(({ id, blob }) => ({ id, blob })),
+  });
+
+  // The server numbered the records in the order sent, after the old head.
+  const first = result.head - entries.length;
+  const revs = new Map(entries.map((e, i) => [key(e.ref), first + 1 + i]));
+  ctx.vault.transaction(() => {
+    // A key with no live record (deleted, or never pushed) is based on nothing now.
+    for (const row of ctx.vault.sync.rows()) ctx.vault.sync.rebase(row, revs.get(key(row)) ?? 0);
+    ctx.config.syncKey = newKey;
+    ctx.config.epoch = result.epoch;
+    ctx.config.head = result.head;
+    writeSync(ctx.vault, ctx.dataKey, ctx.config);
+  });
 }
 
 export function describe(ref: SecretRef): string {

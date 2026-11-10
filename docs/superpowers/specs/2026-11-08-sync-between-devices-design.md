@@ -158,7 +158,7 @@ The code works once and expires in 10 minutes. Waiting for the new device…
 
 `add-device` first opens a pairing slot on the server under a fresh pairing ID. The slot lasts 10 minutes, and a vault can have at most three open.
 
-On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys and sealed name to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code carries the pairing ID, which the server sees, and a 120-bit secret, which it never sees. The post is authenticated with an HMAC keyed by that secret.
+On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code is a 120-bit secret in 24 base32 characters, which the server never sees. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the code needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
 
 Back on the first device:
 
@@ -167,7 +167,7 @@ New device: ali-desktop (Linux), key fingerprint 4F2A 91C0 7B3E
 Add it? It will be able to read every secret in this vault. (y/N)
 ```
 
-On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself and naming the pairing slot. The server marks the slot accepted. On no, the first device deletes the slot, and the new device's poll gets 404. The default answer is no, and `--yes` is refused for this question.
+On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself and naming the pairing slot. The server marks the slot accepted. On no, the first device deletes the slot, and the new device's poll gets 404. The first device polls every 2 seconds and the new device every 3, which keeps the new device's unauthenticated polls under the server's limit of 30 a minute per address. The default answer is no, and `--yes` is refused for this question.
 
 The new device must also know that the sealed key came from the first device and not the server, which can seal a key of its own choosing to any public key. So with the registration, the first device stores a confirmation on the pairing slot: `HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ newDeviceId ‖ epoch ‖ sealedKey)`. The new device, polling the slot, gets the vault ID and the confirmation once the slot is accepted. It fetches its sealed key, checks the confirmation against it, and refuses to join if it doesn't match. Only then does it pull the vault, and only then does it merge and push any secrets it already held (§10). Without this check, a hostile server could hand a joining device a key it chose and an empty vault, and read the secrets the device uploads.
 
