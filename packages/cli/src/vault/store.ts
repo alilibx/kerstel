@@ -65,6 +65,8 @@ export interface SyncTable {
   setConflict(ref: SecretRef, conflict: { rev: number; blob: string | null } | null): void;
   /** Keep this device's value over an open conflict: based on the other device's revision, still dirty. */
   keepLocal(ref: SecretRef, rev: number): void;
+  /** Moves a row to the revision a key rotation gave its record, leaving `dirty` as it is. */
+  rebase(ref: SecretRef, rev: number): void;
   /** Forget every row: sync is off. */
   clear(): void;
 }
@@ -223,6 +225,13 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       db.query(
         "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
       ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+    },
+    rebase(ref, rev) {
+      db.query("UPDATE sync_state SET base_rev = $rev WHERE scope = $scope AND key = $key").run({
+        $scope: ref.scope,
+        $key: ref.key,
+        $rev: rev,
+      });
     },
     clear() {
       db.exec("DELETE FROM sync_state");

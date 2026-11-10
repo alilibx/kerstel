@@ -6,7 +6,8 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Added
 
-- `kerstel sync`, the first part of end-to-end encrypted sync between your own devices through a `kerstel-server` you run: `sync setup <url>` uploads the vault, encrypted on this device with a key the server never sees; `sync` pulls and pushes changes, keeps a value changed on two devices as a conflict until you choose (`--keep local|remote`), and backs up any value it replaces; `sync status`, `sync devices` and `sync off` report on and leave the vault. Pairing a second device comes next.
+- `kerstel sync`, the first part of end-to-end encrypted sync between your own devices through a `kerstel-server` you run: `sync setup <url>` uploads the vault, encrypted on this device with a key the server never sees; `sync` pulls and pushes changes, keeps a value changed on two devices as a conflict until you choose (`--keep local|remote`), and backs up any value it replaces; `sync status`, `sync devices` and `sync off` report on and leave the vault.
+- `kerstel sync add-device` and `kerstel sync join <url> <code>` pair another device with a one-time code. You confirm the new device by its name and key fingerprint on a device already in the vault, and the new device refuses a sync key that device did not confirm, so a server cannot slip in a key of its own. A device that joins with secrets of its own merges them in: a key held on both with different values is a conflict to settle, never overwritten. `kerstel sync remove-device <name>` removes a device and replaces the sync key, and `kerstel uninstall` on a synced device leaves the vault first.
 
 ## 0.2.0 (2026-11-09)
 

@@ -7,6 +7,9 @@ import { stopDaemonIfRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
 import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
+import { SyncHttpError, type Fetch } from "../sync/http";
+import { loadSync, type SyncConfig } from "../sync/state";
+import { clientFor } from "./sync";
 import { fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
 import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type UninstallPlan } from "../uninstall/plan";
@@ -231,6 +234,46 @@ function gitTrackedEnvFiles(project: RestoredProject): string[] | null {
   }
 }
 
+async function deviceCount(config: SyncConfig, deps: { fetch?: Fetch; now?: () => number }): Promise<number | null> {
+  try {
+    return (await clientFor(config, deps).devices()).devices.length;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Removes this device from its synced vault, or deletes the vault when asked.
+ * Never stops the uninstall: a server that is gone for good must not keep
+ * Kerstel installed, so a failure is reported with what to do instead.
+ */
+async function leaveSyncedVault(config: SyncConfig, deleteRemote: boolean, deps: { fetch?: Fetch; now?: () => number }): Promise<void> {
+  const client = clientFor(config, deps);
+  try {
+    if (deleteRemote) {
+      await client.deleteVault();
+      ok(`Deleted the synced vault from ${config.server}.`);
+    } else {
+      await client.removeSelf();
+      ok(`Removed this device from the synced vault on ${config.server}.`);
+    }
+  } catch (error) {
+    if (error instanceof SyncHttpError && error.code === "last_device") {
+      info(
+        `The synced vault stays on ${config.server}, encrypted, and no device can read it now. ` +
+          "Delete it on the server if you no longer need it.",
+      );
+      return;
+    }
+    console.log(
+      yellow(
+        `Could not leave the synced vault on ${config.server}: ${(error as Error).message.replace(/\.$/, "")}. ` +
+          `Remove this device from another one with \`${cliName()} sync remove-device <name>\`.`,
+      ),
+    );
+  }
+}
+
 export async function uninstallCommand(
   args: string[],
   prompterOverride?: Prompter,
@@ -239,6 +282,8 @@ export async function uninstallCommand(
     compiled: isCompiledBinary(),
     invokedAs: process.argv0,
   },
+  /** For tests: how the sync server is reached. */
+  syncDeps: { fetch?: Fetch; now?: () => number } = {},
 ): Promise<number> {
   const options = parseUninstallArgs(args);
   if ("error" in options) {
@@ -251,6 +296,8 @@ export async function uninstallCommand(
   // to touch nothing, and this machine may genuinely have no vault yet.
   const existing = await openExistingVault();
   let plan: UninstallPlan;
+  // A synced device leaves the vault on the server before its keys are deleted. Sync spec §7.3.
+  let synced: SyncConfig | null = null;
   // With no vault, a key left in the credential store is an orphan: nothing
   // it could decrypt remains, so a real run deletes it. exists() is read-only.
   let orphanedKey = false;
@@ -258,6 +305,11 @@ export async function uninstallCommand(
   if (existing.vault) {
     try {
       plan = planUninstall(existing.vault, existing.key);
+      try {
+        synced = loadSync(existing.vault, existing.key);
+      } catch {
+        // Settings too broken to load have no device to remove either.
+      }
     } finally {
       existing.vault.close();
     }
@@ -272,6 +324,7 @@ export async function uninstallCommand(
   }
 
   printPlan(plan);
+  if (synced) info(`This device leaves the synced vault on ${synced.server} first.`);
   console.log("");
 
   if (options.dryRun) {
@@ -288,6 +341,8 @@ export async function uninstallCommand(
     return 1;
   }
 
+  // --yes never deletes the server's copy: that takes a person saying so.
+  let deleteRemote = false;
   if (!options.yes) {
     const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new ClackPrompter() : null);
     if (!prompter) {
@@ -314,6 +369,25 @@ export async function uninstallCommand(
     if (answer !== "yes") {
       info("Nothing was changed.");
       return 0;
+    }
+    if (synced && (await deviceCount(synced, syncDeps)) === 1) {
+      try {
+        const remove = await prompter.select(
+          `This is the last device in the synced vault on ${synced.server}. Delete the vault from the server too?`,
+          [
+            { value: "no", label: "No, leave it on the server" },
+            { value: "yes", label: "Yes, delete it from the server" },
+          ],
+          "no",
+        );
+        deleteRemote = remove === "yes";
+      } catch (error) {
+        if (error instanceof CancelledError) {
+          fail(error.message);
+          return 130;
+        }
+        throw error;
+      }
     }
   }
 
@@ -373,6 +447,8 @@ export async function uninstallCommand(
       // Not empty, or already gone: either way it is the user's directory now.
     }
   }
+
+  if (synced) await leaveSyncedVault(synced, deleteRemote, syncDeps);
 
   // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
   // a leftover key with no vault is harmless, but a keyless vault would block

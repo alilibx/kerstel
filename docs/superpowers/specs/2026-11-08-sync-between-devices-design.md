@@ -59,6 +59,7 @@ The alternative was to keep sync in Later with shared vaults. It moved because s
 | Read or change a record | Fails. Records are AES-256-GCM with the vault ID, record ID and epoch as associated data (§6.2). A changed or moved blob fails to decrypt and is reported. |
 | Swap two records' blobs | Fails, for the same reason. This is why §6.2 binds the record ID, unlike the local vault, which seals values without associated data. |
 | Add a device of its own | Fails. Adding a device takes a signature from an existing device, and the sync key is sealed only to devices a user confirmed (§7.1). |
+| List a key of its own for a device, so a key rotation seals the new sync key to the server | Fails. A device's name is sealed with the sync key together with the public keys it was added with, and a rotation seals the new key only to a device whose listed keys match its sealed name. The server holds no sync key, so it can neither change a name nor make one for a device it invents. `ks sync devices` marks a device whose keys don't match. |
 | Serve an old copy of the vault (rollback) | Partly detected. Each device stores the highest vault revision it has seen and refuses a lower one. The server assigns revisions, though, and nothing in a payload binds one, so it can resend an older blob for a record under a new, higher revision. That blob still decrypts and replaces a clean local value, with the old one kept in the sync backup (§8.5). Signed device logs would close this; they are later work. |
 | Withhold changes from one device, or show two devices different histories | Not prevented. Sync stops making progress, and `doctor` shows when each device last synced. A fix needs signed device logs; it is later work. |
 | Delete the vault | Possible. Every device still has its full local vault, so nothing is lost. `kerstel sync setup` can upload it again to a new server. |
@@ -158,7 +159,7 @@ The code works once and expires in 10 minutes. Waiting for the new device…
 
 `add-device` first opens a pairing slot on the server under a fresh pairing ID. The slot lasts 10 minutes, and a vault can have at most three open.
 
-On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys and sealed name to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code carries the pairing ID, which the server sees, and a 120-bit secret, which it never sees. The post is authenticated with an HMAC keyed by that secret.
+On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code is a 120-bit secret in 24 base32 characters, which the server never sees. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the code needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
 
 Back on the first device:
 
@@ -167,7 +168,7 @@ New device: ali-desktop (Linux), key fingerprint 4F2A 91C0 7B3E
 Add it? It will be able to read every secret in this vault. (y/N)
 ```
 
-On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself and naming the pairing slot. The server marks the slot accepted. On no, the first device deletes the slot, and the new device's poll gets 404. The default answer is no, and `--yes` is refused for this question.
+On yes, the first device checks the HMAC, seals the sync key to the new device, and registers the new device's signing key with the server, signed by itself and naming the pairing slot. The server marks the slot accepted. On no, the first device deletes the slot, and the new device's poll gets 404. The first device polls every 2 seconds and the new device every 3, which keeps the new device's unauthenticated polls under the server's limit of 30 a minute per address. The default answer is no, and `--yes` is refused for this question.
 
 The new device must also know that the sealed key came from the first device and not the server, which can seal a key of its own choosing to any public key. So with the registration, the first device stores a confirmation on the pairing slot: `HMAC(pairingSecret, "kerstel pairing-confirm v1" ‖ vaultId ‖ newDeviceId ‖ epoch ‖ sealedKey)`. The new device, polling the slot, gets the vault ID and the confirmation once the slot is accepted. It fetches its sealed key, checks the confirmation against it, and refuses to join if it doesn't match. Only then does it pull the vault, and only then does it merge and push any secrets it already held (§10). Without this check, a hostile server could hand a joining device a key it chose and an empty vault, and read the secrets the device uploads.
 
@@ -181,7 +182,7 @@ The secret is long because the server could otherwise guess it offline from the 
 
 `ks sync remove-device <name>`:
 
-1. Generates a new sync key (a new epoch), seals it to every remaining device, and seals every remaining device's name again under it: names are sealed with the sync key, so a device paired after the rotation could not read the old ones.
+1. Pulls first, so names sealed under a key another device rotated to can be read. Generates a new sync key (a new epoch), seals it to every remaining device, and seals every remaining device's name again under it: names are sealed with the sync key, so a device paired after the rotation could not read the old ones. A name holds the device's public keys too, and the new key is sealed only to keys that match their device's sealed name; if any listed device fails that check, the rotation stops and changes nothing.
 2. Pulls, then re-encrypts every record under the new epoch and uploads them with the sealed keys and the removal, as one atomic request. The request names the vault revision it was prepared from. The server rejects it if the vault has moved past that revision, because another device pushed in the meantime and its change would be lost. The client then pulls and prepares the rotation again. Otherwise the server switches the vault to the new epoch in a single transaction and drops the removed device's signing key.
 3. Prints a reminder: the removed device already had every value, so rotate any secret it should no longer hold. Kerstel cannot do that for the user.
 

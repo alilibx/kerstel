@@ -3,12 +3,16 @@ import {
   HEADERS,
   PROTOCOL_PREFIX,
   signRequest,
+  type AddDeviceBody,
   type CreateVaultBody,
   type DeviceOut,
+  type PairingSlotOut,
+  type PairingStateOut,
   type ErrorBody,
   type PullResponse,
   type PushBody,
   type PushResponse,
+  type RotateBody,
 } from "../../../server/src/protocol";
 
 /**
@@ -41,6 +45,45 @@ export interface ClientOptions {
   now?: () => number;
 }
 
+/** One request, without following redirects; a non-2xx answer becomes a SyncHttpError. */
+async function send<T>(doFetch: Fetch, server: string, method: string, path: string, raw: Uint8Array | null, headers: Record<string, string>): Promise<T> {
+  let response: Response;
+  try {
+    // Never followed: a redirect would carry the enroll token and the
+    // signed request to wherever it points, plain http included.
+    response = await doFetch(
+      new Request(`${server}${PROTOCOL_PREFIX}${path}`, {
+        method,
+        headers: raw === null ? headers : { ...headers, "content-type": "application/json" },
+        body: raw ?? undefined,
+        redirect: "manual",
+      }),
+    );
+  } catch (error) {
+    throw new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${(error as Error).message}`);
+  }
+  if (response.status >= 300 && response.status < 400) {
+    throw new SyncHttpError(
+      response.status,
+      "redirect",
+      `${server} answered with a redirect, which Kerstel does not follow for sync. Use the server's final URL.`,
+    );
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    let parsed: Partial<ErrorBody> = {};
+    try {
+      parsed = JSON.parse(text) as ErrorBody;
+    } catch {
+      // Not the server's JSON: a proxy's page, say. Its status is all there is.
+    }
+    throw new SyncHttpError(response.status, parsed.error ?? "http", parsed.message ?? `The server answered ${response.status}.`);
+  }
+  return (text === "" ? undefined : JSON.parse(text)) as T;
+}
+
+const encode = (body: unknown): Uint8Array | null => (body === undefined ? null : new TextEncoder().encode(JSON.stringify(body)));
+
 export function syncClient(options: ClientOptions) {
   const doFetch: Fetch = options.fetch ?? ((request) => fetch(request));
   const clock = options.now ?? Date.now;
@@ -50,46 +93,13 @@ export function syncClient(options: ClientOptions) {
   let last = 0;
   const now = (): number => (last = Math.max(clock(), last + 1));
 
-  async function call<T>(method: string, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
-    const raw = body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body));
+  function call<T>(method: string, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
+    const raw = encode(body);
     const headers = {
-      ...signRequest(options.sign, options.deviceId, method, `${PROTOCOL_PREFIX}${path}`, raw, now()),
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...signRequest(options.sign, options.deviceId, method, `${PROTOCOL_PREFIX}${path}`, raw ?? new Uint8Array(), now()),
       ...extra,
     };
-    let response: Response;
-    try {
-      // Never followed: a redirect would carry the enroll token and the
-      // signed request to wherever it points, plain http included.
-      response = await doFetch(
-        new Request(`${options.server}${PROTOCOL_PREFIX}${path}`, {
-          method,
-          headers,
-          body: body === undefined ? undefined : raw,
-          redirect: "manual",
-        }),
-      );
-    } catch (error) {
-      throw new SyncHttpError(0, "unreachable", `Could not reach ${options.server}: ${(error as Error).message}`);
-    }
-    if (response.status >= 300 && response.status < 400) {
-      throw new SyncHttpError(
-        response.status,
-        "redirect",
-        `${options.server} answered with a redirect, which Kerstel does not follow for sync. Set sync up with the server's final URL.`,
-      );
-    }
-    const text = await response.text();
-    if (!response.ok) {
-      let parsed: Partial<ErrorBody> = {};
-      try {
-        parsed = JSON.parse(text) as ErrorBody;
-      } catch {
-        // Not the server's JSON: a proxy's page, say. Its status is all there is.
-      }
-      throw new SyncHttpError(response.status, parsed.error ?? "http", parsed.message ?? `The server answered ${response.status}.`);
-    }
-    return (text === "" ? undefined : JSON.parse(text)) as T;
+    return send<T>(doFetch, options.server, method, path, raw, headers);
   }
 
   const vault = `/vaults/${options.vaultId}`;
@@ -115,7 +125,38 @@ export function syncClient(options: ClientOptions) {
     deleteVault() {
       return call<void>("DELETE", vault);
     },
+    addDevice(body: AddDeviceBody) {
+      return call<DeviceOut>("POST", `${vault}/devices`, body);
+    },
+    rotate(body: RotateBody) {
+      return call<{ epoch: number; head: number }>("POST", `${vault}/epochs`, body);
+    },
+    openPairing(pairingId: string) {
+      return call<{ expiresAt: number }>("POST", `${vault}/pairings`, { pairingId });
+    },
+    readPairing(pairingId: string) {
+      return call<PairingSlotOut>("GET", `${vault}/pairings/${pairingId}`);
+    },
+    closePairing(pairingId: string) {
+      return call<void>("DELETE", `${vault}/pairings/${pairingId}`);
+    },
   };
 }
 
 export type SyncClient = ReturnType<typeof syncClient>;
+
+/**
+ * The new device's half of pairing, before it has a key the server knows:
+ * unsigned. The answer is sealed with the pairing secret instead.
+ */
+export function pairingClient(server: string, fetchImpl?: Fetch) {
+  const doFetch: Fetch = fetchImpl ?? ((request) => fetch(request));
+  return {
+    answer(pairingId: string, payload: string) {
+      return send<void>(doFetch, server, "PUT", `/pairings/${pairingId}`, encode({ payload }), {});
+    },
+    state(pairingId: string) {
+      return send<PairingStateOut>(doFetch, server, "GET", `/pairings/${pairingId}`, null, {});
+    },
+  };
+}
