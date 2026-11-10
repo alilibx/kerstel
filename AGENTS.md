@@ -33,6 +33,15 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it verifies the tag, cr
 
 `bun scripts/release-verify.ts <tag>` runs the same pre-flight check locally.
 
+### Nightly builds
+
+`.github/workflows/nightly.yml` publishes work that is on `main` but not in any release yet. Today that is `kerstel-server` (#81). It runs every day at 03:17 UTC, and only when `main` has moved since the last nightly. To run it by hand, use `gh workflow run nightly.yml`, adding `-f force=true` to rebuild an unchanged `main`.
+
+- It replaces one rolling GitHub pre-release, tagged `nightly`, and pushes `ghcr.io/alilibx/kerstel-server:nightly` plus a dated tag. Versions look like `0.3.0-nightly.20261108-abc1234` on images and `0.3.0-nightly.20261108+abc1234` everywhere else.
+- A nightly is not a release. It never uses a `v*` tag, it never gets a `CHANGELOG.md` section, and the website, README and `install.sh` never link to it. `kerstel update` and `install.sh` read `/releases/latest`, which never points at a pre-release.
+- When a component first ships in a release, add it to `release.yml` and remove it from the nightly. The nightly then stays for the next unreleased piece of work, or is deleted.
+- GHCR makes a new package private. After the first nightly, set `kerstel-server` to public under the repository's Packages settings.
+
 ### Release videos
 
 Every minor and major release (`0.2.0`, `1.0.0`) gets a short release video at the top of the changelog page. Patch releases (`0.1.1`) do not.

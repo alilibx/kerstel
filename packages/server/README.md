@@ -4,7 +4,17 @@ The self-hostable sync server for Kerstel. It stores only ciphertext. It never s
 
 > **Preview.** No release includes the server or the `ks sync` client yet; both ship in 0.3.0. The protocol may change before then. The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflicts.
 
-## Run it
+## Nightly builds
+
+Each day that `main` changes, a [`nightly` pre-release](https://github.com/alilibx/kerstel/releases/tag/nightly) gets binaries for Linux and macOS with a `SHA256SUMS` file, and an image is pushed:
+
+```bash
+docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:nightly
+```
+
+The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. The settings below work as environment variables with `docker run -e`.
+
+## Run it from source
 
 ```bash
 bun run --cwd packages/server build        # dist/kerstel-server
