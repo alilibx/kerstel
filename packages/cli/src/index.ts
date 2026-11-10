@@ -115,7 +115,7 @@ export async function runCli(argv: string[]): Promise<number> {
     fail((error as Error).message);
     return 1;
   } finally {
-    if (!background) syncAfterCommand(command);
+    if (!background) syncAfterCommand(command, args);
   }
 }
 

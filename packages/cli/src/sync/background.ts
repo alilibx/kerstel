@@ -164,8 +164,12 @@ export function spawnBackgroundSync(): void {
   }).unref();
 }
 
-/** Commands that write the vault, and so push what they wrote. */
-const WRITES = new Set(["set", "rm", "remove", "init", "move", "ui"]);
+/**
+ * Commands that write the vault, and so push what they wrote. Pairing is here
+ * too: it holds the sync lock for up to ten minutes, longer than a background
+ * sync waits, so a write made meanwhile is pushed when it finishes.
+ */
+const WRITES = new Set(["set", "rm", "remove", "init", "move", "ui", "sync add-device", "sync join"]);
 /** Commands that start an app, and so pull what other devices changed. */
 const RUNS = new Set(["run", "exec"]);
 
@@ -195,8 +199,8 @@ export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): b
 }
 
 /** After a command that writes the vault: a sync, when it left changes to push. Never throws. */
-export function syncAfterCommand(command: string, deps: BackgroundDeps = {}): boolean {
-  if (!WRITES.has(command)) return false;
+export function syncAfterCommand(command: string, args: string[], deps: BackgroundDeps = {}): boolean {
+  if (!WRITES.has(command === "sync" ? `sync ${args[0] ?? ""}` : command)) return false;
   try {
     const sync = (deps.glance ?? glanceSync)();
     if (!sync.on || sync.pending === 0) return false;

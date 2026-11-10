@@ -1184,7 +1184,9 @@ describe("sync in the background", () => {
     const run = (command: string, state: Partial<typeof on>, when: "before" | "after") => {
       let spawned = 0;
       const deps = { glance: () => ({ ...on, ...state }), spawn: () => void (spawned += 1), now: () => now };
-      (when === "before" ? syncBeforeCommand : syncAfterCommand)(command, deps);
+      const [name, ...args] = command.split(" ");
+      if (when === "before") syncBeforeCommand(name!, deps);
+      else syncAfterCommand(name!, args, deps);
       return spawned;
     };
     // Writes push what they left pending.
@@ -1192,6 +1194,10 @@ describe("sync in the background", () => {
     expect(run("set", { pending: 0 }, "after")).toBe(0);
     expect(run("set", { on: false, pending: 1 }, "after")).toBe(0);
     expect(run("get", { pending: 1 }, "after")).toBe(0);
+    // Pairing holds the lock longer than a background sync waits: it pushes what was written meanwhile.
+    for (const command of ["sync add-device", "sync join"]) expect(run(command, { pending: 1 }, "after")).toBe(1);
+    expect(run("sync", { pending: 1 }, "after")).toBe(0);
+    expect(run("sync status", { pending: 1 }, "after")).toBe(0);
     // run and exec pull when nothing finished in five minutes, whether it worked or not.
     for (const command of ["run", "exec"]) expect(run(command, { lastOk: now - 6 * 60_000 }, "before")).toBe(1);
     expect(run("run", { lastOk: now - 60_000 }, "before")).toBe(0);
@@ -1199,7 +1205,7 @@ describe("sync in the background", () => {
     expect(run("run", { on: false }, "before")).toBe(0);
     expect(run("ls", {}, "before")).toBe(0);
     // A failing glance or spawn never fails the command.
-    expect(syncAfterCommand("set", { glance: () => ({ ...on, pending: 1 }), spawn: () => { throw new Error("no"); } })).toBe(false);
+    expect(syncAfterCommand("set", [], { glance: () => ({ ...on, pending: 1 }), spawn: () => { throw new Error("no"); } })).toBe(false);
   });
 
   test("the background environment carries no caller variables or runtime options", () => {
