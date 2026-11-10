@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { openDatabase } from "../../server/src/db";
@@ -1127,33 +1127,41 @@ describe("sync in the background", () => {
     expect(a.with((v) => v.getSecret(ref("app", "NEW")))).toBe("new-1");
   });
 
-  test("the lock: a held lock skips a background sync, a dead holder's lock is taken over, release removes only our own", async () => {
+  test("the lock: a background sync waits for the holder, then syncs what was written meanwhile", async () => {
     const s = server();
     const a = device();
     await setUp(a, s);
-    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
     const lock = syncLockPath(join(a.home, "vault.db"));
     expect(lock).toBe(join(a.home, "sync.lock"));
 
     const release = tryLockSync(lock)!;
     expect(release).not.toBeNull();
     expect(tryLockSync(lock)).toBeNull();
+    // The holder already collected its changes; this write comes after.
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    setTimeout(release, 400);
     expect(await background(a, s)).toEqual({ result: 0, out: "" });
-    expect(glance(a).pending).toBe(1);
+    expect(glance(a).pending).toBe(0);
     release();
-    expect(existsSync(lock)).toBe(false);
+  });
 
-    // A process that has exited holds nothing.
-    const gone = Bun.spawn(["true"]);
-    await gone.exited;
-    writeFileSync(lock, JSON.stringify({ pid: gone.pid, at: Date.now() }));
-    const taken = tryLockSync(lock);
-    expect(taken).not.toBeNull();
-    // Someone else took it over meanwhile: releasing ours leaves theirs.
-    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: 1 }));
-    taken!();
-    expect(existsSync(lock)).toBe(true);
-    rmSync(lock);
+  test("the lock: the operating system frees it when its process dies, however it dies", async () => {
+    const a = device();
+    const lock = syncLockPath(join(a.home, "vault.db"));
+    const module = join(import.meta.dir, "..", "src", "sync", "background.ts");
+    const holder = Bun.spawn(
+      ["bun", "-e", `const { tryLockSync } = await import(${JSON.stringify(module)}); console.log(tryLockSync(${JSON.stringify(lock)}) ? "held" : "busy"); await Bun.sleep(60_000);`],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    const reader = holder.stdout.getReader();
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toContain("held");
+    expect(tryLockSync(lock)).toBeNull();
+    holder.kill(9);
+    await holder.exited;
+    const mine = tryLockSync(lock);
+    expect(mine).not.toBeNull();
+    mine!();
   });
 
   test("a sync you start waits for a background one to finish", async () => {
@@ -1234,7 +1242,13 @@ describe("sync in the background", () => {
       const deadline = Date.now() + 20_000;
       while (records() === 0 && Date.now() < deadline) await Bun.sleep(100);
       expect(records()).toBe(1);
-      while (existsSync(join(home, "sync.lock")) && Date.now() < deadline) await Bun.sleep(50);
+      // The background sync holds the lock until it has recorded its result.
+      let free = tryLockSync(join(home, "sync.lock"));
+      while (!free && Date.now() < deadline) {
+        await Bun.sleep(50);
+        free = tryLockSync(join(home, "sync.lock"));
+      }
+      free?.();
       expect(glanceSync(join(home, "vault.db"))).toMatchObject({ pending: 0, lastError: null });
       expect(await new Response(cli.stdout).text()).not.toContain("new-1");
     } finally {

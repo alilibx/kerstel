@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { openContext } from "../src/context";
 import { daemonEnv, isScrubbedEnvironment, SCRUBBED_MARKER } from "../src/daemon/env";
 import { clearTokenIf, createToken, writeToken } from "../src/daemon/token";
@@ -93,4 +93,10 @@ test("the marker tells a foreground serve whether it was started through the all
   expect(isScrubbedEnvironment(daemonEnv(caller))).toBe(true);
   // The marker is set by daemonEnv itself, not copied from the caller.
   expect(isScrubbedEnvironment({ ...caller, [SCRUBBED_MARKER]: "yes" })).toBe(false);
+});
+
+test("a relative KERSTEL_HOME reaches the child absolute, since the child starts inside the home", () => {
+  const env = daemonEnv({ PATH: "/usr/bin", KERSTEL_HOME: ".kerstel-data" });
+  expect(env.KERSTEL_HOME).toBe(resolve(".kerstel-data"));
+  expect(daemonEnv({ PATH: "/usr/bin" }).KERSTEL_HOME).toBeUndefined();
 });

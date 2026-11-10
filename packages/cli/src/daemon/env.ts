@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { ensureHome, kerstelHome } from "../paths";
 
 /**
@@ -92,6 +93,9 @@ export function daemonEnv(base: NodeJS.ProcessEnv = process.env): Record<string,
     const value = base[name];
     if (typeof value === "string") env[name] = value;
   }
+  // Absolute, as the parent resolved it: the child starts in the home itself,
+  // where a relative KERSTEL_HOME would name a directory inside it.
+  if (env.KERSTEL_HOME) env.KERSTEL_HOME = resolve(env.KERSTEL_HOME);
   env[SCRUBBED_MARKER] = "1";
   return env;
 }

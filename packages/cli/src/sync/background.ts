@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { daemonCwd, daemonEnv } from "../daemon/env";
 import { cliCommand } from "../daemon/spawn";
@@ -18,8 +18,6 @@ import { SYNC_META } from "./state";
 export const BACKGROUND_PULL_AFTER_MS = 5 * 60_000;
 /** `doctor` warns when the last successful sync is older than this. */
 export const STALE_SYNC_MS = 7 * 24 * 60 * 60_000;
-/** A lock older than this is left over from a sync that died: every request inside it times out sooner. */
-const LOCK_MAX_AGE_MS = 10 * 60_000;
 
 /** What a command can learn about sync from `vault.db` alone: no data key, no credential store. */
 export interface SyncGlance {
@@ -79,63 +77,40 @@ export function syncLockPath(vaultFile: string = join(kerstelHome(), "vault.db")
   return join(dirname(vaultFile), "sync.lock");
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: it exists, and belongs to someone else.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/** A lock whose process is gone, or that has been held far longer than any sync takes. */
-function isStale(file: string, now: number): boolean {
-  try {
-    const { pid } = JSON.parse(readFileSync(file, "utf8")) as { pid?: unknown };
-    if (now - statSync(file).mtimeMs > LOCK_MAX_AGE_MS) return true;
-    return typeof pid !== "number" || !alive(pid);
-  } catch {
-    // Half written, or removed meanwhile: only age can tell.
-    try {
-      return now - statSync(file).mtimeMs > LOCK_MAX_AGE_MS;
-    } catch {
-      return true;
-    }
-  }
-}
-
 /**
  * Takes `~/.kerstel/sync.lock`, or returns null when another sync holds it.
- * The returned function releases it. A lock left by a sync that died is taken over.
+ * The returned function releases it.
+ *
+ * The lock is an exclusive SQLite transaction on that file, so the operating
+ * system holds it and frees it when the process ends, however it ends. Nothing
+ * ever decides a lock is stale and takes it over, so two syncs can't both
+ * believe they hold it.
  */
-export function tryLockSync(file: string = syncLockPath(), now: number = Date.now()): (() => void) | null {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let fd: number;
-    try {
-      fd = openSync(file, "wx", 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return null;
-      if (!isStale(file, now)) return null;
-      rmSync(file, { force: true });
-      continue;
-    }
-    const mine = JSON.stringify({ pid: process.pid, at: now });
-    try {
-      writeSync(fd, mine);
-    } finally {
-      closeSync(fd);
-    }
-    return () => {
-      // Only our own: a lock taken over after this one went stale belongs to another sync.
-      try {
-        if (readFileSync(file, "utf8") === mine) rmSync(file, { force: true });
-      } catch {
-        // Already gone.
-      }
-    };
+export function tryLockSync(file: string = syncLockPath()): (() => void) | null {
+  let db: Database;
+  try {
+    db = new Database(file, { create: true });
+  } catch {
+    return null;
   }
-  return null;
+  try {
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    db.exec("PRAGMA busy_timeout = 0");
+    db.exec("BEGIN EXCLUSIVE");
+  } catch {
+    db.close();
+    return null;
+  }
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    try {
+      db.exec("COMMIT");
+    } finally {
+      db.close();
+    }
+  };
 }
 
 /** For a sync someone is waiting on: waits for a background sync to finish, up to `timeoutMs`. */

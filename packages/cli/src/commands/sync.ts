@@ -33,7 +33,7 @@ import {
   type SyncContext,
   type SyncReport,
 } from "../sync/engine";
-import { syncLockPath, tryLockSync, waitForSyncLock } from "../sync/background";
+import { syncLockPath, waitForSyncLock } from "../sync/background";
 import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
 import {
   forgetSync,
@@ -44,6 +44,7 @@ import {
   recordResult,
   saveSync,
   setFullPull,
+  SYNC_META,
   writeSync,
   type SyncConfig,
 } from "../sync/state";
@@ -146,6 +147,8 @@ async function waitFor<T>(check: () => Promise<T | null>, everyMs: number, deps:
 
 /** How long a sync you started waits for a background one to finish. */
 const LOCK_WAIT_MS = 30_000;
+/** How long a background sync waits for the one before it, which may be a pairing that takes minutes. */
+const BACKGROUND_LOCK_WAIT_MS = 2 * 60_000;
 
 /**
  * Opens the vault and takes the sync lock beside it (§8.1), so this sync and a
@@ -347,13 +350,22 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
  */
 async function background(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   if (args.length > 0) return 2;
+  const started = Date.now();
   const ctx = await open();
   try {
-    const sync = contextFor(ctx, deps);
-    if (!sync) return 0;
-    const release = tryLockSync(syncLockPath(ctx.vault.file));
+    if (ctx.vault.getMeta(SYNC_META.vaultId) === null) return 0;
+    // Waits rather than leaving the work to the holder: it may have collected
+    // its changes before the write that started this sync.
+    const release = await waitForSyncLock(syncLockPath(ctx.vault.file), BACKGROUND_LOCK_WAIT_MS);
     if (!release) return 0;
     try {
+      // Read after the wait: the holder may have replaced the key, or turned sync off.
+      const sync = contextFor(ctx, deps);
+      if (!sync) return 0;
+      // A sync that finished after this one started, and left nothing to push, did its work.
+      const lastTry = Number(ctx.vault.getMeta(SYNC_META.lastTry) ?? "0");
+      const pending = ctx.vault.sync.rows().some((row) => row.dirty && row.conflict === null);
+      if (lastTry >= started && !pending) return 0;
       await syncOnce(sync);
       recordResult(ctx.vault, null);
     } catch (error) {
