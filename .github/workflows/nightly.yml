@@ -139,7 +139,10 @@ jobs:
           grep -q "\"version\":\"$EXPECTED_VERSION\"" health.json
 
   publish:
-    needs: [check, smoke]
+    # Last, after the image: the `nightly` tag it creates is what tells the
+    # next run that this commit is done, so a failed image push must leave
+    # no tag behind and be retried.
+    needs: [check, smoke, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
