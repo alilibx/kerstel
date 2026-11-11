@@ -69,7 +69,7 @@ The same job then starts that platform's `kerstel-server`, checks the version it
 
 ### 4.3a Server image
 
-After the smoke tests, an Ubuntu job builds a `linux/amd64` and `linux/arm64` image from `packages/server/Dockerfile` and the two Linux server binaries already tested, pushes it to `ghcr.io/<owner>/kerstel-server`, and runs it once to check its version and health. A final tag pushes `X.Y.Z`, `X.Y` and `latest`; a pre-release tag pushes only its own tag.
+After the smoke tests, an Ubuntu job builds a `linux/amd64` and `linux/arm64` image from `packages/server/Dockerfile` and the two Linux server binaries already tested, pushes it to `ghcr.io/<owner>/kerstel-server`, and runs it once to check its version and health. A final tag pushes `X.Y.Z`, and moves `X.Y` and `latest` only when it is the newest release in that minor version or overall, so re-running an older release can't move them back. A pre-release tag pushes only its own tag. Releases run one at a time.
 
 ### 4.4 Publish
 
