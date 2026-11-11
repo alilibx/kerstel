@@ -62,6 +62,20 @@ test("maskCommandForDisplay masks what a script sets inline and keeps the comman
     "deploy --token «6-chars-opaque» --api-key=«3-chars-opaque» --verbose",
   );
   expect(maskCommandForDisplay("deploy --auth --verbose")).toBe("deploy --auth --verbose");
+  // The whole shell word is masked, however it is escaped or quoted.
+  for (const command of [
+    "API_TOKEN=prefix\\ secret node app.js",
+    "API_TOKEN=pre'fix secret'tail node app.js",
+    "node app.js --token 'prefix''secret'",
+    "node app.js --token=-secret",
+    'node app.js "postgres://me:pa\'ss@db/app"',
+  ]) {
+    const masked = maskCommandForDisplay(command);
+    expect(masked, command).not.toContain("secret");
+    expect(masked, command).not.toContain("ss@");
+    expect(masked, command).toContain("app");
+  }
+  expect(maskCommandForDisplay("node app.js --token=-secret")).toBe("node app.js --token=«7-chars-opaque»");
   expect(maskCommandForDisplay("psql postgres://me:hunter2@db/app")).toBe("psql postgres://me:«7-chars-opaque»@db/app");
   expect(maskCommandForDisplay("node .kerstel/exec.cjs -- next dev --port 3000")).toBe(
     "node .kerstel/exec.cjs -- next dev --port 3000",

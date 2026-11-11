@@ -101,17 +101,35 @@ export function maskForDisplay(source: string): string {
   return out;
 }
 
-/** `NAME=value` at the start of a shell word, with a bare, single- or double-quoted value. */
-const ASSIGNMENT = /(^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=((?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()'"]+)+)/g;
-/** A flag whose name says it carries a credential, and the value after `=` or a space. */
-const SECRET_FLAG =
-  /(--?[A-Za-z0-9_-]*(?:token|secret|passw(?:or)?d|pwd|key|auth|credential)[A-Za-z0-9_-]*)(=|\s+)(?!-)('[^']*'|"(?:[^"\\]|\\.)*"|[^\s;&|()]+)/gi;
-/** The password in a URL's `user:password@`. */
-const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]*:)([^\s/@'"]+)@/gi;
+/**
+ * One whole shell word: bare characters, backslash escapes (`a\ b`), and
+ * quoted parts joined to them (`'a''b'`, `x"y z"`), up to the first unquoted
+ * space or control character. A mask that stopped earlier would print the rest.
+ */
+const WORD = String.raw`(?:'[^']*'|"(?:[^"\\]|\\[\s\S])*"|\\[\s\S]|[^\s;&|()'"\\])+`;
+/** `NAME=value` at the start of a shell word. */
+const ASSIGNMENT = new RegExp(String.raw`(^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=(${WORD})`, "g");
+/**
+ * A flag whose name says it carries a credential, and its value: everything
+ * after `=`, or the next word unless that word is another flag.
+ */
+const SECRET_FLAG = new RegExp(
+  String.raw`(--?[A-Za-z0-9_-]*(?:token|secret|passw(?:or)?d|pwd|key|auth|credential)[A-Za-z0-9_-]*)(=|\s+(?!-))(${WORD})`,
+  "gi",
+);
+/**
+ * The password in a URL's `user:password@`: everything up to the last `@`
+ * before the URL's host, quotes included, since a quoted URL may hold one.
+ */
+const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]*:)([^\s/]+)@/gi;
 
-/** A value as it appears in a command, masked, keeping a single surrounding pair of quotes. */
+/**
+ * A value as it appears in a command, masked. A word that is one quoted part
+ * keeps its quotes; any other word is masked whole.
+ */
 function redactWord(word: string, key?: string): string {
-  const quote = word.length >= 2 && (word[0] === "'" || word[0] === '"') && word.at(-1) === word[0] ? word[0] : "";
+  const single = /^'[^']*'$/.test(word) || /^"(?:[^"\\]|\\[\s\S])*"$/.test(word);
+  const quote = single ? word[0]! : "";
   const inner = quote === "" ? word : word.slice(1, -1);
   if (key !== undefined && parseReference(inner, key) !== null) return word;
   return `${quote}${redact(inner)}${quote}`;

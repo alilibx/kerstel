@@ -101,7 +101,7 @@ Useful flags:
 
 | Flag | What it does |
 |---|---|
-| `--dry-run` | Prints every diff and writes nothing: not to your project, your vault, or `~/.kerstel`. Run this first. |
+| `--dry-run` | Prints every diff and writes nothing: not to your project, your vault, or `~/.kerstel`. Run this first. Diffs mask every value, the text of every comment in an env file, and the values a `package.json` script sets inline (`NAME=value`, a `--token`-style flag, a URL's password). |
 | `--yes` | Accepts every suggestion, asks nothing. |
 | `--scope <name>` | Overrides the project scope (default: your `package.json` name). |
 | `--global KEY[,KEY]` | Forces those keys into the `global` scope. |
