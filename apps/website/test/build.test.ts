@@ -126,6 +126,7 @@ describe("build output", () => {
       refs: "refs.ts",
       exec: "exec.ts",
       move: "move.ts",
+      update: "update.ts",
     };
     const uses = [...prompt.matchAll(/`kerstel ([a-z]+)((?: [^`]*)?)`/g)];
     expect(uses.length).toBeGreaterThan(5);

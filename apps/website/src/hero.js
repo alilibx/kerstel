@@ -50,10 +50,13 @@
 })();
 
 function copyText(btn, text) {
-  var label = btn.textContent;
+  // The first label, kept on the button, so a second click while "Copied"
+  // shows can't make "Copied" the label it resets to.
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
   function show(message) {
     btn.textContent = message;
-    setTimeout(function () { btn.textContent = label; }, 2000);
+    clearTimeout(btn._reset);
+    btn._reset = setTimeout(function () { btn.textContent = btn.dataset.label; }, 2000);
   }
   if (!navigator.clipboard) return show("Copy failed");
   navigator.clipboard.writeText(text).then(function () { show("Copied"); }, function () { show("Copy failed"); });
