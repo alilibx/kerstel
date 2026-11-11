@@ -4,7 +4,6 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "//version": "The release this server first ships in. Until then builds report it with a suffix: -dev from source, -nightly.<date>+<sha> from the nightly channel.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "bun build src/index.ts --compile --no-compile-autoload-dotenv --outfile ../../dist/kerstel-server"

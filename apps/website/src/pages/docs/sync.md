@@ -10,17 +10,26 @@ order: 5
 
 Sync is optional and off until you turn it on. It is for one person's devices. A team still commits references and fills each teammate's vault, as in [Working with a team](/docs/teams), until shared vaults ship.
 
-Sync ships in 0.3.0. Until then, build `kerstel-server` from source as shown below.
-
 ## Run a server
 
-`kerstel-server` stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices.
+`kerstel-server` stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.
+
+With Docker:
 
 ```bash
-git clone https://github.com/alilibx/kerstel.git && cd kerstel
-bun install
-bun run --cwd packages/server build
-./dist/kerstel-server --db /var/lib/kerstel/server.db --listen 127.0.0.1:8787
+docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+```
+
+The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. Pin a version (`:0.3.0`) rather than `latest` if you upgrade on your own schedule. The options below work as environment variables with `docker run -e`.
+
+Or download the binary for your platform (`linux-x64`, `linux-arm64`, `darwin-arm64` or `darwin-x64`) from the [latest release](https://github.com/alilibx/kerstel/releases/latest), and check it against the release's `SHA256SUMS`:
+
+```bash
+curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/kerstel-server-linux-x64
+curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+chmod +x kerstel-server-linux-x64
+./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db --listen 127.0.0.1:8787
 ```
 
 | Option | Environment | Default |

@@ -1,4 +1,4 @@
-# The kerstel-server image. Built by .github/workflows/nightly.yml from
+# The kerstel-server image. Built by .github/workflows/release.yml from
 # binaries it already compiled and smoke-tested, so nothing is built here and
 # no RUN step needs an emulator for the other architecture. The build context
 # holds amd64/kerstel-server, arm64/kerstel-server and data/.

@@ -34,13 +34,18 @@
 <main class="wrap">
 <h1>Sync</h1>
 <p class="lede">Keep one vault on your laptop and your desktop. Values are encrypted on your device with a key the server never holds.</p><p>Sync is optional and off until you turn it on. It is for one person&#39;s devices. A team still commits references and fills each teammate&#39;s vault, as in <a href="/docs/teams">Working with a team</a>, until shared vaults ship.</p>
-<p>Sync ships in 0.3.0. Until then, build <code>kerstel-server</code> from source as shown below.</p>
 <h2>Run a server</h2>
-<p><code>kerstel-server</code> stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices.</p>
-<pre><code class="language-bash">git clone https://github.com/alilibx/kerstel.git &amp;&amp; cd kerstel
-bun install
-bun run --cwd packages/server build
-./dist/kerstel-server --db /var/lib/kerstel/server.db --listen 127.0.0.1:8787
+<p><code>kerstel-server</code> stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.</p>
+<p>With Docker:</p>
+<pre><code class="language-bash">docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+</code></pre>
+<p>The image has no shell, runs as a non-root user, and keeps its database in the <code>/data</code> volume. Pin a version (<code>:0.3.0</code>) rather than <code>latest</code> if you upgrade on your own schedule. The options below work as environment variables with <code>docker run -e</code>.</p>
+<p>Or download the binary for your platform (<code>linux-x64</code>, <code>linux-arm64</code>, <code>darwin-arm64</code> or <code>darwin-x64</code>) from the <a href="https://github.com/alilibx/kerstel/releases/latest">latest release</a>, and check it against the release&#39;s <code>SHA256SUMS</code>:</p>
+<pre><code class="language-bash">curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/kerstel-server-linux-x64
+curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+chmod +x kerstel-server-linux-x64
+./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db --listen 127.0.0.1:8787
 </code></pre>
 <div class="table-wrap"><table>
 <thead>

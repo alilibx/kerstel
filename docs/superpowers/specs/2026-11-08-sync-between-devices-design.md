@@ -248,11 +248,11 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 ### 9.1 Shape
 
 - A new package, `packages/server`, compiled with `bun build --compile` to `kerstel-server`. It is a separate binary, so the CLI that runs on developer machines still contains no listening code.
-- Released alongside the CLI for Linux x64 and arm64, plus an image at `ghcr.io/alilibx/kerstel-server`.
+- Released alongside the CLI, from the same tag and with the same version: binaries for Linux and macOS (x64 and arm64) in the GitHub Release, checked by the same `SHA256SUMS`, plus a `linux/amd64` and `linux/arm64` image at `ghcr.io/alilibx/kerstel-server`, tagged with the version (`0.3.0`), the minor version (`0.3`) and `latest`. A pre-release tag pushes only its own image tag.
 - Storage is one SQLite file, mode `0600`. Settings: `--db` (`KERSTEL_SERVER_DB`), `--listen` (`KERSTEL_SERVER_LISTEN`, default `127.0.0.1:8787`), `--trust-proxy` to rate limit by `X-Forwarded-For`, and an optional enroll token that `sync setup` must present to create a vault. The token comes from `--enroll-token-file` or `KERSTEL_SERVER_ENROLL_TOKEN`, never from a command-line value, where `ps` would show it. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one, and the server says so on start.
 - The binary is compiled with `--no-compile-autoload-dotenv`, so a `.env` in its working directory cannot change its settings.
 - The log has one line per request: method, the route as a fixed label with every ID as `:id` (`(unknown)` for a path the server does not answer, so no text a caller puts in a path is logged), status and duration. No IDs, addresses or bodies.
-- Until 0.3.0 ships, the server is published only on the nightly channel: a rolling `nightly` GitHub pre-release and `ghcr.io/alilibx/kerstel-server:nightly`. See "Nightly builds" in `AGENTS.md`.
+- Before 0.3.0, the server was published only on a nightly channel (a rolling `nightly` pre-release and `ghcr.io/alilibx/kerstel-server:nightly`). The 0.3.0 release PR moved it into `release.yml` and deleted the nightly workflow.
 - The image is `distroless/base` with no shell. It runs as a non-root user, keeps its database in the `/data` volume, and listens on `0.0.0.0:8787` inside the container.
 - TLS is left to a reverse proxy (Caddy, nginx, or a platform's load balancer). The docs give a Caddy example.
 

@@ -33,14 +33,11 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it verifies the tag, cr
 
 `bun scripts/release-verify.ts <tag>` runs the same pre-flight check locally.
 
+Each release also carries `kerstel-server`: four `kerstel-server-<platform>` binaries in the same GitHub Release and `SHA256SUMS`, and an image pushed to `ghcr.io/alilibx/kerstel-server` as `X.Y.Z`, `X.Y` and `latest` (a pre-release tag pushes only its own tag). `packages/server/package.json` carries the same version as every other package.
+
 ### Nightly builds
 
-`.github/workflows/nightly.yml` publishes work that is on `main` but not in any release yet. Today that is `kerstel-server` (#81). It runs every day at 03:17 UTC, and only when `main` has moved since the last nightly. To run it by hand, use `gh workflow run nightly.yml`, adding `-f force=true` to rebuild an unchanged `main`.
-
-- It replaces one rolling GitHub pre-release, tagged `nightly`, and pushes `ghcr.io/alilibx/kerstel-server:nightly` plus a dated tag. Versions look like `0.3.0-nightly.20261108-abc1234` on images and `0.3.0-nightly.20261108+abc1234` everywhere else.
-- A nightly is not a release. It never uses a `v*` tag, it never gets a `CHANGELOG.md` section, and the website, README and `install.sh` never link to it. `kerstel update` and `install.sh` read `/releases/latest`, which never points at a pre-release.
-- When a component first ships in a release, add it to `release.yml` and remove it from the nightly. The nightly then stays for the next unreleased piece of work, or is deleted.
-- GHCR makes a new package private. After the first nightly, set `kerstel-server` to public under the repository's Packages settings.
+There is no nightly channel today. `kerstel-server` was published from `main` as a rolling `nightly` pre-release until 0.3.0 shipped it; `.github/workflows/nightly.yml` is in git history (removed in the 0.3.0 release prep) if a later piece of work needs one again. A nightly is never a release: no `v*` tag, no `CHANGELOG.md` section, and the website, README and `install.sh` never link to it.
 
 ### Release videos
 

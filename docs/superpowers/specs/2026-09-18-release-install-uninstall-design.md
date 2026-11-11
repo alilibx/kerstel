@@ -51,7 +51,9 @@ One Ubuntu job builds the hook, then cross-compiles four binaries with `bun buil
 | `kerstel-linux-x64` | `bun-linux-x64` |
 | `kerstel-linux-arm64` | `bun-linux-arm64` |
 
-It writes `SHA256SUMS` in the `sha256sum` format (`<hash>  <asset>`) and uploads the five files as a workflow artifact.
+From 0.3.0 it also compiles `kerstel-server-<target>` for the same four targets, with `--no-compile-autoload-dotenv` and the release version passed in with `--define` (sync spec §9.1).
+
+It writes `SHA256SUMS` in the `sha256sum` format (`<hash>  <asset>`), covering every binary, and uploads them all as a workflow artifact.
 
 ### 4.3 Smoke test
 
@@ -63,9 +65,15 @@ A matrix job runs each binary on its native runner (`macos-14` arm64, `macos-15-
 
 Step 3 proves the bundled hook works on a machine that did not build it.
 
+The same job then starts that platform's `kerstel-server`, checks the version it reports on `/v1/health`, and turns sync on with the CLI against it (`kerstel sync setup --yes`, `kerstel sync`, `kerstel sync status`), so a release can't pair a client and a server that disagree on the protocol.
+
+### 4.3a Server image
+
+After the smoke tests, an Ubuntu job builds a `linux/amd64` and `linux/arm64` image from `packages/server/Dockerfile` and the two Linux server binaries already tested, pushes it to `ghcr.io/<owner>/kerstel-server`, and runs it once to check its version and health. A final tag pushes `X.Y.Z`, `X.Y` and `latest`; a pre-release tag pushes only its own tag.
+
 ### 4.4 Publish
 
-Runs only when all four smoke tests pass. It creates the GitHub Release for the tag, attaches the four binaries and `SHA256SUMS`, and uses that version's `CHANGELOG.md` section as the release notes.
+Runs only when all four smoke tests and the image job pass. It creates the GitHub Release for the tag, attaches every binary and `SHA256SUMS`, and uses that version's `CHANGELOG.md` section as the release notes.
 
 ### 4.5 Post-release check
 

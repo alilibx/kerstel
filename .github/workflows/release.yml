@@ -1,6 +1,8 @@
 name: Release
 # Plan-5 spec §4. Push a v* tag to release. A pre-release tag (v0.1.0-rc.1)
-# runs the same pipeline and publishes a GitHub pre-release.
+# runs the same pipeline and publishes a GitHub pre-release. Each release
+# carries the CLI and kerstel-server (sync spec §9.1), and pushes the server
+# image to ghcr.io/<owner>/kerstel-server.
 on:
   push:
     tags: ["v*"]
@@ -37,10 +39,18 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --cwd packages/hook build
       - name: Cross-compile
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
+          set -euo pipefail
           mkdir -p release
           for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
             bun build packages/cli/src/index.ts --compile --target="bun-$target" --outfile "release/kerstel-$target"
+            # Without the define the server reports "<version>-dev". Without
+            # --no-compile-autoload-dotenv a .env where it starts could move it.
+            bun build packages/server/src/index.ts --compile --no-compile-autoload-dotenv \
+              --define "KERSTEL_SERVER_VERSION=\"$VERSION\"" \
+              --target="bun-$target" --outfile "release/kerstel-server-$target"
           done
           cd release && sha256sum kerstel-* > SHA256SUMS && cat SHA256SUMS
       - uses: actions/upload-artifact@v4
@@ -55,10 +65,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15, asset: kerstel-darwin-arm64 }
-          - { runner: macos-15-intel, asset: kerstel-darwin-x64 }
-          - { runner: ubuntu-latest, asset: kerstel-linux-x64 }
-          - { runner: ubuntu-24.04-arm, asset: kerstel-linux-arm64 }
+          - { runner: macos-15, asset: kerstel-darwin-arm64, server: kerstel-server-darwin-arm64 }
+          - { runner: macos-15-intel, asset: kerstel-darwin-x64, server: kerstel-server-darwin-x64 }
+          - { runner: ubuntu-latest, asset: kerstel-linux-x64, server: kerstel-server-linux-x64 }
+          - { runner: ubuntu-24.04-arm, asset: kerstel-linux-arm64, server: kerstel-server-linux-arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/download-artifact@v4
@@ -90,6 +100,37 @@ jobs:
           ./kerstel daemon stop
           test "$out" = "smoke-value"
 
+      - name: Smoke test ${{ matrix.server }}, with this CLI syncing to it
+        env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/server"
+          mkdir -p "$work" && cd "$work"
+          cp "$RUNNER_TEMP/release/${{ matrix.server }}" ./kerstel-server
+          cp "$RUNNER_TEMP/release/${{ matrix.asset }}" ./kerstel
+          chmod +x ./kerstel-server ./kerstel
+          test "$(./kerstel-server --version)" = "$EXPECTED_VERSION"
+
+          # A .env here must not move the server off its default address.
+          echo "KERSTEL_SERVER_LISTEN=127.0.0.1:18788" > .env
+          ./kerstel-server --db "$work/server.db" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8787/v1/health > health.json 2>/dev/null; then break; fi
+            sleep 0.2
+          done
+          grep -q "\"version\":\"$EXPECTED_VERSION\"" health.json
+          rm .env
+
+          # The released client and server speak the same protocol.
+          export KERSTEL_HOME="$work/home" KERSTEL_KEYCHAIN_BACKEND=file
+          printf 'synced-value' | ./kerstel set global/SYNC_KEY
+          ./kerstel sync setup http://127.0.0.1:8787 --yes
+          ./kerstel sync
+          ./kerstel sync status | grep -q '127.0.0.1:8787'
+
       - name: Keychain in a terminal ${{ matrix.asset }}
         # The step above uses the file backend. This one uses the real login
         # Keychain, inside a pseudo-terminal from `script`: `security` behaves
@@ -111,8 +152,83 @@ jobs:
           ./kerstel doctor | grep -q 'macOS Keychain'
           test "$(./kerstel get global/KC_KEY --reveal)" = "keychain-value"
 
-  publish:
+  image:
+    # Before the GitHub Release: a failed push must leave no release that the
+    # docs' `docker run` line can't pull.
     needs: [verify, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packages/server/Dockerfile
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: release
+      - name: Assemble the build context and the tags
+        id: tags
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/kerstel-server
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          mkdir -p context/amd64 context/arm64 context/data
+          cp release/kerstel-server-linux-x64 context/amd64/kerstel-server
+          cp release/kerstel-server-linux-arm64 context/arm64/kerstel-server
+          cp packages/server/Dockerfile context/Dockerfile
+          # A pre-release gets only its own tag (0.3.0-rc.1). A release also
+          # moves 0.3 and latest.
+          {
+            echo "tags<<TAGS"
+            echo "$IMAGE:${GITHUB_REF_NAME#v}"
+            if [ "$PRERELEASE" != "true" ]; then
+              echo "$IMAGE:${VERSION%.*}"
+              echo "$IMAGE:latest"
+            fi
+            echo "TAGS"
+            echo "first=$IMAGE:${GITHUB_REF_NAME#v}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: context
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+            org.opencontainers.image.description=Kerstel sync server. Stores only ciphertext.
+            org.opencontainers.image.licenses=MIT
+      - name: Smoke test the image
+        env:
+          IMAGE: ${{ steps.tags.outputs.first }}
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm "$IMAGE" --version)" = "$EXPECTED_VERSION"
+          docker run -d --name ks -p 127.0.0.1:18787:8787 -v ks-data:/data "$IMAGE"
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:18787/v1/health > health.json 2>/dev/null; then break; fi
+            sleep 0.2
+          done
+          docker logs ks
+          docker rm -f ks
+          grep -q "\"version\":\"$EXPECTED_VERSION\"" health.json
+
+  publish:
+    needs: [verify, smoke, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
