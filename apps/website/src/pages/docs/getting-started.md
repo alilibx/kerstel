@@ -101,6 +101,8 @@ ks init --dry-run
 
 If the same key appears in more than one file with different values, the highest-precedence file wins: `.env.<x>.local`, then `.env.local`, then `.env.<x>`, then `.env`. Every occurrence is pointed at that one reference, the files it collapsed are named, and the other values survive in the encrypted backup.
 
+Using an AI coding agent? The home page has [a prompt for it](/#agent-setup) that runs these same steps (`ks scan`, then `ks init --dry-run`, your approval, then `ks init --yes` and `ks doctor`) instead of having the agent read your env files.
+
 Afterwards, `npm run dev` is still `npm run dev`. Run `ks doctor` in the project to confirm the wiring. Commit `.kerstel/exec.cjs` along with `package.json`: it is what lets the same scripts run on a deploy host that has no Kerstel. See [Deploying](/docs/deploying).
 
 ### In a monorepo

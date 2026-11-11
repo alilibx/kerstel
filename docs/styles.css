@@ -269,6 +269,35 @@ main td code { white-space: nowrap; }
 .copy-btn:hover { background: var(--accent-border); }
 .install-note { text-align: center; color: var(--text-tertiary); font-size: 13px; margin-top: 12px; }
 
+/* Landing: agent setup prompt */
+
+.agent-prompt {
+  background: var(--surface);
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.agent-prompt-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--surface-border);
+  color: var(--text-tertiary);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.agent-prompt pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
 /* Landing: sections */
 
 .section { padding: 56px 0 0; }

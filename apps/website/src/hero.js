@@ -1,4 +1,4 @@
-// Landing-page behaviour: the .env hero animation and the install copy button.
+// Landing-page behaviour: the .env hero animation and the copy buttons.
 // Dependency-free. Every other page loads this file too and exits at the first check.
 (function () {
   var val = document.getElementById("hero-val");
@@ -49,18 +49,25 @@
   loop();
 })();
 
-function copyInstall(btn) {
-  var cmd = "curl -fsSL https://kerstel.dev/install.sh | bash";
-  if (!navigator.clipboard) {
-    btn.textContent = "Copy failed";
-    setTimeout(function () { btn.textContent = "Copy"; }, 2000);
-    return;
+function copyText(btn, text) {
+  // The first label, kept on the button, so a second click while "Copied"
+  // shows can't make "Copied" the label it resets to.
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+  function show(message) {
+    btn.textContent = message;
+    clearTimeout(btn._reset);
+    btn._reset = setTimeout(function () { btn.textContent = btn.dataset.label; }, 2000);
   }
-  navigator.clipboard.writeText(cmd).then(function () {
-    btn.textContent = "Copied";
-    setTimeout(function () { btn.textContent = "Copy"; }, 2000);
-  }, function () {
-    btn.textContent = "Copy failed";
-    setTimeout(function () { btn.textContent = "Copy"; }, 2000);
-  });
+  if (!navigator.clipboard) return show("Copy failed");
+  navigator.clipboard.writeText(text).then(function () { show("Copied"); }, function () { show("Copy failed"); });
+}
+
+function copyInstall(btn) {
+  copyText(btn, "curl -fsSL https://kerstel.dev/install.sh | bash");
+}
+
+// Copies the prompt exactly as the page shows it, so the two can't drift.
+function copyAgentPrompt(btn) {
+  var prompt = document.getElementById("agent-prompt");
+  if (prompt) copyText(btn, prompt.textContent);
 }
