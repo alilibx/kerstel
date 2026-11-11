@@ -47,6 +47,31 @@ description: Your .env files hold only references. The real values live in an en
 <a class="more" href="/docs/getting-started">Read the getting started guide →</a>
 </section>
 
+<section class="section" id="agent-setup">
+<div class="section-label">AI agents</div>
+<h2>Let your agent set it up, without seeing a value</h2>
+<p class="lede">Paste this into Claude Code, Cursor, Codex, or any agent that runs commands in your project. It works only through Kerstel's own commands, which mask every value, and it asks you before it changes your project.</p>
+<div class="agent-prompt">
+<div class="agent-prompt-bar"><span>Prompt for your agent</span><button class="copy-btn" type="button" onclick="copyAgentPrompt(this)">Copy prompt</button></div>
+
+<pre id="agent-prompt">Set up Kerstel (https://kerstel.dev) in this project, so its .env files hold references and the secret values live in Kerstel's encrypted vault.
+
+Rules for this whole task:
+- Never open, print, grep or copy the contents of an .env file, and never run `kerstel get --reveal`. The kerstel commands below show key names and mask every value. Use them to see what is there.
+- Never put a secret value in a command. If a step needs one, ask me to run `kerstel set &lt;scope&gt;/&lt;KEY&gt;` in my own terminal.
+- Don't commit or push anything.
+
+Steps:
+1. Run `kerstel --version`. If Kerstel isn't installed, run `curl -fsSL https://kerstel.dev/install.sh | bash`. If the installer says ~/.local/bin is not on PATH, call it as ~/.local/bin/kerstel for the rest of this task.
+2. Run `kerstel scan . --keys`. It lists each env file and the keys it holds in plain text, by line number, never a value. It exits 1 when it finds a secret. That is expected.
+3. From the project root (the folder with package.json, or the workspace root of a monorepo), run `kerstel init --dry-run --yes`. It prints the plan and every diff with values masked, and writes nothing.
+4. Summarise the plan for me: which keys go to this project's vault, which go to the vault shared by all my projects (global), which stay in plain text, and which package.json scripts get wired. Then stop and ask me to approve it. If I want a key somewhere else, tell me to run `kerstel init` in my own terminal instead, where it asks me about each one.
+5. Once I approve, run `kerstel init --yes`. It backs up the original files, encrypted, before it writes. On macOS the first run may show a Keychain dialog for me to allow.
+6. Run `kerstel doctor` and follow any "Fix:" line it prints. Then run `kerstel scan .` again to confirm no secret is left in plain text.
+7. Tell me which files to commit: the rewritten env files, package.json and .kerstel/exec.cjs. If .gitignore still hides the env files, say so: `kerstel init --yes` leaves .gitignore as it is.</pre>
+</div>
+</section>
+
 <section class="section">
 <div class="section-label">Security model</div>
 <h2>Clear about what is protected</h2>

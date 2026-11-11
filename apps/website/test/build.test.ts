@@ -104,6 +104,38 @@ describe("build output", () => {
     expect(html).not.toContain("api.github.com");
   });
 
+  test("landing page carries the agent setup prompt as one block, with flags the CLI accepts", () => {
+    const html = readFileSync(join(out, "index.html"), "utf8");
+    expect(html).toContain('id="agent-setup"');
+    expect(html).toContain('onclick="copyAgentPrompt(this)"');
+    const block = html.match(/<pre id="agent-prompt">([\s\S]*?)<\/pre>/);
+    expect(block).not.toBeNull();
+    const prompt = block![1]!;
+    // Markdown must leave the block alone: what the page shows is what the button copies.
+    expect(prompt).not.toMatch(/<(?!\/?(?:code)\b)[a-z]/i);
+    expect(prompt).toContain("kerstel init --dry-run --yes");
+
+    // Every `kerstel <command> --flag` it names is parsed by that command's source.
+    const sources: Record<string, string> = {
+      init: "init.ts",
+      scan: "scan.ts",
+      get: "secrets.ts",
+      set: "secrets.ts",
+      doctor: "doctor.ts",
+    };
+    const uses = [...prompt.matchAll(/`kerstel ([a-z]+)((?: [^`]*)?)`/g)];
+    expect(uses.length).toBeGreaterThan(5);
+    for (const [, command, rest] of uses) {
+      if (command === "--version") continue;
+      const file = sources[command!];
+      expect(file, `the prompt uses kerstel ${command}`).toBeDefined();
+      const source = readFileSync(join(REPO_ROOT, "packages/cli/src/commands", file!), "utf8");
+      for (const flag of rest!.match(/--[a-z-]+/g) ?? []) {
+        expect(source, `kerstel ${command} ${flag}`).toContain(`"${flag}"`);
+      }
+    }
+  });
+
   test("changelog page renders the repo-root CHANGELOG.md as a timeline and is linked from every page", () => {
     const changelog = readFileSync(resolve(REPO_ROOT, "CHANGELOG.md"), "utf8");
     const top = changelog.match(/^## (\d+\.\d+\.\d+\S*) \((unreleased|\d{4}-\d{2}-\d{2})\)$/m);
