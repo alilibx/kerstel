@@ -11,6 +11,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 - Sync runs in the background once it is on. A command that writes the vault (`set`, `rm`, `init`, `move`, `ui`) pushes in the background, and `run` and `exec` pull when no sync has finished in five minutes, without waiting for the network or failing when the server can't be reached. While a conflict is open, every command prints one line on stderr saying to run `kerstel sync`. `kerstel doctor` gains a Sync row with the server, the last successful sync, changes waiting to be pushed and open conflicts, and warns after seven days without a sync. A new [Sync guide](https://kerstel.dev/docs/sync) covers running the server, pairing, and conflicts.
 - `kerstel-server`, the sync server, ships with each release: a binary for Linux and macOS next to the CLI, checked by the same `SHA256SUMS`, and an image, `ghcr.io/alilibx/kerstel-server`, for `linux/amd64` and `linux/arm64`. It stores only ciphertext, keeps everything in one SQLite file, and speaks plain HTTP for a proxy that terminates TLS. An optional enroll token limits who can create a vault on it.
 
+### Security
+
+- The diffs `kerstel init` and `kerstel uninstall` print, including `init --dry-run`, now mask comment text in env files, where an old key is often commented out, and the values a `package.json` script sets inline: `NAME=value` assignments, the value of a flag named for a credential (`--token`, `--api-key`, `--password` and the like), and the password in a URL. Before, both were printed as written. The files themselves are written unchanged.
+
 ## 0.2.0 (2026-11-09)
 
 ### Added

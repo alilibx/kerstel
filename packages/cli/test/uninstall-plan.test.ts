@@ -59,6 +59,19 @@ test("rewrites references to vault values and never puts a value in the diff", a
   expect(hasLoss(plan)).toBe(false);
 });
 
+test("masks a comment and a script's inline secret in the diff, and writes them back unchanged", async () => {
+  const v = await freshVault();
+  const wired = '{\n  "name": "demo-app",\n  "scripts": {\n    "dev": "API_TOKEN=tok-in-a-script node .kerstel/exec.cjs -- next dev"\n  }\n}\n';
+  const root = project({ "package.json": wired, ".env": "# old: sk-parked\nPORT=3000\n" });
+  v.registerProject("demo-app", root);
+
+  const plan = planUninstall(v, dataKey);
+  const pkg = plan.files.find((f) => f.path === join(root, "package.json"))!;
+  expect(pkg.after).toContain('"dev": "API_TOKEN=tok-in-a-script next dev"');
+  expect(pkg.diffBefore + pkg.diffAfter).not.toContain("tok-in-a-script");
+  expect(pkg.diffAfter).toContain('"dev": "API_TOKEN=\u00ab15-chars-opaque\u00bb next dev"');
+});
+
 test("swaps the .gitignore note back", async () => {
   const v = await freshVault();
   const root = project({

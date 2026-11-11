@@ -10,7 +10,7 @@ import { walk } from "../scan/walk";
 import { detectWorkspace } from "../init/workspace";
 import { entries, parseDotenv, serializeDotenv, setValue, type UnsupportedValue } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
-import { maskForDisplay } from "../init/display";
+import { maskForDisplay, maskPackageJsonForDisplay } from "../init/display";
 import { renderChangeSummary, renderOverview, valueColumn } from "../init/overview";
 import {
   CancelledError,
@@ -64,7 +64,8 @@ import type { Vault } from "../vault/store";
  *      step 2, `showValue` below): the overview prints a config value that
  *      stays in plain text on the suggester's own say-so and that
  *      `isSafeToDisplay` calls configuration, like PORT=3000.
- *      Diffs mask every value.
+ *      Diffs mask every value, every comment in an env file, and the values
+ *      a package.json script sets inline (`maskPackageJsonForDisplay`).
  *   2. NOTHING IS WRITTEN BEFORE THE USER SAYS YES, and the backup is written
  *      before anything else, so every step has an undo. That includes values
  *      a teammate types in: they are held in memory until the plan is applied.
@@ -1351,7 +1352,13 @@ async function runInitSteps(options: InitOptions, prompter: Prompter): Promise<n
           console.log(renderDiff(change.label, change.diffBefore, change.diffAfter));
         }
         if (plan.packageWiring.changed) {
-          console.log(renderDiff(at("package.json"), plan.packageSource, plan.packageWiring.contents));
+          console.log(
+            renderDiff(
+              at("package.json"),
+              maskPackageJsonForDisplay(plan.packageSource),
+              maskPackageJsonForDisplay(plan.packageWiring.contents),
+            ),
+          );
         }
         // Program text, not a secret: shown in full.
         if (plan.launcher) {
