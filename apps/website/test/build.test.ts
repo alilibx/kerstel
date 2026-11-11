@@ -122,6 +122,10 @@ describe("build output", () => {
       get: "secrets.ts",
       set: "secrets.ts",
       doctor: "doctor.ts",
+      ls: "secrets.ts",
+      refs: "refs.ts",
+      exec: "exec.ts",
+      move: "move.ts",
     };
     const uses = [...prompt.matchAll(/`kerstel ([a-z]+)((?: [^`]*)?)`/g)];
     expect(uses.length).toBeGreaterThan(5);
