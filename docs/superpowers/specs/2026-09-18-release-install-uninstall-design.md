@@ -123,7 +123,7 @@ Finally compute **backup-only values**. `init` collapses a key defined in severa
 
 ### 6.2 Show and confirm
 
-- Print every file diff with values masked, using the display masking `init` uses. No value is printed.
+- Print every file diff with values masked, using the display masking `init` uses, which also masks env-file comments and the values a `package.json` script sets inline. No value is printed.
 - List by name every unreachable project (with its recorded path), unresolvable reference, unused secret, backup-only value (key, files, and backup directory, never the value), and unreadable backup.
 - `--dry-run` exits 0 here, having written nothing, whether or not anything would be lost.
 - **Loss gate.** If any of those five lists is non-empty, stop with exit 1 unless `--force` is passed. The message names each item and says to save values first with `kerstel get <scope>/<KEY> --reveal`.

@@ -477,10 +477,36 @@ test("the printed diff masks the plaintext it is about to remove", async () => {
   expect(output).not.toContain("another-secret-value");
   // The diff still has to be a real, readable diff of the whole file.
   expect(output).toContain("SECRET_TOKEN=ks:demo-app");
-  expect(output).toContain("QUOTED_TOKEN=\"ks:global\" # note");
+  expect(output).toContain("QUOTED_TOKEN=\"ks:global\" # \u00ab4-chars-comment\u00bb");
   // The mask tells the user the shape and size and nothing else.
   expect(output).toContain("SECRET_TOKEN=\u00ab22-chars-opaque\u00bb");
-  expect(output).toContain("QUOTED_TOKEN=\"\u00ab20-chars-opaque\u00bb\" # note");
+  expect(output).toContain("QUOTED_TOKEN=\"\u00ab20-chars-opaque\u00bb\" # \u00ab4-chars-comment\u00bb");
+});
+
+test("the printed diff masks a key parked in a comment and a secret a script sets inline", async () => {
+  isolateEnv({ prefix: "init-noleak-comments" });
+
+  const root = makeProject({
+    "package.json": JSON.stringify({ name: "demo-app", scripts: { dev: "API_TOKEN=tok-in-a-script node app.js" } }),
+    "package-lock.json": "{}",
+    ".env": "# old: sk-parked-in-a-comment\nSECRET_TOKEN=super-secret-plaintext # was sk-inline-comment\n",
+  });
+
+  const captured: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "));
+  try {
+    expect(await runInit(options(root, ["--dry-run", "--yes"]), new DefaultsPrompter())).toBe(0);
+  } finally {
+    console.log = realLog;
+  }
+
+  const output = captured.join("\n");
+  for (const secret of ["sk-parked-in-a-comment", "sk-inline-comment", "super-secret-plaintext", "tok-in-a-script"]) {
+    expect(output).not.toContain(secret);
+  }
+  // The wiring is still readable around the masked value.
+  expect(output).toContain('"dev": "API_TOKEN=\u00ab15-chars-opaque\u00bb node .kerstel/exec.cjs -- node app.js"');
 });
 
 test("the diff masks every value it is not migrating, parsed or not", async () => {

@@ -4,7 +4,7 @@ import { isKerstelLauncher, launcherPath } from "../init/launcher";
 import { listBackups, readBackup, readBackupVault, type BackupVaultValue } from "../init/backup";
 import { collectKeys, type LoadedEnvFile } from "../init/collect";
 import { envFileRank } from "../init/detect";
-import { maskForDisplay } from "../init/display";
+import { maskForDisplay, maskPackageJsonForDisplay } from "../init/display";
 import { entries, parseDotenv, restoreLineValue, serializeDotenv } from "../init/dotenv-file";
 import { scanProjectRefs, unreachableReason } from "../project-refs";
 import { backupsDir } from "../paths";
@@ -316,14 +316,15 @@ export function planUninstall(vault: Vault, dataKey: Buffer): UninstallPlan {
       });
     }
 
-    // package.json and .gitignore hold no secrets, so their diffs are shown as they are.
+    // A script can set a secret inline, so package.json is masked like an
+    // env file. .gitignore holds no secrets and is shown as it is.
     if (unwired.changed) {
       plan.files.push({
         path: packagePath,
         label: `${project.name}: package.json`,
         after: unwired.contents,
-        diffBefore: packageSource,
-        diffAfter: unwired.contents,
+        diffBefore: maskPackageJsonForDisplay(packageSource),
+        diffAfter: maskPackageJsonForDisplay(unwired.contents),
       });
     }
 
