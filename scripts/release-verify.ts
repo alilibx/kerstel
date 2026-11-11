@@ -66,6 +66,7 @@ export const PACKAGE_FILES = [
   "package.json",
   "packages/cli/package.json",
   "packages/hook/package.json",
+  "packages/server/package.json",
   "apps/website/package.json",
 ];
 

@@ -2,15 +2,17 @@
 
 The self-hostable sync server for Kerstel. It stores only ciphertext. It never sees a scope name, a key name, a value, a project path or a hostname. The design is in [`docs/superpowers/specs/2026-11-08-sync-between-devices-design.md`](../../docs/superpowers/specs/2026-11-08-sync-between-devices-design.md).
 
-> **Preview.** No release includes the server or the `ks sync` client yet; both ship in 0.3.0. The protocol may change before then. The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflicts.
+The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflicts.
 
-## Nightly builds
+## Install
 
-Each day that `main` changes, a [`nightly` pre-release](https://github.com/alilibx/kerstel/releases/tag/nightly) gets binaries for Linux and macOS with a `SHA256SUMS` file, and an image is pushed:
+Every [release](https://github.com/alilibx/kerstel/releases/latest) ships the server next to the CLI, with the same version: `kerstel-server-<platform>` binaries for Linux and macOS, covered by the release's `SHA256SUMS`, and an image:
 
 ```bash
-docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:nightly
+docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 ```
+
+The image is tagged with each version (`0.3.0`), each minor version (`0.3`) and `latest`.
 
 The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. The settings below work as environment variables with `docker run -e`.
 

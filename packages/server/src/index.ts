@@ -13,7 +13,7 @@ import { LIMITS } from "./protocol";
 
 declare const KERSTEL_SERVER_VERSION: string | undefined;
 
-/** Set at build time by the nightly and release workflows; `-dev` from source. */
+/** Set at build time by the release workflow; `-dev` from source. */
 export const VERSION: string =
   typeof KERSTEL_SERVER_VERSION === "string" && KERSTEL_SERVER_VERSION ? KERSTEL_SERVER_VERSION : `${pkg.version}-dev`;
 
