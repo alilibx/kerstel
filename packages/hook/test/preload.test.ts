@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Vault } from "../../cli/src/vault/store";
@@ -330,6 +330,27 @@ test("the request the hook sends carries the process's working directory", async
   expect(stdout).toBe("cwd-value");
   const [row] = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CWDKEY");
   expect(row?.project?.name).toBe("cwdproj");
+});
+
+test("a deleted working directory does not stop a ks: variable resolving", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "GONE" }, "gone-value");
+  const script = join(mkdtempSync(join(tmpdir(), "kerstel-gone-script-")), "read.cjs");
+  await Bun.write(
+    script,
+    "require('node:fs').rmdirSync(process.cwd()); process.stdout.write(process.env.GONE);",
+  );
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-gone-cwd-")));
+
+  try {
+    const { stdout } = await runHooked("node", sock, script, [], { GONE: "ks:global/GONE" }, { cwd });
+    expect(stdout).toBe("gone-value");
+    const rows = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "GONE");
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.project).toBeNull();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("Object.keys and spread still see every variable", async () => {

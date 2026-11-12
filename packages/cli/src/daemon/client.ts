@@ -15,6 +15,15 @@ import { daemonCwd, daemonEnv } from "./env";
 import { daemonServeCommand } from "./spawn";
 import { readToken } from "./token";
 
+/** The working directory, or null when it was deleted or is unreadable; it is audit-only. */
+function currentDir(): string | null {
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
+}
+
 export class DaemonError extends Error {
   constructor(
     public readonly code: ErrorCode | "unreachable",
@@ -154,7 +163,7 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
           key,
           pid: meta?.pid ?? process.pid,
           processName: meta?.processName ?? basename(process.argv[0] ?? "unknown"),
-          cwd: meta?.cwd === undefined ? process.cwd() : meta.cwd,
+          cwd: meta?.cwd === undefined ? currentDir() : meta.cwd,
           ...(meta?.purpose ? { purpose: meta.purpose } : {}),
         }),
       );

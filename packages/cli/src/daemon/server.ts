@@ -56,6 +56,8 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
   // A burst of resolves from one process costs one process snapshot. A fresh
   // lookup per miss keeps the macOS snapshot current.
   const chains = new Map<number, { chain: string[]; at: number }>();
+  // A cache miss blocks the event loop on a ps snapshot. Part C replaces the
+  // client-reported pid with the socket peer's.
   const chainFor = (pid: number): string[] => {
     const now = Date.now();
     const hit = chains.get(pid);
@@ -171,7 +173,7 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
             return errorResponse(id, "not_found", `No secret at ks:${scope}/${key}`);
           }
 
-          const pid = typeof message.pid === "number" ? message.pid : null;
+          const pid = Number.isInteger(message.pid) && (message.pid as number) > 0 ? (message.pid as number) : null;
           vault.appendAudit({
             ts: Date.now(),
             event: message.purpose === "reveal" ? "reveal" : "resolve",
