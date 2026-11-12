@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatChain, processChain, systemProcessLookup, type ProcessLookup } from "../src/audit/chain";
@@ -65,18 +65,38 @@ test("formatChain renders unknown for null and []", () => {
   expect(formatChain(["a", "b"])).toBe("a ← b");
 });
 
-test("systemProcessLookup never throws when ps is missing", () => {
-  const empty = mkdtempSync(join(tmpdir(), "kerstel-chain-"));
+test("a truncated /proc name still matches the terminal list", () => {
+  const lookup = table([
+    [30, 20, "bash"],
+    [20, 10, "gnome-terminal-"],
+    [10, 5, "systemd"],
+  ]);
+  expect(processChain(30, lookup)).toEqual(["bash", "gnome-terminal-"]);
+  const more = table([
+    [30, 20, "bash"],
+    [20, 10, "gnome-terminal-"],
+    [10, 5, "zsh"],
+  ]);
+  expect(processChain(30, more)).toEqual(["bash", "gnome-terminal-"]);
+});
+
+test("systemProcessLookup never runs a ps planted on PATH, and never throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-chain-"));
+  const marker = join(dir, "ran");
+  const fake = join(dir, "ps");
+  writeFileSync(fake, `#!/bin/sh\necho ran > '${marker}'\n`);
+  chmodSync(fake, 0o755);
   const savedPath = process.env.PATH;
   try {
-    process.env.PATH = empty;
+    process.env.PATH = `${dir}:${savedPath ?? ""}`;
     const chain = processChain(process.pid, systemProcessLookup());
     expect(Array.isArray(chain)).toBe(true);
     for (const name of chain) expect(typeof name).toBe("string");
+    expect(existsSync(marker)).toBe(false);
   } finally {
     if (savedPath === undefined) delete process.env.PATH;
     else process.env.PATH = savedPath;
-    rmSync(empty, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

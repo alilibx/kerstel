@@ -23,6 +23,16 @@ const TERMINAL_NAMES = new Set([
   "sshd",
 ]);
 
+/** /proc/<pid>/stat truncates names to 15 characters, so a full terminal name can arrive cut short. */
+const PROC_NAME_LIMIT = 15;
+
+function isTerminal(name: string): boolean {
+  if (TERMINAL_NAMES.has(name)) return true;
+  if (name.length !== PROC_NAME_LIMIT) return false;
+  for (const t of TERMINAL_NAMES) if (t.length > PROC_NAME_LIMIT && t.startsWith(name)) return true;
+  return false;
+}
+
 /** The basename of a command, with one leading `-` (a login shell) removed. */
 function displayName(command: string): string {
   const trimmed = command.trim();
@@ -47,7 +57,7 @@ export function processChain(pid: number, lookup: ProcessLookup): string[] {
     const name = displayName(info.name);
     if (name === "" || ROOT_NAMES.has(name)) break;
     chain.push(name);
-    if (TERMINAL_NAMES.has(name)) break;
+    if (isTerminal(name)) break;
     current = info.ppid;
   }
   return chain;
@@ -57,14 +67,14 @@ function emptyLookup(): ProcessLookup {
   return () => null;
 }
 
-/** One `ps` snapshot, parsed. Each line is `pid ppid command...`, and the command may hold spaces. */
+/** One `ps` snapshot, from the absolute path so a shadowing `ps` on PATH (npm run puts node_modules/.bin first) never runs, parsed. Each line is `pid ppid command...`, and the command may hold spaces. */
 function psLookup(): ProcessLookup {
   let table: Map<number, ProcessInfo> | null = null;
   return (pid) => {
     if (table === null) {
       table = new Map();
       try {
-        const res = Bun.spawnSync(["ps", "-axo", "pid=,ppid=,comm="], { stdout: "pipe", stderr: "ignore" });
+        const res = Bun.spawnSync(["/bin/ps", "-axo", "pid=,ppid=,comm="], { stdout: "pipe", stderr: "ignore" });
         if (res.exitCode === 0) {
           for (const line of res.stdout.toString().split("\n")) {
             const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
@@ -72,7 +82,7 @@ function psLookup(): ProcessLookup {
           }
         }
       } catch {
-        // No ps: the table stays empty and every lookup misses.
+        // No /bin/ps: the table stays empty and every lookup misses.
       }
     }
     return table.get(pid) ?? null;
