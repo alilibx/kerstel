@@ -49,6 +49,13 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 - [x] `kerstel-server`: a self-hostable sync server, as a binary and a Docker image, that stores only ciphertext ([#81](https://github.com/alilibx/kerstel/issues/81))
 - [x] Pair a new device with a one-time code confirmed on a device you already have, and remove a device, which replaces the sync key ([#82](https://github.com/alilibx/kerstel/issues/82))
 
+## 0.4.0: easy sync
+
+- [ ] Pull changes automatically, so `ks sync` is needed only to settle a conflict ([#105](https://github.com/alilibx/kerstel/issues/105))
+- [ ] `ks sync server`: install and start `kerstel-server` with one command, with Docker or without it ([#106](https://github.com/alilibx/kerstel/issues/106))
+- [ ] Put a sync server on HTTPS without configuring a reverse proxy by hand ([#107](https://github.com/alilibx/kerstel/issues/107))
+- [ ] Pair a device by pasting one value instead of a URL and a code ([#108](https://github.com/alilibx/kerstel/issues/108))
+
 ## Next: access gating
 
 - [ ] Audit log of every resolve, run, reveal, set, and remove, with `kerstel audit` and an Audit screen in the UI ([#11](https://github.com/alilibx/kerstel/issues/11))

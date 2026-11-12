@@ -26,7 +26,7 @@ So Kerstel is worth having for a specific, common class of leak, and not for oth
 | That file reaching git history, a backup, or a sync folder | Malware that already runs code on your machine |
 | A tool or agent that **reads files** finding credentials | A tool or agent you let **execute** |
 
-That is the level Kerstel ships today. The [roadmap](/roadmap) calls the next one access gating: the daemon already sees which process asks for which key, and the plan is an approval prompt for one it does not recognise.
+That is the level Kerstel ships today. The [roadmap](/roadmap) calls the next level access gating: the daemon already sees which process asks for which key, and the plan is an approval prompt for one it does not recognise.
 
 ## What is protected
 
