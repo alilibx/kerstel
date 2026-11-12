@@ -137,6 +137,22 @@ test("groups app reads by project and process", () => {
   ]);
 });
 
+test("the limit bounds groups, not rows, and since and scope filter the groups", () => {
+  const v = vaultIn(tempDir());
+  for (let i = 1; i <= 5; i++) v.appendAudit(row({ ts: i, event: "resolve", key: "A", pid: 30 + i, processName: "node" }));
+  v.appendAudit(row({ ts: 6, event: "resolve", key: "B", pid: 40, processName: "bun" }));
+  v.appendAudit(row({ ts: 7, event: "resolve", scope: "api", key: "D", pid: 50, processName: "deno" }));
+
+  expect(v.appReadGroups({ limit: 2 })).toEqual([
+    { project: null, process: "node", keys: ["A"], processes: 5 },
+    { project: null, process: "bun", keys: ["B"], processes: 1 },
+  ]);
+  expect(v.appReadGroups({ limit: 10, since: 6 }).map((g) => g.process)).toEqual(["bun", "deno"]);
+  expect(v.appReadGroups({ limit: 10, scope: "api" })).toEqual([
+    { project: null, process: "deno", keys: ["D"], processes: 1 },
+  ]);
+});
+
 test("prunes rows older than the cutoff", () => {
   const v = vaultIn(tempDir());
   for (const ts of [1, 2, 3]) v.appendAudit(row({ ts, event: "resolve" }));

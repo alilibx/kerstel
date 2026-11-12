@@ -128,7 +128,7 @@ export interface Vault {
   /** Newest first. A number means `{ limit: n }`. */
   listAudit(filter: number | AuditFilter): AuditRow[];
   auditCounts(filter: Omit<AuditFilter, "limit">): AuditCounts;
-  /** `resolve` and `run` rows grouped by project and process, largest group first. */
+  /** `resolve` and `run` rows grouped by project and process, largest group first; `limit` bounds the groups. */
   appReadGroups(filter: AuditFilter): AppReadGroup[];
   /** Deletes rows with `ts` before the cutoff; returns how many. */
   pruneAudit(before: number): number;
@@ -146,10 +146,6 @@ export interface Vault {
   close(): void;
 }
 
-/**
- * Opens (creating and migrating as needed) the encrypted vault.
- * `dataKey` comes from the OS credential store and is held in memory only.
- */
 /** The WHERE clause and bindings for an audit filter; `extra` is ANDed on. */
 function auditWhere(
   f: Omit<AuditFilter, "limit">,
@@ -176,6 +172,10 @@ function auditWhere(
   return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
 }
 
+/**
+ * Opens (creating and migrating as needed) the encrypted vault.
+ * `dataKey` comes from the OS credential store and is held in memory only.
+ */
 export function openVault(dataKey: Buffer, file?: string): Vault {
   const target = file ?? vaultPath();
   if (!file) ensureHome();
@@ -490,10 +490,11 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
              SELECT p.name AS project, a.key AS key, a.pid AS pid,
                     CASE WHEN a.event = 'run' THEN 'kerstel run' ELSE COALESCE(a.process_name, 'unknown') END AS process
              FROM audit_log a LEFT JOIN projects p ON p.id = a.project_id
-             ${where} ORDER BY a.id DESC LIMIT $limit
+             ${where}
            )
            GROUP BY project, process
-           ORDER BY COUNT(*) DESC, project, process`,
+           ORDER BY COUNT(*) DESC, project, process
+           LIMIT $limit`,
         )
         .all({ ...params, $limit: filter.limit })
         .map((r) => ({
