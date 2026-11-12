@@ -63,7 +63,7 @@
 <td>A tool or agent you let <strong>execute</strong></td>
 </tr>
 </tbody></table>
-</div><p>That is the level Kerstel ships today. The <a href="/roadmap">roadmap</a> calls the next one access gating: the daemon already sees which process asks for which key, and the plan is an approval prompt for one it does not recognise.</p>
+</div><p>That is the level Kerstel ships today. The <a href="/roadmap">roadmap</a> calls the next level access gating: the daemon already sees which process asks for which key, and the plan is an approval prompt for one it does not recognise.</p>
 <h2>What is protected</h2>
 <p>No plaintext secret sits in a project file. Your <code>.env</code>, <code>.env.local</code>, and their variants hold references of the form <code>ks:&lt;scope&gt;</code> or <code>ks:&lt;scope&gt;/&lt;KEY&gt;</code>. Reading a file, grepping the repo, committing by mistake, or syncing the folder to a backup service yields references and nothing else.</p>
 <p>The values live in one vault on your machine, at <code>~/.kerstel/vault.db</code>. Kerstel has no account, collects no telemetry, and listens on no network port.</p>

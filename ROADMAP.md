@@ -51,9 +51,9 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## 0.4.0: easy sync
 
-- [ ] Pull changes automatically, so no device needs `ks sync` run by hand ([#105](https://github.com/alilibx/kerstel/issues/105))
-- [ ] `ks sync server`: start a sync server with one command, with Docker or without it ([#106](https://github.com/alilibx/kerstel/issues/106))
-- [ ] Reach a sync server over HTTPS without setting up a domain and a reverse proxy ([#107](https://github.com/alilibx/kerstel/issues/107))
+- [ ] Pull changes automatically, so `ks sync` is needed only to settle a conflict ([#105](https://github.com/alilibx/kerstel/issues/105))
+- [ ] `ks sync server`: install and start `kerstel-server` with one command, with Docker or without it ([#106](https://github.com/alilibx/kerstel/issues/106))
+- [ ] Put a sync server on HTTPS without configuring a reverse proxy by hand ([#107](https://github.com/alilibx/kerstel/issues/107))
 - [ ] Pair a device by pasting one value instead of a URL and a code ([#108](https://github.com/alilibx/kerstel/issues/108))
 
 ## Next: access gating
