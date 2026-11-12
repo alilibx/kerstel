@@ -95,6 +95,7 @@ function createBridge(options) {
       key,
       pid: process.pid,
       processName: path.basename(process.argv[1] || process.argv[0] || "node"),
+      cwd: process.cwd(),
     });
 
     // Fixed ONCE, before the loop. The control word carries no request

@@ -208,6 +208,7 @@ port.on("message", (request) => {
       key: request.key,
       pid: request.pid,
       processName: request.processName,
+      cwd: request.cwd,
     })}\n`;
 
     const write = () => conn.write(line);

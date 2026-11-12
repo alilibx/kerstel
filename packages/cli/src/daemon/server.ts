@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { processChain, systemProcessLookup } from "../audit/chain";
 import type { Vault } from "../vault/store";
 import {
   LineDecoder,
@@ -10,6 +11,11 @@ import {
   type Response,
 } from "./protocol";
 import { tokensMatch } from "./token";
+
+/** Audit rows older than this are deleted when the daemon starts and once a day after. */
+export const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CHAIN_CACHE_MS = 60 * 1000;
 
 export interface DaemonOptions {
   vault: Vault;
@@ -46,6 +52,30 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
   let unlocked = true;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const sockets = new Set<Socket>();
+
+  // A burst of resolves from one process costs one process snapshot. A fresh
+  // lookup per miss keeps the macOS snapshot current.
+  const chains = new Map<number, { chain: string[]; at: number }>();
+  const chainFor = (pid: number): string[] => {
+    const now = Date.now();
+    const hit = chains.get(pid);
+    if (hit && now - hit.at < CHAIN_CACHE_MS) return hit.chain;
+    for (const [cachedPid, entry] of chains) if (now - entry.at >= CHAIN_CACHE_MS) chains.delete(cachedPid);
+    const chain = processChain(pid, systemProcessLookup());
+    chains.set(pid, { chain, at: now });
+    return chain;
+  };
+
+  const prune = (): void => {
+    try {
+      vault.pruneAudit(Date.now() - AUDIT_RETENTION_MS);
+    } catch {
+      // Retention is housekeeping; it must never take the daemon down.
+    }
+  };
+  prune();
+  const pruneTimer = setInterval(prune, PRUNE_INTERVAL_MS);
+  pruneTimer.unref?.();
 
   const lock = (): void => {
     unlocked = false;
@@ -141,13 +171,16 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
             return errorResponse(id, "not_found", `No secret at ks:${scope}/${key}`);
           }
 
+          const pid = typeof message.pid === "number" ? message.pid : null;
           vault.appendAudit({
             ts: Date.now(),
-            event: "resolve",
+            event: message.purpose === "reveal" ? "reveal" : "resolve",
             scope,
             key,
-            pid: typeof message.pid === "number" ? message.pid : null,
+            pid,
             processName: typeof message.processName === "string" ? message.processName : null,
+            chain: pid === null ? null : chainFor(pid),
+            cwd: typeof message.cwd === "string" ? message.cwd : null,
           });
 
           return { v: PROTOCOL_VERSION, id, ok: true, op: "resolve", value };
@@ -215,6 +248,7 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
 
   async function close(): Promise<void> {
     if (idleTimer) clearTimeout(idleTimer);
+    clearInterval(pruneTimer);
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     await new Promise<void>((resolve) => server.close(() => resolve()));

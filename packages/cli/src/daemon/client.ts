@@ -26,7 +26,7 @@ export class DaemonError extends Error {
 }
 
 export interface DaemonClient {
-  resolve(scope: string, key: string, meta?: { pid?: number; processName?: string }): Promise<string>;
+  resolve(scope: string, key: string, meta?: { pid?: number; processName?: string; cwd?: string | null; purpose?: "reveal" }): Promise<string>;
   status(): Promise<StatusOk>;
   lock(): Promise<void>;
   shutdown(): Promise<void>;
@@ -154,6 +154,8 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
           key,
           pid: meta?.pid ?? process.pid,
           processName: meta?.processName ?? basename(process.argv[0] ?? "unknown"),
+          cwd: meta?.cwd === undefined ? process.cwd() : meta.cwd,
+          ...(meta?.purpose ? { purpose: meta.purpose } : {}),
         }),
       );
       if (!("value" in response)) throw new DaemonError("internal", "Malformed resolve response");

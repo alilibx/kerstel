@@ -221,7 +221,7 @@ export async function resolveCommand(args: string[]): Promise<number> {
   }
 
   try {
-    console.log(await client.resolve(ref.scope, ref.key, { processName: "kerstel" }));
+    console.log(await client.resolve(ref.scope, ref.key, { processName: "kerstel", purpose: "reveal" }));
     return 0;
   } catch (error) {
     if (error instanceof DaemonError && error.code === "not_found") {

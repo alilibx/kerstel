@@ -36,6 +36,10 @@ export interface ResolveRequest extends Envelope {
   /** Caller metadata, recorded in the audit log. Access gating will key on these. */
   pid: number | null;
   processName: string | null;
+  /** The caller's working directory; selects the audit row's project. Trusted until the socket peer's is used. */
+  cwd?: string | null;
+  /** "reveal" marks a person asking to see the value (`ks resolve`); anything else is an app read. */
+  purpose?: "reveal";
 }
 
 export interface StatusRequest extends Envelope {

@@ -36,7 +36,7 @@ async function runHooked(
   script: string,
   args: string[],
   env: Record<string, string>,
-  options: { preloadDir?: string; hookDirEnv?: string | null } = {},
+  options: { preloadDir?: string; hookDirEnv?: string | null; cwd?: string } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const preload = join(options.preloadDir ?? DIST, "preload.cjs");
   const cmd =
@@ -51,6 +51,7 @@ async function runHooked(
   const hookDirEnv = options.hookDirEnv === undefined ? DIST : options.hookDirEnv;
 
   const proc = Bun.spawn(cmd, {
+    cwd: options.cwd,
     env: {
       ...process.env,
       KERSTEL_SOCKET: sock,
@@ -315,6 +316,20 @@ test("repeated reads of the same key hit the daemon once", async () => {
   const { stdout } = await runHooked("node", sock, script, [], { CACHED: "ks:global/CACHED" });
   expect(stdout).toBe("cached-valuecached-valuecached-value");
   expect(vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CACHED").length).toBe(1);
+});
+
+test("the request the hook sends carries the process's working directory", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "CWDKEY" }, "cwd-value");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-cwd-")));
+  vault.registerProject("cwdproj", root);
+  const script = join(root, "read.cjs");
+  await Bun.write(script, "process.stdout.write(process.env.CWDKEY);");
+
+  const { stdout } = await runHooked("node", sock, script, [], { CWDKEY: "ks:global/CWDKEY" }, { cwd: root });
+  expect(stdout).toBe("cwd-value");
+  const [row] = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CWDKEY");
+  expect(row?.project?.name).toBe("cwdproj");
 });
 
 test("Object.keys and spread still see every variable", async () => {
