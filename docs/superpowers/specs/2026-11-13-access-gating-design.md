@@ -60,7 +60,7 @@ One row each time Kerstel touches a secret or the vault on this device.
 | --- | --- |
 | `resolve` | The daemon, when an app reads a key through the hook. The hook remembers each value for the life of its process, so this is one row per key per process, not one per `process.env` read. |
 | `run` | `kerstel run`, one row per key it injects (as today). |
-| `reveal` | Anything that prints a value or writes it out in plain text: `get --reveal`, `resolve`, `sync --reveal`, the UI's reveal, `move --to plaintext`, and `uninstall` (one row per value). `resolve` writes `resolve` today and changes to `reveal`. |
+| `reveal` | Anything that prints a value or writes it out in plain text: `get --reveal`, `resolve`, `sync --reveal`, the UI's reveal, and `move --to plaintext` (one row per value it writes out). `uninstall` also writes values out, but it deletes the log with the vault, so it records nothing. `resolve` writes `resolve` today and changes to `reveal`. |
 | `set` | `kerstel set`, `kerstel init` (one row per value it stores), `kerstel move` into the vault, and the UI's add and edit. |
 | `remove` | `kerstel rm`, `kerstel move` out of the vault, and the UI's delete. |
 | `sync` | A value that arrived from another device, or a conflict you settled. One row per key. |
@@ -129,7 +129,7 @@ The same summary at the top, then the rows, 200 at a time. Keys as in the termin
 
 ### 4.6 Schema
 
-A migration adds the chain, the outcome, and an index on `(event, ts)` for the summary. `scope` and `key` become nullable or take `''` for keyless rows; the builder picks. `listAudit` grows a filter object applied in SQL.
+Part A's migration adds the chain and an index on `(event, ts)` for the summary. Part C adds the outcome column when gating exists. `scope` and `key` become nullable or take `''` for keyless rows; the builder picks. `listAudit` grows a filter object applied in SQL.
 
 ## 5. Part B: proof of presence (#16)
 
