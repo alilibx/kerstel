@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync } from "node:fs";
+import { cliActor, type AuditActor } from "../audit/actor";
 import { ensureHome, vaultPath } from "../paths";
 import type { SecretRef } from "../reference";
 import { decrypt, encrypt } from "./crypto";
@@ -125,6 +126,8 @@ export interface Vault {
   registerProject(name: string, rootPath: string, packageName?: string | null): void;
   listProjects(): ProjectRecord[];
   appendAudit(entry: AuditEntry): void;
+  /** Writes an audit row stamped with this vault's actor. A null ref writes an empty scope and key. */
+  record(event: AuditAction, ref: SecretRef | null): void;
   /** Newest first. A number means `{ limit: n }`. */
   listAudit(filter: number | AuditFilter): AuditRow[];
   auditCounts(filter: Omit<AuditFilter, "limit">): AuditCounts;
@@ -176,7 +179,8 @@ function auditWhere(
  * Opens (creating and migrating as needed) the encrypted vault.
  * `dataKey` comes from the OS credential store and is held in memory only.
  */
-export function openVault(dataKey: Buffer, file?: string): Vault {
+export function openVault(dataKey: Buffer, file?: string, options: { actor?: AuditActor } = {}): Vault {
+  const actor = options.actor ?? cliActor();
   const target = file ?? vaultPath();
   if (!file) ensureHome();
 
@@ -207,6 +211,45 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
   }
 
   const now = (): number => Date.now();
+
+  const insertAudit = (entry: AuditEntry): void => {
+    const project = entry.cwd
+      ? db
+          .query<{ id: number }, { $cwd: string }>(
+            `SELECT id FROM projects
+             WHERE $cwd = root_path OR substr($cwd, 1, length(root_path) + 1) = root_path || '/'
+             ORDER BY length(root_path) DESC LIMIT 1`,
+          )
+          .get({ $cwd: entry.cwd })
+      : null;
+    db.query(
+      `INSERT INTO audit_log (ts, event, scope, key, pid, process_name, chain, project_id)
+       VALUES ($ts, $event, $scope, $key, $pid, $proc, $chain, $project)`,
+    ).run({
+      $ts: entry.ts,
+      $event: entry.event,
+      $scope: entry.scope,
+      $key: entry.key,
+      $pid: entry.pid,
+      $proc: entry.processName,
+      $chain: entry.chain ? JSON.stringify(entry.chain) : null,
+      $project: project?.id ?? null,
+    });
+  };
+
+  /** One row for this vault's actor; runs inside the caller's transaction when there is one. */
+  const record = (event: AuditAction, ref: SecretRef | null): void => {
+    insertAudit({
+      ts: now(),
+      event,
+      scope: ref?.scope ?? "",
+      key: ref?.key ?? "",
+      pid: actor.pid,
+      processName: actor.processName,
+      chain: actor.chain(),
+      cwd: actor.cwd,
+    });
+  };
 
   const syncOn = (): boolean =>
     db.query<{ value: string }, [string]>("SELECT value FROM vault_meta WHERE key = ?").get(SYNC_VAULT_META) !== null;
@@ -284,6 +327,7 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
            VALUES ($scope, $key, $rev, 0, 0, NULL)
            ON CONFLICT(scope, key) DO UPDATE SET base_rev = $rev, dirty = 0, conflict = NULL`,
         ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+        record("sync", ref);
         return true;
       })();
     },
@@ -302,9 +346,12 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       });
     },
     keepLocal(ref, rev) {
-      db.query(
-        "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
-      ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+      db.transaction(() => {
+        db.query(
+          "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
+        ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+        record("sync", ref);
+      })();
     },
     rebase(ref, rev) {
       db.query("UPDATE sync_state SET base_rev = $rev WHERE scope = $scope AND key = $key").run({
@@ -326,6 +373,7 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       db.transaction(() => {
         writeSecret(ref, value);
         touch(ref);
+        record("set", ref);
       })();
     },
 
@@ -363,7 +411,10 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       return db.transaction(() => {
         const removed = deleteSecret(ref);
         // A removal syncs as a deletion; removing nothing changes nothing.
-        if (removed) touch(ref);
+        if (removed) {
+          touch(ref);
+          record("remove", ref);
+        }
         return removed;
       })();
     },
@@ -389,30 +440,9 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
         .map((r) => ({ name: r.name, rootPath: r.root_path, packageName: r.package_name, createdAt: r.created_at }));
     },
 
-    appendAudit(entry: AuditEntry): void {
-      const project = entry.cwd
-        ? db
-            .query<{ id: number }, { $cwd: string }>(
-              `SELECT id FROM projects
-               WHERE $cwd = root_path OR substr($cwd, 1, length(root_path) + 1) = root_path || '/'
-               ORDER BY length(root_path) DESC LIMIT 1`,
-            )
-            .get({ $cwd: entry.cwd })
-        : null;
-      db.query(
-        `INSERT INTO audit_log (ts, event, scope, key, pid, process_name, chain, project_id)
-         VALUES ($ts, $event, $scope, $key, $pid, $proc, $chain, $project)`,
-      ).run({
-        $ts: entry.ts,
-        $event: entry.event,
-        $scope: entry.scope,
-        $key: entry.key,
-        $pid: entry.pid,
-        $proc: entry.processName,
-        $chain: entry.chain ? JSON.stringify(entry.chain) : null,
-        $project: project?.id ?? null,
-      });
-    },
+    appendAudit: insertAudit,
+
+    record,
 
     listAudit(filter: number | AuditFilter): AuditRow[] {
       const f = typeof filter === "number" ? { limit: filter } : filter;

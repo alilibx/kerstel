@@ -65,14 +65,7 @@ export function vaultData(vault: Vault): UiData {
       if (vault.getSecret(ref) === null) return null;
       // Written before the value is read for display, as `get --reveal` does:
       // a reveal that is not recorded is one the audit log denies happened.
-      vault.appendAudit({
-        ts: Date.now(),
-        event: "reveal",
-        scope: ref.scope,
-        key: ref.key,
-        pid: process.pid,
-        processName: "kerstel",
-      });
+      vault.record("reveal", ref);
       return vault.getSecret(ref);
     },
     store(ref, value, replace) {

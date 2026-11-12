@@ -64,7 +64,7 @@ test("resolve records an audit entry without the value", async () => {
     scope: "global", key: "K", pid: 42, processName: "bun",
   });
 
-  const entries = vault.listAudit(5);
+  const entries = vault.listAudit(5).filter((e) => e.event === "resolve");
   expect(entries.length).toBe(1);
   expect(entries[0]).toMatchObject({ event: "resolve", scope: "global", key: "K", pid: 42 });
   expect(JSON.stringify(entries)).not.toContain("the-value");

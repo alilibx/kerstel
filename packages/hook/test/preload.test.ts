@@ -314,7 +314,7 @@ test("repeated reads of the same key hit the daemon once", async () => {
 
   const { stdout } = await runHooked("node", sock, script, [], { CACHED: "ks:global/CACHED" });
   expect(stdout).toBe("cached-valuecached-valuecached-value");
-  expect(vault.listAudit(10).filter((e) => e.key === "CACHED").length).toBe(1);
+  expect(vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CACHED").length).toBe(1);
 });
 
 test("Object.keys and spread still see every variable", async () => {

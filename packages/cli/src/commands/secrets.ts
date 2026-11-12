@@ -128,14 +128,7 @@ export async function getCommand(args: string[]): Promise<number> {
       // without passing through the daemon (the other is `run`), so the audit
       // row the daemon would have written has to be written here. A reveal
       // that is not recorded is a reveal the audit log denies happened.
-      ctx.vault.appendAudit({
-        ts: Date.now(),
-        event: "reveal",
-        scope: ref.scope,
-        key: ref.key,
-        pid: process.pid,
-        processName: "kerstel",
-      });
+      ctx.vault.record("reveal", ref);
       console.log(value);
     } else {
       console.log(`${mask()}  ${dim("(pass --reveal to print the value)")}`);
