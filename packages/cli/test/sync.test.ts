@@ -397,14 +397,20 @@ describe("two devices", () => {
         }),
       );
 
-    test("settling with --reveal writes a reveal row per value printed", async () => {
+    test("settling with --reveal writes one reveal row per conflict", async () => {
       const { s, b } = await conflicted();
       const { out } = await settle(s, b, true);
       expect(out).not.toContain("aaaa");
-      expect(reveals(b).map((r) => [r.scope, r.key])).toEqual([
-        ["app", "DB"],
-        ["app", "DB"],
-      ]);
+      expect(reveals(b).map((r) => [r.scope, r.key])).toEqual([["app", "DB"]]);
+    });
+
+    test("keeping the other device's revealed value moves the reveal past the write, so the rotation hint still sees it", async () => {
+      const { s, b } = await conflicted();
+      await settle(s, b, true);
+      const [row] = reveals(b);
+      const stored = b.with((v) => v.listSecrets("app").find((x) => x.key === "DB"))!;
+      expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("aaaa");
+      expect(row!.ts).toBeGreaterThanOrEqual(stored.updatedAt);
     });
 
     test("rows exist even when the prompt is aborted after the values were shown", async () => {
@@ -419,7 +425,7 @@ describe("two devices", () => {
         }),
       );
       await expect(aborted).rejects.toThrow();
-      expect(reveals(b)).toHaveLength(2);
+      expect(reveals(b)).toHaveLength(1);
     });
 
     test("without --reveal it writes none", async () => {

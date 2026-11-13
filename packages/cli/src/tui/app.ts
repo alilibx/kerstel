@@ -160,7 +160,7 @@ function matches(row: Row, filter: string): boolean {
 export function rowsFor(state: State, screen: ScreenName = state.screen): Row[] {
   const filter = state.lists[screen].filter;
   if (screen === "secrets") return secretRows(state.secrets, state.revealed).filter((r) => matches(r, filter));
-  if (screen === "audit") return state.audit ? auditRows(state.audit, state.auditAction).filter((r) => matches(r, filter)) : [];
+  if (screen === "audit") return state.audit ? auditRows(state.audit, state.auditAction, (r) => matches(r, filter)) : [];
   if (!state.refs) return [];
   const stored = new Set(state.secrets.map((s) => s.reference));
   const rows = referenceRows(state.refs, state.byKey, stored);

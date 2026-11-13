@@ -127,6 +127,7 @@ export async function auditCommand(args: string[]): Promise<number> {
           ]),
           { indent: 2 },
         ),
+        ...more(report.appReadRows.length, counts.appReads),
       );
     } else if (report.appReads.length > 0) {
       out.push("", "App reads");
@@ -140,6 +141,9 @@ export async function auditCommand(args: string[]): Promise<number> {
           ]),
           { indent: 2 },
         ),
+        ...(report.moreAppReads
+          ? [`  ${theme.dim(`Showing the ${report.appReads.length} largest groups. Use --limit to see more.`)}`]
+          : []),
       );
     }
 

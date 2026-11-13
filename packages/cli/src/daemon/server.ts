@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { createChainSource } from "../audit/chain";
+import { createChainSource, type ChainSource } from "../audit/chain";
 import type { Vault } from "../vault/store";
 import {
   LineDecoder,
@@ -26,6 +26,8 @@ export interface DaemonOptions {
   /** Relock and stop serving after this long with no requests. Default 8 hours. */
   idleMs?: number;
   onIdle?: () => void;
+  /** Where chains come from. Tests pass their own; the default reads the operating system. */
+  chainSource?: ChainSource;
 }
 
 export interface DaemonHandle {
@@ -59,14 +61,15 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
   // A cache miss reads a process snapshot that all misses share for a couple of
   // seconds, so a burst of new pids costs one `ps`, not one each. Part C
   // replaces the client-reported pid with the socket peer's.
-  const chainSource = createChainSource();
+  const chainSource = options.chainSource ?? createChainSource();
   const chainFor = (pid: number): string[] => {
     const now = Date.now();
     const hit = chains.get(pid);
     if (hit && now - hit.at < CHAIN_CACHE_MS) return hit.chain;
     for (const [cachedPid, entry] of chains) if (now - entry.at >= CHAIN_CACHE_MS) chains.delete(cachedPid);
     const chain = chainSource.chainFor(pid);
-    chains.set(pid, { chain, at: now });
+    // An empty chain may only mean the shared snapshot predates this pid: look again next time.
+    if (chain.length > 0) chains.set(pid, { chain, at: now });
     return chain;
   };
 

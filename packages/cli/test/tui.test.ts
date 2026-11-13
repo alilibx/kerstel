@@ -484,13 +484,20 @@ test("auditRows: the summary, reveal tone, the rotate hint, unknown chains and k
   });
   expect(rows[1]!.tone).toBe("problem");
   expect(rows[1]!.cells.slice(1)).toEqual(["reveal", "ks:global/STRIPE_SECRET_KEY", "node ← zsh"]);
-  expect(rows[2]).toEqual({ cells: ["", "", ROTATE_HINT, ""], tone: "dim" });
+  expect(rows[2]).toEqual({ cells: ["", "", ROTATE_HINT, ""], tone: "dim", reference: "ks:global/STRIPE_SECRET_KEY" });
   expect(rows[3]!.tone).toBe("normal");
   expect(rows[4]!.cells[3]).toBe("unknown");
   expect(rows[5]!.cells.slice(1)).toEqual(["device", "—", "unknown"]);
   expect(rows[5]!.reference).toBeUndefined();
   expect(rows[6]).toEqual({ cells: ["n for 200 more"], tone: "dim" });
   expect(auditRows(auditView(), "reveal")[0]!.cells[0]).toEndWith("5 changes (showing reveal)");
+});
+
+test("auditRows: the filter keeps a rotate hint with its reveal and never matches it alone", () => {
+  const has = (needle: string) => (row: { cells: string[] }) => row.cells.some((c) => c.toLowerCase().includes(needle));
+  const stripe = auditRows(auditView(), null, has("stripe"));
+  expect(stripe.map((r) => r.cells[2])).toEqual(["ks:global/STRIPE_SECRET_KEY", ROTATE_HINT]);
+  expect(auditRows(auditView(), null, has("rotat"))).toEqual([]);
 });
 
 test("the Audit screen shows its tab and a keys bar that fits 60 columns", () => {

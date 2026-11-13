@@ -126,8 +126,10 @@ export interface Vault {
   registerProject(name: string, rootPath: string, packageName?: string | null): void;
   listProjects(): ProjectRecord[];
   appendAudit(entry: AuditEntry): void;
-  /** Writes an audit row stamped with this vault's actor. A null ref writes an empty scope and key. */
-  record(event: AuditAction, ref: SecretRef | null): void;
+  /** Writes an audit row stamped with this vault's actor. A null ref writes an empty scope and key. The row's id. */
+  record(event: AuditAction, ref: SecretRef | null): number;
+  /** Moves a row's time to now. For a reveal whose value only became the stored one after the row was written. */
+  restampAudit(id: number): void;
   /** Newest first. A number means `{ limit: n }`. */
   listAudit(filter: number | AuditFilter): AuditRow[];
   auditCounts(filter: Omit<AuditFilter, "limit">): AuditCounts;
@@ -212,7 +214,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
 
   const now = (): number => Date.now();
 
-  const insertAudit = (entry: AuditEntry): void => {
+  const insertAudit = (entry: AuditEntry): number => {
     const project = entry.cwd
       ? db
           .query<{ id: number }, { $cwd: string }>(
@@ -222,7 +224,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
           )
           .get({ $cwd: entry.cwd })
       : null;
-    db.query(
+    return Number(db.query(
       `INSERT INTO audit_log (ts, event, scope, key, pid, process_name, chain, project_id)
        VALUES ($ts, $event, $scope, $key, $pid, $proc, $chain, $project)`,
     ).run({
@@ -234,11 +236,11 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
       $proc: entry.processName,
       $chain: entry.chain ? JSON.stringify(entry.chain) : null,
       $project: project?.id ?? null,
-    });
+    }).lastInsertRowid);
   };
 
   /** One row for this vault's actor; runs inside the caller's transaction when there is one. */
-  const record = (event: AuditAction, ref: SecretRef | null): void => {
+  const record = (event: AuditAction, ref: SecretRef | null): number =>
     insertAudit({
       ts: now(),
       event,
@@ -249,7 +251,6 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
       chain: actor.chain(),
       cwd: actor.cwd,
     });
-  };
 
   const syncOn = (): boolean =>
     db.query<{ value: string }, [string]>("SELECT value FROM vault_meta WHERE key = ?").get(SYNC_VAULT_META) !== null;
@@ -317,6 +318,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
       return r ? toRow(r) : null;
     },
     applyRemote(ref, value, rev, expectedChange) {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       return db.transaction(() => {
         const current = sync.row(ref);
         if ((current?.change ?? 0) !== expectedChange) return false;
@@ -346,6 +348,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
       });
     },
     keepLocal(ref, rev) {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       db.transaction(() => {
         db.query(
           "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
@@ -370,6 +373,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
     sync,
 
     setSecret(ref: SecretRef, value: string): void {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       db.transaction(() => {
         writeSecret(ref, value);
         touch(ref);
@@ -408,6 +412,7 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
     },
 
     removeSecret(ref: SecretRef): boolean {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       return db.transaction(() => {
         const removed = deleteSecret(ref);
         // A removal syncs as a deletion; removing nothing changes nothing.
@@ -533,6 +538,10 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
           keys: (JSON.parse(r.keys) as string[]).sort(),
           processes: r.processes,
         }));
+    },
+
+    restampAudit(id: number): void {
+      db.query("UPDATE audit_log SET ts = $ts WHERE id = $id").run({ $ts: now(), $id: id });
     },
 
     pruneAudit(before: number): number {

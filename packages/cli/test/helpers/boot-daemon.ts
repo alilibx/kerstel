@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChainSource } from "../../src/audit/chain";
 import { startDaemon, type DaemonHandle } from "../../src/daemon/server";
 import { generateDataKey } from "../../src/vault/crypto";
 import { openVault, type Vault } from "../../src/vault/store";
@@ -33,6 +34,7 @@ export interface BootOptions {
   prefix: string;
   token: string;
   idleMs?: number;
+  chainSource?: ChainSource;
 }
 
 export async function bootDaemon(options: BootOptions): Promise<BootedDaemon> {
@@ -53,6 +55,7 @@ export async function bootDaemon(options: BootOptions): Promise<BootedDaemon> {
     token: options.token,
     backendName: "file",
     ...(options.idleMs === undefined ? {} : { idleMs: options.idleMs }),
+    ...(options.chainSource === undefined ? {} : { chainSource: options.chainSource }),
   });
   running.push(handle);
 

@@ -1,6 +1,6 @@
 import { scanProjectRefs, type ProjectRefs } from "../project-refs";
 import { formatReference, type SecretRef } from "../reference";
-import { shouldRotate } from "../audit/report";
+import { rotationCheck } from "../audit/report";
 import type { AuditAction, AuditCounts, AuditRow, Vault } from "../vault/store";
 
 /**
@@ -77,9 +77,10 @@ export function vaultData(vault: Vault): UiData {
       const counts = vault.auditCounts({ since: Date.now() - 7 * DAY_MS });
       // One row more than asked for says whether another page exists.
       const rows = vault.listAudit({ limit: limit + 1, events: action ? [action] : undefined });
+      const rotate = rotationCheck(vault);
       return {
         counts,
-        entries: rows.slice(0, limit).map((row) => ({ row, rotate: shouldRotate(vault, row) })),
+        entries: rows.slice(0, limit).map((row) => ({ row, rotate: rotate(row) })),
         more: rows.length > limit,
       };
     },

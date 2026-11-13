@@ -60,7 +60,7 @@ One row each time Kerstel touches a secret or the vault on this device.
 | --- | --- |
 | `resolve` | The daemon, when an app reads a key through the hook. The hook remembers each value for the life of its process, so this is one row per key per process, not one per `process.env` read. |
 | `run` | `kerstel run`, one row per key it injects (as today). |
-| `reveal` | Anything that prints a value or writes it out in plain text: `get --reveal`, `resolve`, `sync --reveal`, the UI's reveal, and `move --to plaintext` (one row per value it writes out). `uninstall` also writes values out, but it deletes the log with the vault, so it records nothing. `resolve` writes `resolve` today and changes to `reveal`. |
+| `reveal` | Anything that prints a value or writes it out in plain text: `get --reveal`, `resolve`, `sync --reveal` (one row per conflict it shows, though it shows both sides), the UI's reveal, and `move --to plaintext` (one row per value it writes out). Every one is written before the value is shown or reaches disk, so a reveal is never missing from the log; a `move` that then rolls back keeps its row. `uninstall` also writes values out, but it deletes the log with the vault, so it records nothing. `resolve` writes `resolve` today and changes to `reveal`. |
 | `set` | `kerstel set`, `kerstel init` (one row per value it stores), `kerstel move` into the vault, and the UI's add and edit. |
 | `remove` | `kerstel rm`, `kerstel move` out of the vault, and the UI's delete. |
 | `sync` | A value that arrived from another device, or a conflict you settled. One row per key. |

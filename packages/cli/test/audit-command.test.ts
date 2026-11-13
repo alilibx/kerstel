@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditCommand } from "../src/commands/audit";
-import { auditReport, parseSince, ROTATE_HINT, shouldRotate } from "../src/audit/report";
+import { auditReport, parseSince, ROTATE_HINT, rotationCheck, shouldRotate } from "../src/audit/report";
 import { generateDataKey } from "../src/vault/crypto";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type AuditEntry, type Vault } from "../src/vault/store";
@@ -224,4 +224,27 @@ test("a section cut short by --limit says how many there are", async () => {
   expect(cut.text).toContain("Showing 2 of 5. Use --limit to see more.");
   expect(cut.text).toContain("Showing 2 of 4. Use --limit to see more.");
   expect((await run(["--limit", "10"])).text).not.toContain("Showing");
+});
+
+test("app-read groups cut short by --limit say so", async () => {
+  await seedHome((v) => {
+    for (let i = 0; i < 3; i++)
+      v.appendAudit(row({ ts: NOW - i, event: "resolve", key: `KEY_${i}`, pid: 100 + i, processName: `proc${i}` }));
+  });
+  expect((await run(["--limit", "2"])).text).toContain("Showing the 2 largest groups. Use --limit to see more.");
+  expect((await run(["--limit", "3"])).text).not.toContain("largest groups");
+  // Ungrouped, with --action resolve, the cut says how many rows there are.
+  expect((await run(["--limit", "2", "--action", "resolve"])).text).toContain("Showing 2 of 3. Use --limit to see more.");
+});
+
+test("the rotation check decrypts each secret once, however often it was revealed", () => {
+  const v = memVault();
+  v.setSecret({ scope: "global", key: "OPENAI_API_KEY" }, CREDENTIAL);
+  let reads = 0;
+  const get = v.getSecret.bind(v);
+  v.getSecret = (ref) => (reads++, get(ref));
+  const check = rotationCheck(v);
+  const mk = (id: number) => ({ id, ts: Date.now() + 10, event: "reveal" as const, scope: "global", key: "OPENAI_API_KEY", pid: 1, processName: "kerstel", chain: null, project: null });
+  for (let i = 0; i < 20; i++) expect(check(mk(i))).toBe(true);
+  expect(reads).toBe(1);
 });

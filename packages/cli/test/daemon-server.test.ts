@@ -56,6 +56,24 @@ test("resolve returns the stored secret", async () => {
   expect(res).toMatchObject({ ok: true, op: "resolve", value: "sk-live-xyz" });
 });
 
+test("an empty chain is not cached: the next read from that pid looks again", async () => {
+  const answers: string[][] = [[], ["zsh"]];
+  const { sock, vault } = await bootDaemon({
+    prefix: "daemon",
+    token: TOKEN,
+    chainSource: { chainFor: () => answers.shift() ?? ["never"] },
+  });
+  vault.setSecret({ scope: "global", key: "A" }, "a");
+  vault.setSecret({ scope: "global", key: "B" }, "b");
+  vault.setSecret({ scope: "global", key: "C" }, "c");
+  for (const key of ["A", "B", "C"]) {
+    await request(sock, { v: PROTOCOL_VERSION, id: key, token: TOKEN, op: "resolve", scope: "global", key, pid: 777, processName: "node" });
+  }
+  const chains = vault.listAudit(10).filter((e) => e.event === "resolve").reverse().map((e) => [e.key, e.chain]);
+  // A's lookup came back empty and was not kept; B's found the chain, and C reuses it.
+  expect(chains).toEqual([["A", []], ["B", ["zsh"]], ["C", ["zsh"]]]);
+});
+
 test("resolve records an audit entry without the value", async () => {
   const { sock, token, vault } = await boot();
   vault.setSecret({ scope: "global", key: "K" }, "the-value");

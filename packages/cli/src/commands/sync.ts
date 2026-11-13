@@ -459,14 +459,14 @@ async function settleConflicts(
     value === null ? "deleted" : options.reveal ? value : `${plural(value.length, "character")}`;
   // Every answer first; then one backup of every losing value, then the changes.
   const choices: { ref: SecretRef; keep: "local" | "remote" }[] = [];
+  const keptRevealed: number[] = [];
   for (const ref of conflicts) {
     const row = sync.vault.sync.row(ref)!;
     const local = sync.vault.getSecret(ref);
     const remote = conflictValue(sync, ref, row.conflict!);
-    // --reveal puts values in the labels below: log each one before it is on screen.
-    if (options.reveal) {
-      for (const value of [local, remote]) if (value !== null) sync.vault.record("reveal", ref);
-    }
+    // --reveal puts values in the labels below: log the reveal before it is on screen.
+    // One row per conflict, however many of its two values are shown.
+    const revealRow = options.reveal && (local !== null || remote !== null) ? sync.vault.record("reveal", ref) : null;
     const answer = await prompter.select(
       `${bold(ref.key)} (${ref.scope}) was changed on this device and another one. Which value stays?`,
       [
@@ -476,8 +476,13 @@ async function settleConflicts(
       "local",
     );
     choices.push({ ref, keep: answer as "local" | "remote" });
+    if (revealRow !== null && answer === "remote" && remote !== null) keptRevealed.push(revealRow);
   }
   settle(sync, choices, report);
+  // Keeping the other device's value rewrites the secret after the reveal was
+  // logged. Move the row past that write, or the rotation hint would read the
+  // revealed value as already changed.
+  for (const id of keptRevealed) sync.vault.restampAudit(id);
   ok(`Settled ${plural(conflicts.length, "conflict")}. The value that lost is in the sync backup.`);
   return conflicts.length;
 }

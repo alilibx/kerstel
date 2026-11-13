@@ -21,6 +21,8 @@ export interface AuditReport {
   reveals: RevealLine[];
   /** Used unless the action is resolve or run. */
   appReads: AppReadGroup[];
+  /** True when --limit left some app-read groups out. */
+  moreAppReads: boolean;
   /** Used when the action is resolve or run. */
   appReadRows: AuditRow[];
   changes: AuditRow[];
@@ -33,17 +35,38 @@ const CHANGE_ACTIONS: AuditAction[] = ["set", "remove", "sync", "device"];
  * since: the revealed value is then still the live one. Nothing is decrypted
  * for a secret that is gone or was replaced.
  */
+/**
+ * Whether a reveal row should carry the rotation hint. Each secret is looked up
+ * and decrypted once per checker, however many times it was revealed.
+ */
+export function rotationCheck(vault: Vault): (row: AuditRow) => boolean {
+  const seen = new Map<string, { updatedAt: number; secret: boolean } | null>();
+  const lookup = (scope: string, key: string) => {
+    const id = `${scope}\0${key}`;
+    if (seen.has(id)) return seen.get(id)!;
+    let found: { updatedAt: number; secret: boolean } | null = null;
+    const stored = vault.listSecrets(scope).find((s) => s.scope === scope && s.key === key);
+    if (stored) {
+      try {
+        const value = vault.getSecret({ scope, key });
+        found = { updatedAt: stored.updatedAt, secret: value !== null && judge(key, value) === "secret" };
+      } catch {
+        // A record that will not decrypt must not take the whole audit view down.
+        found = { updatedAt: stored.updatedAt, secret: false };
+      }
+    }
+    seen.set(id, found);
+    return found;
+  };
+  return (row) => {
+    if (row.event !== "reveal") return false;
+    const stored = lookup(row.scope, row.key);
+    return stored !== null && stored.updatedAt <= row.ts && stored.secret;
+  };
+}
+
 export function shouldRotate(vault: Vault, row: AuditRow): boolean {
-  if (row.event !== "reveal") return false;
-  const stored = vault.listSecrets(row.scope).find((s) => s.scope === row.scope && s.key === row.key);
-  if (!stored || stored.updatedAt > row.ts) return false;
-  try {
-    const value = vault.getSecret({ scope: row.scope, key: row.key });
-    return value !== null && judge(row.key, value) === "secret";
-  } catch {
-    // A record that will not decrypt must not take the whole audit view down.
-    return false;
-  }
+  return rotationCheck(vault)(row);
 }
 
 export function auditReport(vault: Vault, query: AuditQuery): AuditReport {
@@ -58,11 +81,15 @@ export function auditReport(vault: Vault, query: AuditQuery): AuditReport {
   const rows = (events: AuditAction[]) =>
     events.length === 0 ? [] : vault.listAudit({ ...base, events, limit: query.limit });
   const rowsMode = query.action === "resolve" || query.action === "run";
+  const rotate = rotationCheck(vault);
+  // One group more than asked for says whether --limit cut the section short.
+  const groups = readEvents.length === 0 || rowsMode ? [] : vault.appReadGroups({ ...base, limit: Math.min(query.limit, Number.MAX_SAFE_INTEGER - 1) + 1 });
 
   return {
     counts,
-    reveals: rows(revealEvents).map((row) => ({ row, rotate: shouldRotate(vault, row) })),
-    appReads: readEvents.length === 0 || rowsMode ? [] : vault.appReadGroups({ ...base, limit: query.limit }),
+    reveals: rows(revealEvents).map((row) => ({ row, rotate: rotate(row) })),
+    appReads: groups.slice(0, query.limit),
+    moreAppReads: groups.length > query.limit,
     appReadRows: rowsMode ? rows(readEvents) : [],
     changes: rows(changeEvents),
   };
