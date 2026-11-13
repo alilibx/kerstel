@@ -190,7 +190,7 @@ Behaviour to implement (POSIX `sh`, `set -eu`, no bashisms, `shellcheck`-clean):
 - Produces:
   - `installerScript(): string`, the embedded script's text, imported with `with { type: "file" }`.
   - `installerSha256(): string`.
-  - `manualCommand(o: { version: string; args: string[]; releasesUrl?: string }): string`. It returns one line: `` curl -fsSL <url>/releases/download/v<version>/kerstel-server.sh -o /tmp/kerstel-server.sh && (sha256sum 2>/dev/null || shasum -a 256) < /tmp/kerstel-server.sh | grep -q '^<hash> ' && sh /tmp/kerstel-server.sh <args> ``, where `<args>` are each single-quoted. The `<url>` is `KERSTEL_RELEASES_URL` or the GitHub repository, as in `release-source.ts`.
+  - `manualCommand(o: { version: string; args: string[]; releasesUrl?: string }): string`: one line, `(f=$(mktemp) && trap 'rm -f "$f"' EXIT && curl -fsSL <url>/releases/download/v<version>/kerstel-server.sh -o "$f" && (sha256sum 2>/dev/null || shasum -a 256) < "$f" | grep -q '^<hash> ' && sh "$f" <args>)`. It downloads to a private file (a fixed `/tmp` path could be swapped between the check and `sh` on a shared host), and `<args>` are each single-quoted. `<url>` is `KERSTEL_RELEASES_URL` or the GitHub repository, as in `release-source.ts`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `the embedded script is the repository's`: its text equals `packages/server/install/kerstel-server.sh`, and its hash equals `sha256` of that file.
