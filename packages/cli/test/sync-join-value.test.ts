@@ -53,7 +53,11 @@ describe("join value", () => {
 
   test("a control character in a URL is malformed", () => {
     for (const url of ["https://sync.example.com\x1b[2J", "https://sync.example.com\t"]) {
-      expect(parseJoinValue(encodeJoinValue({ urls: [url], pin: null, secret }))).toBe("malformed");
+      // Built by hand: the encoder refuses these, but a value from elsewhere may carry one.
+      const head = Buffer.concat([Buffer.from([0]), secret, Buffer.from(url)]);
+      const sum = createHash("sha256").update(head).digest().subarray(0, 4);
+      const text = JOIN_PREFIX + Buffer.concat([head, sum]).toString("base64url");
+      expect(parseJoinValue(text)).toBe("malformed");
     }
   });
 
@@ -89,10 +93,11 @@ describe("join value", () => {
     expect(parseJoinInput(["ks", "sync", "join", text])).toEqual(expected);
     expect(
       parseJoinInput(["kerstel", "sync", "join", "https://sync.example.com/", pairingCode(secret)]),
-    ).toEqual(expected);
+    ).toEqual({ ...expected, urls: ["https://sync.example.com/"] });
     expect(parseJoinInput([])).toEqual({ error: "empty" });
     expect(parseJoinInput(["ks", "sync", "join"])).toEqual({ error: "empty" });
-    expect(parseJoinInput(["https://x", "nope"])).toEqual({ error: "malformed" });
+    expect(parseJoinInput(["https://x", "nope"])).toEqual({ error: "bad-code" });
+    expect(parseJoinInput(["two", "words"])).toEqual({ error: "malformed" });
     expect(parseJoinInput(["ks2-AAAA"])).toEqual({ error: "newer" });
   });
 
@@ -108,5 +113,18 @@ describe("join value", () => {
       pin,
       secret,
     });
+  });
+
+  test("the old form keeps its own errors", () => {
+    expect(parseJoinInput(["not a url", "KS-nonsense"])).toEqual({ error: "bad-url", url: "not a url" });
+    expect(parseJoinInput(["https://sync.example.com", "KS-nonsense"])).toEqual({ error: "bad-code" });
+    expect(parseJoinInput(["https://sync.example.com", "ks-nonsense"])).toEqual({ error: "bad-code" });
+    expect(parseJoinInput(["http//oops", "whatever"])).toEqual({ error: "bad-url", url: "http//oops" });
+  });
+
+  test("encoding refuses a URL with a control character", () => {
+    for (const bad of ["https://a\nb", "https://a\tb", "https://a\u0000b", "https://a\u007fb", "https://a\rb"]) {
+      expect(() => encodeJoinValue({ urls: [bad], pin: null, secret })).toThrow();
+    }
   });
 });

@@ -818,12 +818,12 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
       // The value is a secret while the slot is open: it goes to the terminal
       // and the clipboard's stdin, never to a log or another command's argv.
       const line = `${cliName()} sync join ${encodeJoinValue({ urls: [sync.config.server], pin: null, secret })}`;
-      const copied = (deps.clipboard ?? copyToClipboard)(line);
       console.log("On the new device, run:");
       console.log("");
       console.log(`  ${line}`);
       console.log(dim(`  If the new device runs an older Kerstel, update it first with: ${cliName()} update`));
       console.log("");
+      const copied = (deps.clipboard ?? copyToClipboard)(line);
       console.log(
         dim(`${copied ? "Copied to the clipboard. " : ""}It works once and expires in 10 minutes. Waiting for the new device…`),
       );
@@ -929,7 +929,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     fail(`Usage: ${cliName()} sync join [<value>]`);
     return 2;
   };
-  if (args.some((a) => a.startsWith("-"))) return usage();
+  if (args[0]?.startsWith("-")) return usage();
   let words = args;
   if (words.length === 0) {
     if (!isInteractive(deps)) return usage();
@@ -947,7 +947,11 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
   const input = parseJoinInput(words);
   if ("error" in input) {
     if (input.error === "empty") return usage();
-    if (input.error === "newer") {
+    if (input.error === "bad-url") {
+      fail(`${input.url} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+    } else if (input.error === "bad-code") {
+      fail(`That is not a pairing code. Copy the whole KS-… code that ${cliName()} sync add-device shows.`);
+    } else if (input.error === "newer") {
       fail(`That join value is from a newer Kerstel. Update this device with ${cliName()} update, then run it again.`);
     } else {
       fail(`That is not a join value, or it was cut short. Copy the whole line that ${cliName()} sync add-device shows.`);
@@ -982,18 +986,18 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     // The value may name several addresses for one server. Only an address
     // that can't be reached moves on to the next; the first that answers is
     // the one this device polls, joins through and keeps.
-    let server = servers[0]!;
-    let pairing = pairingClient(server, deps.fetch);
-    for (let i = 0; ; i += 1) {
+    let server = "";
+    let pairing = pairingClient(servers[0]!, deps.fetch);
+    for (const [i, url] of servers.entries()) {
+      server = url;
+      pairing = pairingClient(url, deps.fetch);
+      // Named before the request, so the person sees which server each attempt goes to.
+      console.log(`Joining the vault on ${url}.`);
       try {
         await pairing.answer(pairingId, sealedAnswer);
         break;
       } catch (error) {
-        if (error instanceof SyncHttpError && error.code === "unreachable" && i + 1 < servers.length) {
-          server = servers[i + 1]!;
-          pairing = pairingClient(server, deps.fetch);
-          continue;
-        }
+        if (error instanceof SyncHttpError && error.code === "unreachable" && i + 1 < servers.length) continue;
         if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
           fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
         } else {
@@ -1002,7 +1006,6 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         return 1;
       }
     }
-    console.log(`Joining the vault on ${server}.`);
     console.log(`This device: ${bold(me.name)}, key fingerprint ${fingerprint(signPub)}`);
     console.log(dim("Confirm it on the other device, and check that it shows the same fingerprint. Waiting…"));
 

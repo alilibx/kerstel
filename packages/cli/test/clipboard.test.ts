@@ -13,6 +13,12 @@ describe("clipboardCommand", () => {
     ]);
   });
 
+  test("macOS over SSH has no clipboard, since pbcopy would fill the remote Mac's", () => {
+    for (const env of [{ SSH_TTY: "/dev/ttys001" }, { SSH_CONNECTION: "1.2.3.4 5 6.7.8.9 22" }]) {
+      expect(clipboardCommand({ platform: "darwin", env, which: whichOf("pbcopy") })).toBeNull();
+    }
+  });
+
   test("Wayland uses wl-copy", () => {
     const cmd = clipboardCommand({
       platform: "linux",

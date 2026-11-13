@@ -845,6 +845,23 @@ describe("pairing, joining and removing devices", () => {
     expect(out).toContain("update it first with");
   });
 
+  test("add-device shows the line before it calls the clipboard", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const { added, joined, out } = await pairUp(a, device(), s, {
+      clipboard: () => {
+        // A marker in the same stream shows what was already printed when the clipboard ran.
+        console.log("<clipboard>");
+        return true;
+      },
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    const marker = out.indexOf("<clipboard>");
+    expect(marker).toBeGreaterThan(out.indexOf("sync join ks1-"));
+    expect(marker).toBeGreaterThan(out.indexOf("update it first with"));
+    expect(marker).toBeLessThan(out.indexOf("Copied to the clipboard."));
+  });
+
   test("without a clipboard it says nothing about one", async () => {
     const s = server();
     const a = await syncedDevice(s, { DB: "db-1" });
@@ -899,6 +916,48 @@ describe("pairing, joining and removing devices", () => {
     expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
   });
 
+  test("join glues a value that the terminal wrapped at a dash", async () => {
+    const s = server();
+    const b = device();
+    // A dash inside the body is likely but not certain, so draw secrets until there is one.
+    let value = "";
+    let at = -1;
+    while (at < 0) {
+      value = encodeJoinValue({ urls: [SERVER], pin: null, secret: newPairingSecret() });
+      at = value.indexOf("-", 5);
+    }
+    const { result, out } = await quiet(() =>
+      syncCommand(["join", value.slice(0, at), value.slice(at)], {
+        fetch: s.fetch,
+        context: b.context,
+        interactive: false,
+        now: tick(s),
+      }),
+    );
+    // The second word starts with a dash, yet it is part of the value: no usage error, and the request went out.
+    expect(out).not.toContain("Usage:");
+    expect(out).toContain(`Joining the vault on ${SERVER}.`);
+    expect(out).toContain("That pairing expired or was already used");
+    expect(result).toBe(1);
+  });
+
+  test("join keeps the old form's messages for a bad url or code", async () => {
+    const s = server();
+    const b = device();
+    const joinWith = async (args: string[]) => {
+      const { result, out } = await quiet(() =>
+        syncCommand(["join", ...args], { fetch: s.fetch, context: b.context, interactive: false, now: tick(s) }),
+      );
+      return { code: result, out };
+    };
+    const bad = await joinWith(["not a url", "KS-nonsense"]);
+    expect(bad.code).toBe(2);
+    expect(bad.out).toContain("not a url is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.");
+    const code = await joinWith([SERVER, "KS-nonsense"]);
+    expect(code.code).toBe(2);
+    expect(code.out).toContain("That is not a pairing code. Copy the whole KS-… code that");
+  });
+
   test("join refuses a bad value before any request", async () => {
     const s = server();
     const b = device();
@@ -949,13 +1008,15 @@ describe("pairing, joining and removing devices", () => {
       if (url.port === "1") throw new Error("connection refused");
       return s.fetch(request);
     };
-    const { added, joined } = await pairUp(a, b, s, {
+    const { added, joined, out } = await pairUp(a, b, s, {
       joinFetch: flaky,
       joinWith: (value) => ({
         args: ["join", encodeJoinValue({ urls: ["http://127.0.0.1:1", SERVER], pin: null, secret: decoded(value).secret })],
       }),
     });
     expect([added, joined]).toEqual([0, 0]);
+    const named = out.match(/Joining the vault on \S+\./g);
+    expect(named).toEqual(["Joining the vault on http://127.0.0.1:1.", `Joining the vault on ${SERVER}.`]);
     // Only the first request walks the list; everything after goes to the server that answered.
     expect(tried.filter((o) => o === "http://127.0.0.1:1")).toHaveLength(1);
     expect(b.with((v) => loadSync(v, b.key))!.server).toBe(SERVER);

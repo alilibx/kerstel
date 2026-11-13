@@ -10,6 +10,8 @@ export interface ClipboardDeps {
 export function clipboardCommand(deps: Pick<ClipboardDeps, "platform" | "env" | "which">): string[] | null {
   const { platform, env, which } = deps;
   if (platform === "darwin") {
+    // Over SSH, pbcopy would fill the remote Mac's pasteboard, not the one the person is at.
+    if (env.SSH_TTY || env.SSH_CONNECTION) return null;
     const pbcopy = which("pbcopy");
     return pbcopy ? [pbcopy] : null;
   }

@@ -91,7 +91,7 @@ chmod +x kerstel-server-linux-x64
 <p>On the device that is already syncing:</p>
 <pre><code class="language-bash">kerstel sync add-device
 </code></pre>
-<p>It prints one line to run on the new device, and copies it to the clipboard when it can (with <code>pbcopy</code>, <code>wl-copy</code>, <code>xclip</code> or <code>xsel</code>):</p>
+<p>It prints one line to run on the new device, and copies it to the clipboard when it can (with <code>pbcopy</code>, <code>wl-copy</code>, <code>xclip</code> or <code>xsel</code>; over SSH on a Mac it skips <code>pbcopy</code>, which would fill the other Mac&#39;s clipboard):</p>
 <pre><code class="language-bash">kerstel sync join ks1-…
 </code></pre>
 <p>On the new device, paste the line as a command. Or run <code>kerstel sync join</code> on its own and paste the value at the hidden prompt, which keeps it out of your shell history. <code>join</code> prints the server it is joining before you confirm anything. The value holds the server address and the pairing secret, so treat it as a secret until it expires. It works once and expires in 10 minutes. A device older than 0.4.0 can&#39;t read it: update that device first with <code>kerstel update</code>. To pair from a device on 0.3, run <code>kerstel sync join &lt;url&gt; &lt;code&gt;</code> instead. When the new device answers, both devices show the new device&#39;s key fingerprint. Check that they match, then say yes on the first device. The new device checks that the sync key it receives is the one you confirmed, so a server cannot slip in a key of its own.</p>

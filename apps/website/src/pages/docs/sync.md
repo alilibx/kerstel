@@ -67,7 +67,7 @@ On the device that is already syncing:
 kerstel sync add-device
 ```
 
-It prints one line to run on the new device, and copies it to the clipboard when it can (with `pbcopy`, `wl-copy`, `xclip` or `xsel`):
+It prints one line to run on the new device, and copies it to the clipboard when it can (with `pbcopy`, `wl-copy`, `xclip` or `xsel`; over SSH on a Mac it skips `pbcopy`, which would fill the other Mac's clipboard):
 
 ```bash
 kerstel sync join ks1-…

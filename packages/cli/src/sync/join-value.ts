@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { PAIRING_SECRET_BYTES, parsePairingCode } from "./crypto";
-import { normaliseServerUrl } from "./state";
 
 /**
  * The one-value pairing string `ks1-…`: server URLs, an optional certificate pin and the
@@ -19,6 +18,7 @@ const PIN_BYTES = 32;
 const CHECKSUM_BYTES = 4;
 const MAX_URLS = 4;
 const FLAG_PIN = 0x01;
+const CONTROL = /[\u0000-\u001f\u007f]/;
 
 function checksum(bytes: Buffer): Buffer {
   return createHash("sha256").update(bytes).digest().subarray(0, CHECKSUM_BYTES);
@@ -28,8 +28,8 @@ export function encodeJoinValue(v: JoinValue): string {
   if (v.urls.length < 1 || v.urls.length > MAX_URLS) {
     throw new Error(`a join value carries 1 to ${MAX_URLS} server URLs`);
   }
-  if (v.urls.some((u) => u.length === 0 || u.includes("\n"))) {
-    throw new Error("a server URL must be non-empty and have no line break");
+  if (v.urls.some((u) => u.length === 0 || CONTROL.test(u))) {
+    throw new Error("a server URL must be non-empty and have no control character");
   }
   if (v.secret.length !== PAIRING_SECRET_BYTES) {
     throw new Error(`the pairing secret must be ${PAIRING_SECRET_BYTES} bytes`);
@@ -72,11 +72,14 @@ export function parseJoinValue(text: string): JoinValue | "malformed" | "newer" 
   }
   if (head.length <= at) return "malformed";
   const urls = head.subarray(at).toString("utf8").split("\n");
-  if (urls.length > MAX_URLS || urls.some((u) => u.length === 0 || /[\u0000-\u001f\u007f]/.test(u))) return "malformed";
+  if (urls.length > MAX_URLS || urls.some((u) => u.length === 0 || CONTROL.test(u))) return "malformed";
   return { urls, pin, secret };
 }
 
-export type JoinInput = JoinValue | { error: "malformed" | "newer" | "empty" };
+export type JoinInput =
+  | JoinValue
+  | { error: "malformed" | "newer" | "empty" | "bad-code" }
+  | { error: "bad-url"; url: string };
 
 const COMMAND_WORDS = new Set(["ks", "kerstel", "sync", "join"]);
 
@@ -95,9 +98,12 @@ export function parseJoinInput(words: string[]): JoinInput {
   }
   if (rest.length === 2) {
     const [url, code] = rest as [string, string];
-    const secret = parsePairingCode(code);
-    if (secret && URL.canParse(url)) {
-      return { urls: [normaliseServerUrl(url)], pin: null, secret };
+    // Anything that looks like the older `<url> <code>` form gets that form's own messages.
+    if (/^ks/i.test(code) || /^http/i.test(url)) {
+      if (!URL.canParse(url)) return { error: "bad-url", url };
+      const secret = parsePairingCode(code);
+      if (!secret) return { error: "bad-code" };
+      return { urls: [url], pin: null, secret };
     }
   }
   return { error: "malformed" };
