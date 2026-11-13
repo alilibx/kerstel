@@ -9,13 +9,15 @@ import { SYNC_META } from "./state";
 /**
  * Sync in the background. Sync spec §8.1: a command that writes the vault
  * starts a detached `kerstel sync --background`, `run` and `exec` start one
- * when the last sync is more than five minutes old, and one lock file keeps
+ * when the last sync is a minute old (five after a failed one), and one lock file keeps
  * syncs from overlapping. None of it ever waits on the network or fails the
  * command that started it.
  */
 
 /** `run` and `exec` sync in the background when no sync finished in this long. */
-export const BACKGROUND_PULL_AFTER_MS = 5 * 60_000;
+export const BACKGROUND_PULL_AFTER_MS = 60_000;
+/** After a failed sync they wait this long, so an unreachable server isn't tried on every command. */
+export const BACKGROUND_RETRY_AFTER_MS = 5 * 60_000;
 /** `doctor` warns when the last successful sync is older than this. */
 export const STALE_SYNC_MS = 7 * 24 * 60 * 60_000;
 
@@ -226,7 +228,7 @@ export interface BackgroundDeps {
 
 /**
  * Before a command runs: `run` and `exec` start a sync when none finished in
- * the last five minutes. Before, and not after, because the app they start
+ * the last minute, or the last five after a failed one. Before, and not after, because the app they start
  * may run for hours. Never throws.
  */
 export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): boolean {
@@ -234,8 +236,10 @@ export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): b
   try {
     const sync = (deps.glance ?? glanceSync)();
     if (!sync.on) return false;
-    const last = Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0);
-    if ((deps.now ?? Date.now)() - last < BACKGROUND_PULL_AFTER_MS) return false;
+    const now = (deps.now ?? Date.now)();
+    if (sync.lastError !== null) {
+      if (now - (sync.lastTry ?? 0) < BACKGROUND_RETRY_AFTER_MS) return false;
+    } else if (now - Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0) < BACKGROUND_PULL_AFTER_MS) return false;
     (deps.spawn ?? spawnBackgroundSync)();
     return true;
   } catch {

@@ -1321,14 +1321,49 @@ describe("sync in the background", () => {
     for (const command of ["sync add-device", "sync join"]) expect(run(command, { pending: 1 }, "after")).toBe(1);
     expect(run("sync", { pending: 1 }, "after")).toBe(0);
     expect(run("sync status", { pending: 1 }, "after")).toBe(0);
-    // run and exec pull when nothing finished in five minutes, whether it worked or not.
-    for (const command of ["run", "exec"]) expect(run(command, { lastOk: now - 6 * 60_000 }, "before")).toBe(1);
-    expect(run("run", { lastOk: now - 60_000 }, "before")).toBe(0);
-    expect(run("run", { lastOk: now - 6 * 60_000, lastTry: now - 60_000 }, "before")).toBe(0);
+    // run and exec pull when nothing finished in a minute, whether it worked or not.
+    for (const command of ["run", "exec"]) expect(run(command, { lastOk: now - 2 * 60_000 }, "before")).toBe(1);
+    expect(run("run", { lastOk: now - 30_000 }, "before")).toBe(0);
+    expect(run("run", { lastOk: now - 6 * 60_000, lastTry: now - 30_000 }, "before")).toBe(0);
     expect(run("run", { on: false }, "before")).toBe(0);
     expect(run("ls", {}, "before")).toBe(0);
     // A failing glance or spawn never fails the command.
     expect(syncAfterCommand("set", [], { glance: () => ({ ...on, pending: 1 }), spawn: () => { throw new Error("no"); } })).toBe(false);
+  });
+
+  test("run syncs a minute after the last success", () => {
+    const now = 10 * 60_000;
+    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null };
+    const at = (ago: number) => syncBeforeCommand("run", { glance: () => ({ ...base, lastOk: now - ago, lastTry: now - ago }), spawn: () => {}, now: () => now });
+    expect(at(59_000)).toBe(false);
+    expect(at(60_000)).toBe(true);
+  });
+
+  test("run backs off five minutes after a failure", () => {
+    const now = 20 * 60_000;
+    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: now - 10 * 60_000, lastTry: null, lastError: "x", lastTimer: null };
+    const at = (ago: number) => syncBeforeCommand("run", { glance: () => ({ ...base, lastTry: now - ago }), spawn: () => {}, now: () => now });
+    expect(at(4 * 60_000)).toBe(false);
+    expect(at(5 * 60_000)).toBe(true);
+  });
+
+  test("a watch loop spawns at most one sync a minute", () => {
+    let now = 10 * 60_000;
+    let lastTry: number | null = null;
+    let spawned = 0;
+    const deps = {
+      glance: (): SyncGlance => ({ on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry, lastError: null, lastTimer: null }),
+      spawn: () => {
+        spawned += 1;
+        lastTry = now;
+      },
+      now: () => now,
+    };
+    for (let i = 0; i < 30; i += 1) {
+      syncBeforeCommand("run", deps);
+      now += 2_000;
+    }
+    expect(spawned).toBe(1);
   });
 
   test("the background environment carries no caller variables or runtime options", () => {
