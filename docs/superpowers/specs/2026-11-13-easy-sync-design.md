@@ -177,7 +177,7 @@ Asks for its URL, or a server value at a hidden prompt, then runs today's `setup
 
 ## 9. Looking after the server (#106)
 
-Kerstel records how it installed the server: the host, the SSH target, Docker or service, the reach method, and the version. Only the device that installed it holds this record; it never syncs. `ks sync server` on any other device shows the address, whether it answers and its version, and says which device manages it. My call. Where it lives is the builder's call (a `vault_meta` row or a file under `~/.kerstel/`).
+Kerstel records how it installed the server: the host, the SSH target, Docker or service, the reach method, and the version. Only the device that installed it holds this record; it never syncs. `ks sync server` on any other device shows the address, whether it answers and its version, and says the server is managed from another device, with `ks sync server manage <ssh-host>` to take it over. No device learns which device manages it, since nothing that syncs or that the server holds records that. My call. Where it lives is the builder's call (a `vault_meta` row or a file under `~/.kerstel/`).
 
 | Command | Does |
 |---|---|
