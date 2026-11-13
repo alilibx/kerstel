@@ -58,7 +58,7 @@ What Kerstel ships, in order. A box is ticked only once the feature is merged to
 
 ## Next: access gating
 
-- [ ] Audit log of every resolve, run, reveal, set, and remove, with `kerstel audit` and an Audit screen in the UI ([#11](https://github.com/alilibx/kerstel/issues/11))
+- [x] Audit log of every resolve, run, reveal, set, and remove, with `kerstel audit` and an Audit screen in the UI ([#11](https://github.com/alilibx/kerstel/issues/11))
 - [ ] Approval prompt the first time an unknown process asks for a key ([#14](https://github.com/alilibx/kerstel/issues/14))
 - [ ] Allowlists ([#15](https://github.com/alilibx/kerstel/issues/15))
 - [ ] Proof of user presence for sensitive actions: Touch ID with a password fallback on macOS, polkit or a fingerprint on Linux, and reveals denied by default where no prompt is possible ([#16](https://github.com/alilibx/kerstel/issues/16))

@@ -53,9 +53,19 @@
 <h2 class="release-version"><a href="#0.3.1">0.3.1</a></h2>
 <span class="release-date release-unreleased">In development</span>
 </div>
+<details class="release-details">
+<summary><span class="release-count">4 changes</span></summary>
 <div class="release-body">
-<p class="release-empty">Nothing yet. The <a href="/roadmap">roadmap</a> lists what is coming next.</p>
+<section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
+<li><code>kerstel audit</code> shows what Kerstel did with your secrets on this device, without printing a value. It opens with a summary, then lists every reveal (with a hint to rotate a secret that is unchanged since you revealed it), the reads your apps made, grouped by project and process, and every change. It covers the last 7 days and 50 rows per section by default; <code>--since</code>, <code>--limit</code>, <code>--scope</code>, <code>--key</code> and <code>--action</code> narrow or widen it. Each row records the chain of programs that started the command or app, and the project checkout. The chain is names only, so a program that wants to hide can fake it. Rows stay on this device and never sync, and rows older than 90 days are deleted. See the <a href="https://kerstel.dev/docs/cli">CLI reference</a> and the <a href="https://kerstel.dev/security">security model</a>.</li>
+<li><code>kerstel ui</code> has a third screen, <strong>Audit</strong> (<code>3</code> or <code>Tab</code>): the same log as a list, newest first, with reveals marked. <code>a</code> shows one action or all of them, <code>n</code> loads more rows, and <code>Enter</code> jumps to the secret.</li>
+<li>The audit log now records every change as well as every read: <code>set</code> and <code>rm</code> from any command and from <code>kerstel ui</code> (including <code>init</code> and <code>move</code>), a value that arrives from another device or a conflict you settle with <code>kerstel sync</code>, a device paired or removed, and a reveal by <code>kerstel sync --reveal</code> or <code>kerstel move --to plaintext</code>.</li>
+</ul></section>
+<section class="change-group change-changed"><h3 class="change-type">Changed</h3><ul>
+<li><code>kerstel resolve</code> is now recorded as a reveal, not a resolve, since a person asked to see the value.</li>
+</ul></section>
 </div>
+</details>
 </li>
 <li class="release" id="0.3.0">
 <span class="release-marker" aria-hidden="true"></span>
