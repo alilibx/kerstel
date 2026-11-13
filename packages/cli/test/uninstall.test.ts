@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { keyBelongsToHome, parseUninstallArgs, removeLinks, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
 import { CancelledError, ScriptedPrompter, type Prompter } from "../src/init/prompts";
+import type { SyncTimer } from "../src/sync/timer";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
 import { fileBackend } from "../src/vault/keychain/file";
 import { openVault } from "../src/vault/store";
@@ -485,4 +486,45 @@ test("under a custom home, a key in a shared native store is never treated as or
     native.name = "file";
     deleted.mockRestore();
   }
+});
+
+function fakeTimer(installed: boolean): SyncTimer & { removed: number } {
+  const t = {
+    removed: 0,
+    status: () => (installed ? ({ state: "installed", kind: "launchd", current: true } as const) : ({ state: "missing", kind: "launchd" } as const)),
+    ensure: () => "unchanged" as const,
+    remove() {
+      t.removed++;
+      return true;
+    },
+  };
+  return t;
+}
+
+test("uninstall removes the timer", async () => {
+  const { home } = await setup();
+  const timer = fakeTimer(true);
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer })).toBe(0);
+  expect(timer.removed).toBe(1);
+  expect(existsSync(home)).toBe(false);
+  expect(output.join("\n")).toContain("Removes the scheduled sync pull.");
+});
+
+test("a timer that throws on removal never stops the uninstall", async () => {
+  const { home } = await setup();
+  const timer: SyncTimer = { status: () => ({ state: "installed", kind: "launchd", current: true }), ensure: () => "unchanged", remove: () => { throw new Error("boom"); } };
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer })).toBe(0);
+  expect(existsSync(home)).toBe(false);
+});
+
+test("dry run keeps the timer", async () => {
+  const { home } = await setup();
+  const timer = fakeTimer(true);
+  capture();
+  expect(await uninstallCommand(["--dry-run"], undefined, NO_BINARY, { timer })).toBe(0);
+  expect(timer.removed).toBe(0);
+  expect(existsSync(home)).toBe(true);
+  expect(output.join("\n")).toContain("Removes the scheduled sync pull.");
 });

@@ -8,6 +8,7 @@ import { isCompiledBinary } from "../daemon/spawn";
 import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { renderDiff } from "../init/wiring";
 import { SyncHttpError, type Fetch } from "../sync/http";
+import { syncTimer, type SyncTimer } from "../sync/timer";
 import { loadSync, type SyncConfig } from "../sync/state";
 import { clientFor } from "./sync";
 import { fail, info, ok, yellow } from "../output";
@@ -283,7 +284,7 @@ export async function uninstallCommand(
     invokedAs: process.argv0,
   },
   /** For tests: how the sync server is reached. */
-  syncDeps: { fetch?: Fetch; now?: () => number } = {},
+  syncDeps: { fetch?: Fetch; now?: () => number; timer?: SyncTimer } = {},
 ): Promise<number> {
   const options = parseUninstallArgs(args);
   if ("error" in options) {
@@ -324,6 +325,14 @@ export async function uninstallCommand(
   }
 
   printPlan(plan);
+  const timer = syncDeps.timer ?? syncTimer();
+  let timerInstalled = false;
+  try {
+    timerInstalled = timer.status().state === "installed";
+  } catch {
+    // An unreadable timer is not a reason to stop.
+  }
+  if (timerInstalled) info("Removes the scheduled sync pull.");
   if (synced) info(`This device leaves the synced vault on ${synced.server} first.`);
   console.log("");
 
@@ -449,6 +458,11 @@ export async function uninstallCommand(
   }
 
   if (synced) await leaveSyncedVault(synced, deleteRemote, syncDeps);
+  try {
+    timer.remove();
+  } catch {
+    // A pull timer that will not go must not keep Kerstel installed.
+  }
 
   // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
   // a leftover key with no vault is harmless, but a keyless vault would block

@@ -2,6 +2,7 @@ import { LAUNCHER_FORMAT, LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
 import { STALE_SYNC_MS, type SyncGlance } from "../sync/background";
+import type { TimerStatus } from "../sync/timer";
 import { compareVersions } from "../update/versions";
 
 /** A path as the shell needs it pasted: unchanged when safe, single-quoted otherwise. */
@@ -50,6 +51,8 @@ export interface DoctorFacts {
   bunOptions: string | null;
   /** Sync, as `vault.db` records it. Omitted: the row is left out. */
   sync?: SyncGlance;
+  /** The scheduled pull, gathered only when sync is on. */
+  timer?: TimerStatus;
   /** The time `sync` is judged against. */
   now?: number;
 }
@@ -189,6 +192,14 @@ function syncCheck(facts: DoctorFacts): Check | null {
   ];
   if (sync.pending > 0) parts.push(`${sync.pending} change${sync.pending === 1 ? "" : "s"} to push`);
   if (sync.conflicts > 0) parts.push(`${sync.conflicts} conflict${sync.conflicts === 1 ? "" : "s"}`);
+  const timer = facts.timer;
+  if (timer?.state === "installed") {
+    parts.push(sync.lastTimer === null ? "pulls every 5 minutes" : `pulls every 5 minutes, last ran ${ago(sync.lastTimer, now)}`);
+  } else if (timer?.state === "missing") {
+    parts.push("pulls not scheduled");
+  } else if (timer?.state === "unavailable") {
+    parts.push(`pulls not scheduled (${timer.reason})`);
+  }
   const fix = `${facts.cli} sync`;
   const detail = parts.join(" · ");
   if (sync.conflicts > 0) {
@@ -200,6 +211,18 @@ function syncCheck(facts: DoctorFacts): Check | null {
   }
   if (sync.lastOk === null || now - sync.lastOk > STALE_SYNC_MS) {
     return { group: "machine", status: "warn", label: "Sync", detail: `${detail} · more than 7 days without a sync`, fix };
+  }
+  if (timer?.state === "missing") {
+    return { group: "machine", status: "warn", label: "Sync", detail, fix: `${fix}, to schedule them` };
+  }
+  if (timer?.state === "installed" && !timer.current) {
+    return {
+      group: "machine",
+      status: "warn",
+      label: "Sync",
+      detail: `${detail} · the scheduled pull's settings differ from this shell's`,
+      fix: `${fix}, to update it`,
+    };
   }
   return { group: "machine", status: "pass", label: "Sync", detail };
 }
