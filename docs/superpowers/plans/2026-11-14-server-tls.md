@@ -60,7 +60,7 @@
   - `formatPin(pin: Buffer): string` (`sha256/<base64url>`) and `parsePin(text: string): Buffer | null`.
 - Produces, in `x509.ts`:
   - `issueCertificate(o: { subjectSpki: Buffer; issuerKey: KeyObject; issuerName?: string; subjectName?: string; names: string[]; ca?: boolean; now?: number }): Buffer`. DER, signed by `issuerKey`. Names default to `kerstel-server`. `ca: true` sets `basicConstraints` CA:true and `keyUsage` keyCertSign, for the test CA in Task 5.
-  - `selfSignedCertificate(o: { key: KeyObject; names: string[]; now?: number }): Buffer`. `issueCertificate` with the key's own SPKI and the key as issuer. DER. Subject and issuer CN `kerstel-server`, a random positive 16-byte serial, SAN with an `iPAddress` entry for each IPv4 or IPv6 literal and a `dNSName` for the rest, `basicConstraints` CA:false, `keyUsage` digitalSignature, `extKeyUsage` serverAuth.
+  - `selfSignedCertificate(o: { key: KeyObject; names: string[]; now?: number }): Buffer`. `issueCertificate` with the key's own SPKI and the key as issuer. DER. Subject and issuer CN `kerstel-server`, a random positive 16-byte serial, SAN with an `iPAddress` entry for each IPv4 or IPv6 literal and a `dNSName` for the rest, `basicConstraints` CA:false and `extKeyUsage` serverAuth. A self-signed leaf has no `keyUsage`: BoringSSL trusts a self-signed certificate as its own anchor only when `keyUsage` is absent or allows keyCertSign. A CA-issued leaf has `keyUsage` digitalSignature.
   - `certificateRequest(o: { key: KeyObject; domain: string }): Buffer`. PKCS#10 DER with CN and one `dNSName` SAN.
   - `certificateNames(certDer: Buffer): string[]`, the SAN entries, for deciding whether to reissue.
   - `toPem(der: Buffer, label: "CERTIFICATE" | "CERTIFICATE REQUEST"): string`.
