@@ -84,4 +84,5 @@ jobs:
       # Stage all changes to docs/ first to catch newly-created files too.
       - run: git add -A -- docs/ && git diff --cached --exit-code -- docs/
       - run: shellcheck apps/website/src/static/install.sh
+      - run: shellcheck packages/server/install/kerstel-server.sh
       - run: bun test apps/website
