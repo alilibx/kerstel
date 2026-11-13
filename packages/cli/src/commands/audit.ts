@@ -1,6 +1,6 @@
 import { formatChain } from "../audit/chain";
 import { AUDIT_ACTIONS, type AuditAction, type AuditRow } from "../vault/store";
-import { auditReport, parseSince, ROTATE_HINT } from "../audit/report";
+import { auditReport, formatAuditTime, parseSince, ROTATE_HINT } from "../audit/report";
 import { openContext } from "../context";
 import { fail } from "../output";
 import { formatReference } from "../reference";
@@ -15,7 +15,7 @@ import { theme } from "../ui/theme";
  */
 
 const USAGE = `Usage: ${cliName()} audit [--scope <s>] [--key <KEY>] [--action <a>] [--since <7d|24h|date>] [--limit <n>]`;
-const DEFAULT_LIMIT = 20;
+const DEFAULT_LIMIT = 50;
 
 interface AuditOptions {
   scope?: string;
@@ -50,11 +50,6 @@ function parseArgs(args: string[]): AuditOptions | { error: string } {
   return options;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const reference = (row: AuditRow) => (row.key === "" ? "—" : formatReference(row.scope, row.key));
 
@@ -82,7 +77,11 @@ export async function auditCommand(args: string[]): Promise<number> {
     });
     const { counts } = report;
     if (counts.reveals + counts.appReads + counts.changes === 0) {
-      console.log(`Nothing recorded in the ${since.label.charAt(0).toLowerCase()}${since.label.slice(1)}.`);
+      console.log(
+        since.label.startsWith("Since ")
+          ? `Nothing recorded since ${since.label.slice(6)}.`
+          : `Nothing recorded in the ${since.label.charAt(0).toLowerCase()}${since.label.slice(1)}.`,
+      );
       return 0;
     }
 
@@ -102,9 +101,9 @@ export async function auditCommand(args: string[]): Promise<number> {
     );
 
     if (report.reveals.length > 0) {
-      const rows = report.reveals.map(({ row }) => [formatTime(row.ts), reference(row), formatChain(row.chain)]);
+      const rows = report.reveals.map(({ row }) => [formatAuditTime(row.ts), reference(row), formatChain(row.chain)]);
       const lines = renderTable(rows, { indent: 2 });
-      const hintIndent = " ".repeat(2 + formatTime(0).length + 2);
+      const hintIndent = " ".repeat(2 + formatAuditTime(0).length + 2);
       out.push("", "Reveals");
       report.reveals.forEach(({ rotate }, i) => {
         out.push(theme.yellow(lines[i]!));
@@ -117,7 +116,7 @@ export async function auditCommand(args: string[]): Promise<number> {
       out.push(
         ...renderTable(
           report.appReadRows.map((row) => [
-            formatTime(row.ts),
+            formatAuditTime(row.ts),
             row.event,
             reference(row),
             row.processName ?? "unknown",
@@ -145,7 +144,7 @@ export async function auditCommand(args: string[]): Promise<number> {
       out.push("", "Changes");
       out.push(
         ...renderTable(
-          report.changes.map((row) => [formatTime(row.ts), row.event, reference(row), formatChain(row.chain)]),
+          report.changes.map((row) => [formatAuditTime(row.ts), row.event, reference(row), formatChain(row.chain)]),
           { indent: 2 },
         ),
       );

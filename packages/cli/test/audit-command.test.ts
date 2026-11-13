@@ -189,3 +189,17 @@ test("auditReport bounds sections by limit but counts by period", () => {
   expect(r.counts.reveals).toBe(3);
   expect(r.reveals.length).toBe(2);
 });
+
+test("the default limit lists 30 reveals", async () => {
+  await seedHome((v) => {
+    for (let i = 0; i < 30; i++) v.appendAudit(row({ ts: NOW - i, key: `KEY_${i}` }));
+  });
+  const { text } = await run([]);
+  expect(text.match(/ks:global\/KEY_\d+/g)?.length).toBe(30);
+});
+
+test("an empty log with a date says since, and with hours says last", async () => {
+  await seedHome(() => {});
+  expect((await run(["--since", "2026-11-01"])).text).toBe("Nothing recorded since 2026-11-01.");
+  expect((await run(["--since", "24h"])).text).toBe("Nothing recorded in the last 24 hours.");
+});

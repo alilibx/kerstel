@@ -82,3 +82,11 @@ export function parseSince(text: string, now: number): { since: number; label: s
   }
   return null;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Local time as `YYYY-MM-DD HH:MM`, the one format every audit view uses. */
+export function formatAuditTime(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
