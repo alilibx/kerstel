@@ -581,6 +581,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       fail(`Could not leave the vault: ${explain(error)}. Sync stays on.`);
       return 1;
     }
+    recordDevice(ctx.vault);
     forgetSync(ctx.vault);
     ok(deleteVault ? "Deleted the vault on the server. Sync is off; your secrets stay here." : "Sync is off for this device. Your secrets stay here.");
     return 0;

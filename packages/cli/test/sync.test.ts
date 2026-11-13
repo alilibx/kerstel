@@ -280,6 +280,15 @@ describe("one device and the server", () => {
     expect(gone.code).toBe(0);
     expect(a.with((v) => [loadSync(v, a.key), v.sync.rows(), v.getSecret(ref("app", "A"))])).toEqual([null, [], "1"]);
   });
+
+  test("sync off records a device row", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const before = a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length);
+    expect((await sync(a, s, ["off", "--delete-vault"])).code).toBe(0);
+    expect(a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length)).toBe(before + 1);
+  });
 });
 
 describe("two devices", () => {
