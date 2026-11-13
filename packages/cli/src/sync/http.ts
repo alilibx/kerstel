@@ -24,7 +24,16 @@ import { cliName } from "../ui/cli-name";
  * tests run against the server in-process.
  */
 
-export type Fetch = (request: Request) => Promise<Response>;
+/** What a pinned client passes besides the request: Bun's `tls` options. */
+export interface FetchInit {
+  tls?: Record<string, unknown>;
+}
+
+/**
+ * The fetch a client sends with. A pinned client calls it with `init.tls`,
+ * which a wrapper must pass on to Bun's `fetch`, or the pin is not checked.
+ */
+export type Fetch = (request: Request, init?: FetchInit) => Promise<Response>;
 
 /** How long one request may take. A server that never answers must not hold the sync lock, or a background sync, forever. */
 export const REQUEST_TIMEOUT_MS = 60_000;
@@ -51,6 +60,8 @@ export interface ClientOptions {
   /** The server's key pin (#112). With one, every request trusts that key and nothing else. */
   pin?: Buffer | null;
 }
+
+export const PIN_NEEDS_HTTPS = "A pinned server must use an https:// URL.";
 
 export const PIN_MISMATCH = (server: string): string =>
   `${server} presented a key this device does not trust, so nothing was sent. If the server lost its data and started again, run ${cliName()} sync off, then set sync up again. Otherwise, something between you and the server is answering in its place.`;
@@ -122,7 +133,10 @@ async function readCapped(response: Response, limit: number): Promise<string | n
  * no secret, and no redirect is followed.
  */
 export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase = bunFetch): Fetch {
+  // The pin is checked by TLS; over plain http there is nothing to check it against.
+  if (!/^https:\/\//i.test(server)) throw new SyncHttpError(0, "bad_request", PIN_NEEDS_HTTPS);
   let held: Promise<Buffer> | null = null;
+  const mismatch = () => new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
 
   async function fetchCertificate(): Promise<Buffer> {
     const unreachable = (why: string) => new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${why}`);
@@ -150,7 +164,7 @@ export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase =
       const parsed = text === null ? null : (JSON.parse(text) as { certificate?: unknown } | null);
       if (typeof parsed?.certificate !== "string") throw new Error("no certificate");
       der = Buffer.from(parsed.certificate, "base64");
-      if (!pinOfCertificate(der).equals(pin)) throw new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
+      if (!pinOfCertificate(der).equals(pin)) throw mismatch();
     } catch (error) {
       if (error instanceof SyncHttpError) throw error;
       throw unreachable("it sent a certificate Kerstel could not read.");
@@ -196,9 +210,17 @@ export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase =
         if (refetch instanceof SyncHttpError && refetch.code === "pin_mismatch") throw refetch;
         throw error;
       }
-      if (fresh.equals(der)) throw error;
+      // The server says its certificate is the one held, yet its TLS layer
+      // presents another: something in between copied the certificate but
+      // cannot show its key.
+      if (fresh.equals(der)) throw mismatch();
       held = Promise.resolve(fresh);
-      return send(request, fresh);
+      try {
+        return await send(request, fresh);
+      } catch (retryError) {
+        if (isTlsVerifyError(retryError)) throw mismatch();
+        throw retryError;
+      }
     }
   };
 }

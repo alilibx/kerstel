@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { newId } from "../../server/src/protocol";
 import { generateDeviceKeys, generateSyncKey, publicKeyOf, sealSyncKey } from "../src/sync/crypto";
-import { PIN_MISMATCH, SyncHttpError, pairingClient, pinnedFetch, syncClient, type Fetch, type PinnedFetchBase } from "../src/sync/http";
+import { PIN_MISMATCH, PIN_NEEDS_HTTPS, SyncHttpError, pairingClient, pinnedFetch, syncClient, type Fetch } from "../src/sync/http";
 import { serverKey, startTlsServer, type TlsServer } from "./helpers/tls-server";
 import { pinOfCertificate } from "../../server/src/pin";
 import { issueCertificate, selfSignedCertificate } from "../../server/src/x509";
@@ -54,11 +54,9 @@ interface Recorded {
  * Bun's own fetch, recording what each call asked for. It fits both a client's
  * `fetch` option (which a pin wraps, through `base`) and `pinnedFetch`'s `base`.
  */
-type Recording = (request: Request, init?: Parameters<PinnedFetchBase>[1]) => Promise<Response>;
-
-function recordingBase(): { base: Recording; calls: Recorded[] } {
+function recordingBase(): { base: Fetch; calls: Recorded[] } {
   const calls: Recorded[] = [];
-  const base: Recording = (request, init) => {
+  const base: Fetch = (request, init) => {
     calls.push({ url: request.url, tls: init?.tls });
     return fetch(request, init as RequestInit);
   };
@@ -91,12 +89,12 @@ describe("a pinned client", () => {
     const error = await failure(device.createVault());
     expect(error.code).toBe("pin_mismatch");
     expect(error.message).toBe(PIN_MISMATCH(server.url));
-    expect(calls[0]!.url).toBe(`${server.url}/v1/certificate`);
-    for (const call of calls.slice(1)) expect(call.tls?.ca).toBeDefined();
-    expect(server.paths).not.toContain("/v1/vaults");
+    // The certificate's key is refused before any request is sent.
+    expect(calls.map((c) => c.url)).toEqual([`${server.url}/v1/certificate`]);
+    expect(server.paths).toEqual(["/v1/certificate"]);
   });
 
-  test("a server that advertises the pinned certificate but holds another key gets nothing", async () => {
+  test("a server that serves the pinned certificate but presents another key is a key mismatch", async () => {
     // Someone in the middle can copy the real certificate, but not its key.
     const real = startTlsServer();
     const pinned = { cert: real.certDer, pin: real.pin };
@@ -105,11 +103,52 @@ describe("a pinned client", () => {
     const { base, calls } = recordingBase();
     const device = newDevice(server.url, { pin: pinned.pin, fetch: base });
     const error = await failure(device.createVault());
-    expect(error.code).not.toBe("redirect");
-    expect(calls.length).toBeGreaterThan(1);
+    expect(error.code).toBe("pin_mismatch");
+    expect(error.message).toBe(PIN_MISMATCH(server.url));
+    // The certificate, the refused request, the certificate once more, and no retry.
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/v1/certificate", "/v1/vaults", "/v1/certificate"]);
     expect(calls.filter((c) => c.url.endsWith("/v1/certificate")).every((c) => c.tls?.rejectUnauthorized === false)).toBe(true);
     for (const call of calls.filter((c) => !c.url.endsWith("/v1/certificate"))) expect(call.tls?.ca).toBeDefined();
     expect(server.paths).not.toContain("/v1/vaults");
+  });
+
+  test("a retry that still fails verification is a key mismatch", async () => {
+    // The server says it reissued its certificate, with the pinned key, but
+    // its TLS layer presents another key both times.
+    const pinnedKey = serverKey();
+    const advertised = [
+      selfSignedCertificate({ key: pinnedKey, names: ["localhost"] }),
+      selfSignedCertificate({ key: pinnedKey, names: ["localhost", "homebox.local"] }),
+    ];
+    let n = 0;
+    const server = start({ advertise: () => advertised[Math.min(n++, 1)]! });
+    const { base, calls } = recordingBase();
+    const device = newDevice(server.url, { pin: pinOfCertificate(advertised[0]!), fetch: base });
+    const error = await failure(device.createVault());
+    expect(error.code).toBe("pin_mismatch");
+    expect(error.message).toBe(PIN_MISMATCH(server.url));
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/v1/certificate", "/v1/vaults", "/v1/certificate", "/v1/vaults"]);
+    for (const call of calls.filter((c) => !c.url.endsWith("/v1/certificate"))) expect(call.tls?.ca).toBeDefined();
+    expect(server.paths).not.toContain("/v1/vaults");
+  });
+
+  test("a pinned server must use https", () => {
+    const pin = pinOfCertificate(selfSignedCertificate({ key: serverKey(), names: ["localhost"] }));
+    for (const make of [
+      () => pinnedFetch("http://127.0.0.1:8787", pin),
+      () => newDevice("http://127.0.0.1:8787", { pin }),
+      () => pairingClient("http://127.0.0.1:8787", undefined, pin),
+    ]) {
+      let thrown: unknown;
+      try {
+        make();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(SyncHttpError);
+      expect((thrown as SyncHttpError).code).toBe("bad_request");
+      expect((thrown as SyncHttpError).message).toBe(PIN_NEEDS_HTTPS);
+    }
   });
 
   test("the pairing client checks the pin too", async () => {
@@ -207,8 +246,10 @@ describe("a pinned client", () => {
         console.log(error.code);
       }`;
     const child = Bun.spawn([process.execPath, "-e", script, server.url, server.pin.toString("base64url")], { env, stdout: "pipe", stderr: "pipe" });
-    const [out] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    cleanups.push(() => child.kill());
+    const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
 
+    if (out.trim() === "") throw new Error(`the client printed nothing; its stderr:\n${err}`);
     expect(out.trim()).toBe("unreachable");
     expect(seen[0]).toStartWith(`CONNECT 127.0.0.1:${server.port} `);
     expect(server.paths).toEqual([]);
@@ -220,10 +261,10 @@ describe("an unpinned client", () => {
     const server = start();
     const inits: unknown[] = [];
     // Stands in for the default fetch; a pinned client would call it with an init carrying `tls`.
-    const recording = ((request: Request, init?: unknown) => {
+    const recording: Fetch = (request, init) => {
       inits.push(init);
       return server.app.fetch(request, "127.0.0.1");
-    }) as Fetch;
+    };
     const device = newDevice(server.url, { fetch: recording });
     await device.createVault();
     await device.client.devices();
