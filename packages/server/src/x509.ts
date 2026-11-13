@@ -142,12 +142,18 @@ export function selfSignedCertificate(o: { key: KeyObject; names: string[]; now?
   return issueCertificate({ subjectSpki: spkiOf(o.key), issuerKey: o.key, names: o.names, now: o.now });
 }
 
-/** A PKCS#10 request for `domain`, as its CN and its one dNSName. */
+/** RFC 5280's upper bound on a common name. */
+const MAX_COMMON_NAME = 64;
+
+/**
+ * A PKCS#10 request for `domain`, as its one dNSName and, when it fits in 64
+ * characters, its CN. A CA refuses a longer CN, and the SAN names it either way.
+ */
 export function certificateRequest(o: { key: KeyObject; domain: string }): Buffer {
   const extensions = sequence(subjectAltName([o.domain]));
   const info = sequence(
     integer(Buffer.from([0])),
-    name(o.domain),
+    o.domain.length > MAX_COMMON_NAME ? sequence() : name(o.domain),
     spkiOf(o.key),
     tlv(0xa0, sequence(oid(OID.extensionRequest), set(extensions))), // [0] IMPLICIT SET OF Attribute
   );

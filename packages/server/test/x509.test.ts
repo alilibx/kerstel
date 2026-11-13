@@ -175,6 +175,24 @@ describe("certificate request", () => {
     expect(`${text.stdout}`).toContain("CN=box.example.com");
     expect(`${text.stdout}`).toContain("DNS:box.example.com");
   });
+
+  test("a domain over 64 characters is named only in the SAN", () => {
+    // RFC 5280 caps a CN at 64 characters, and Let's Encrypt refuses a CSR with a longer one.
+    const commonNameOid = Buffer.from([0x06, 0x03, 0x55, 0x04, 0x03]);
+    const at64 = `${"a".repeat(52)}.example.com`;
+    const over64 = `${"a".repeat(53)}.example.com`;
+    expect(at64.length).toBe(64);
+    expect(certificateRequest({ key: freshKey(), domain: at64 }).includes(commonNameOid)).toBe(true);
+    const der = certificateRequest({ key: freshKey(), domain: over64 });
+    expect(der.includes(commonNameOid)).toBe(false);
+    expect(der.includes(Buffer.from(over64, "ascii"))).toBe(true);
+    const openssl = Bun.which("openssl");
+    if (!openssl) return;
+    expect(Bun.spawnSync([openssl, "req", "-verify", "-noout", "-inform", "DER"], { stdin: der }).exitCode).toBe(0);
+    const text = `${Bun.spawnSync([openssl, "req", "-noout", "-text", "-inform", "DER"], { stdin: der }).stdout}`;
+    expect(text).not.toContain("CN=");
+    expect(text).toContain(`DNS:${over64}`);
+  });
 });
 
 describe("PEM", () => {
