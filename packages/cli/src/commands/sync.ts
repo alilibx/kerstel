@@ -1002,6 +1002,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         return 1;
       }
     }
+    console.log(`Joining the vault on ${server}.`);
     console.log(`This device: ${bold(me.name)}, key fingerprint ${fingerprint(signPub)}`);
     console.log(dim("Confirm it on the other device, and check that it shows the same fingerprint. Waiting…"));
 

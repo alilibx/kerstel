@@ -51,6 +51,19 @@ describe("join value", () => {
     expect(parseJoinValue("KS-7Q2M")).toBe("malformed");
   });
 
+  test("a control character in a URL is malformed", () => {
+    for (const url of ["https://sync.example.com\x1b[2J", "https://sync.example.com\t"]) {
+      expect(parseJoinValue(encodeJoinValue({ urls: [url], pin: null, secret }))).toBe("malformed");
+    }
+  });
+
+  test("a stray character or a space inside one word is malformed", () => {
+    const text = value();
+    const mid = Math.floor(text.length / 2);
+    expect(parseJoinValue(text.slice(0, mid) + "!" + text.slice(mid + 1))).toBe("malformed");
+    expect(parseJoinValue(text.slice(0, mid) + " " + text.slice(mid))).toBe("malformed");
+  });
+
   test("an unknown flag is malformed", () => {
     const head = Buffer.concat([Buffer.from([0x02]), secret, Buffer.from("https://x.example")]);
     const sum = createHash("sha256").update(head).digest().subarray(0, 4);

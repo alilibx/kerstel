@@ -858,7 +858,7 @@ describe("pairing, joining and removing devices", () => {
     const a = await syncedDevice(s, { DB: "db-1" });
     const b = device();
     let joinPrompter: ScriptedPrompter | undefined;
-    const { added, joined } = await pairUp(a, b, s, {
+    const { added, joined, out } = await pairUp(a, b, s, {
       joinWith: (value) => {
         joinPrompter = new ScriptedPrompter([`kerstel sync join ${value}`]);
         return { args: ["join"], prompter: joinPrompter, interactive: true };
@@ -866,7 +866,26 @@ describe("pairing, joining and removing devices", () => {
     });
     expect([added, joined]).toEqual([0, 0]);
     expect(joinPrompter!.asked).toEqual(["Paste the line from sync add-device"]);
+    const joining = out.indexOf("Joining the vault on http://127.0.0.1:8787.");
+    expect(joining).toBeGreaterThanOrEqual(0);
+    expect(joining).toBeLessThan(out.indexOf("This device:"));
     expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("cancelling the join prompt returns 130 and leaves sync off", async () => {
+    const { CancelledError } = await import("../src/init/prompts");
+    const s = server();
+    const b = device();
+    const prompter = {
+      async text(): Promise<string> {
+        throw new CancelledError();
+      },
+    } as unknown as Prompter;
+    const { result } = await quiet(() =>
+      syncCommand(["join"], { fetch: s.fetch, context: b.context, interactive: true, prompter, now: tick(s) }),
+    );
+    expect(result).toBe(130);
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
   });
 
   test("join still takes a URL and a code", async () => {

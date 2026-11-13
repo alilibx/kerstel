@@ -30,7 +30,7 @@
 
 ## Review Focus
 
-1. **A value the terminal wrapped across two lines,** pasted at the prompt with a line break in the middle, or with the whole `ks sync join` line around it. It still parses. Test: Task 1, `pasted text with the command and a line break parses`.
+1. **A value split by spaces** (a terminal wrap pasted as an argument, or the whole `ks sync join` line pasted at the prompt) still parses. A value cut at a hard line break at the hidden prompt arrives cut, because the prompt submits at the first line break; it is refused as incomplete and never sent. Test: Task 1, `pasted text with the command and a line break parses`.
 2. **A value cut short by a bad copy.** It is refused as incomplete, never read as a shorter URL or secret, and no request is made. Tests: Task 1, `a truncated value is malformed`; Task 3, `join refuses a bad value before any request`.
 3. **A value from a newer Kerstel** (`ks2-…`). It says to update this device, not that the value is wrong. Test: Task 1, `a newer version is reported as newer`.
 4. **A value whose URL is not one Kerstel sends a vault to** (`http://` to another machine, or a URL with a password in it). It is refused before any request. Test: Task 3, `join refuses a bad value before any request`.

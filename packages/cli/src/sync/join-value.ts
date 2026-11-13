@@ -72,7 +72,7 @@ export function parseJoinValue(text: string): JoinValue | "malformed" | "newer" 
   }
   if (head.length <= at) return "malformed";
   const urls = head.subarray(at).toString("utf8").split("\n");
-  if (urls.length > MAX_URLS || urls.some((u) => u.length === 0)) return "malformed";
+  if (urls.length > MAX_URLS || urls.some((u) => u.length === 0 || /[\u0000-\u001f\u007f]/.test(u))) return "malformed";
   return { urls, pin, secret };
 }
 

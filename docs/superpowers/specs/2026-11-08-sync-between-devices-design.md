@@ -153,7 +153,6 @@ $ ks sync add-device
 On the new device, run:
 
   ks sync join ks1-AB3dEfGh…
-
   If the new device runs an older Kerstel, update it first with: ks update
 
 Copied to the clipboard. It works once and expires in 10 minutes. Waiting for the new device…
@@ -161,11 +160,11 @@ Copied to the clipboard. It works once and expires in 10 minutes. Waiting for th
 
 The line is one value. It is copied to the clipboard when `pbcopy`, `wl-copy`, `xclip` or `xsel` is available; the tool gets it on stdin, never on its command line. The value is `ks1-` plus the unpadded base64url of a record: one flag byte (bit 0 set when a certificate pin follows), the 15-byte pairing secret, the 32-byte SHA-256 of the server certificate's SPKI only when the flag is set, the server URLs as UTF-8 joined with `\n` (1 to 4, in order of preference), and the first 4 bytes of the SHA-256 of everything before them as a checksum. It has no spaces and no shell-special characters, so a terminal can wrap it and a shell can take it unquoted. `join` tries the URLs in order and moves on only when one can't be reached. In 0.4.0 nothing sets a pin, and `join` refuses a value that carries one until #112 checks it, so a pin is never accepted and then ignored. A value from a newer Kerstel (a prefix other than `ks1-`) is refused with a hint to update, and a value that is cut short or fails its checksum is refused too.
 
-`ks sync join` takes the value as an argument. With no arguments in a terminal, it asks for it at a hidden prompt, so it stays out of shell history. The old form `ks sync join <url> <code>` still works, so a device on 0.4.0 can pair from one on 0.3.
+`ks sync join` takes the value as an argument. With no arguments in a terminal, it asks for it at a hidden prompt, so it stays out of shell history. Once an address answers, `join` prints `Joining the vault on <url>.`, so the person sees which server this device joins before the confirmation. A server URL in the value that contains a control character makes the value malformed. The old form `ks sync join <url> <code>` still works, so a device on 0.4.0 can pair from one on 0.3.
 
 `add-device` first opens a pairing slot on the server under a fresh pairing ID. The slot lasts 10 minutes, and a vault can have at most three open.
 
-On the new device, `ks sync join` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The secret is 120 bits, carried in the join value (or, in the older form, as a code of 24 base32 characters), and the server never sees it. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the code needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
+On the new device, `ks sync join` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The secret is 120 bits, carried in the join value (or, in the older form, as a code of 24 base32 characters), and the server never sees it. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the secret needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
 
 Back on the first device:
 
