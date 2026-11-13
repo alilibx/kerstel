@@ -219,6 +219,17 @@ export function applyMove(plan: MovePlan, options: ApplyOptions): ApplyResult {
 
   const problems: string[] = [];
 
+  // A value written out as plain text was revealed. Recorded only now that the
+  // vault writes and file rewrites held: a rollback above never gets here.
+  for (const m of plan.moves) {
+    if (m.to !== "plaintext" || !m.fromRef) continue;
+    try {
+      vault.record("reveal", m.fromRef);
+    } catch (error) {
+      problems.push(`Could not record that ${refId(m.fromRef)} was written as plain text: ${(error as Error).message}`);
+    }
+  }
+
   // 4. Deletions.
   const deleted: SecretRef[] = [];
   for (const d of plan.deletions) {

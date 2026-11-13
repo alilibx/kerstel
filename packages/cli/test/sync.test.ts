@@ -366,6 +366,52 @@ describe("two devices", () => {
     expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("aaaa");
   });
 
+  describe("audit rows for what a conflict shows", () => {
+    const reveals = (d: Device) => d.with((v) => v.listAudit(100).filter((r) => r.event === "reveal"));
+
+    async function conflicted(bValue: string | null = "bbbbbbb") {
+      const { s, a, b } = await pair();
+      await sync(b, s);
+      a.with((v) => v.setSecret(ref("app", "DB"), "aaaa"));
+      await sync(a, s);
+      b.with((v) => (bValue === null ? v.removeSecret(ref("app", "DB")) : v.setSecret(ref("app", "DB"), bValue)));
+      return { s, b };
+    }
+    const settle = (s: Server, b: Device, reveal: boolean) =>
+      quiet(() =>
+        syncCommand(reveal ? ["--reveal"] : [], {
+          fetch: s.fetch,
+          context: b.context,
+          interactive: true,
+          prompter: new ScriptedPrompter(["remote"]),
+          now: () => (s.clock.t += 1),
+        }),
+      );
+
+    test("settling with --reveal writes a reveal row per value printed", async () => {
+      const { s, b } = await conflicted();
+      const { out } = await settle(s, b, true);
+      expect(out).not.toContain("aaaa");
+      expect(reveals(b).map((r) => [r.scope, r.key])).toEqual([
+        ["app", "DB"],
+        ["app", "DB"],
+      ]);
+    });
+
+    test("without --reveal it writes none", async () => {
+      const { s, b } = await conflicted();
+      await settle(s, b, false);
+      expect(reveals(b)).toEqual([]);
+    });
+
+    test("a deleted side prints no value and writes no reveal row for it", async () => {
+      const { s, b } = await conflicted(null);
+      await settle(s, b, true);
+      // Only the other device's value was printed.
+      expect(reveals(b)).toHaveLength(1);
+    });
+  });
+
   test("a key written while its push is in flight stays dirty, and the next push sends the newer value", async () => {
     const { s, a, b } = await pair();
     await sync(b, s);
@@ -702,6 +748,20 @@ describe("pairing, joining and removing devices", () => {
     // A code works once.
     const again = await sync(device(), s, ["join", SERVER, out.match(/KS-[0-9A-Z-]{29}/)![0]]);
     expect(again.code).toBe(1);
+  });
+
+  test("add-device, join, and remove-device each write one device row", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    expect((await pairUp(a, b, s, { bName: "laptop" })).joined).toBe(0);
+    const devices = (d: Device) => d.with((v) => v.listAudit(100).filter((r) => r.event === "device"));
+    expect(devices(a)).toHaveLength(1);
+    expect(devices(b)).toHaveLength(1);
+    expect(devices(a)[0]).toMatchObject({ scope: "", key: "" });
+    expect((await sync(a, s, ["remove-device", "laptop"])).code).toBe(0);
+    expect(devices(a)).toHaveLength(2);
+    expect(devices(b)).toHaveLength(1);
   });
 
   test("a key both vaults hold with different values is a conflict on join, never overwritten", async () => {

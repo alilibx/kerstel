@@ -99,6 +99,26 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
   ]);
 });
 
+test("moving a key to plain text writes a reveal row for it", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=ks:app\nB=ks:app\n" }, { "app/A": "value-a", "app/B": "value-b" });
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"], ["B:ks:app/B", "global"]]);
+  applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
+  const reveals = vault.listAudit(100).filter((r) => r.event === "reveal");
+  expect(reveals.map((r) => [r.scope, r.key])).toEqual([["app", "A"]]);
+});
+
+test("a move that rolls back writes no reveal row", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=ks:app\n" }, { "app/A": "value-a" });
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"]]);
+  const writeFile = () => {
+    throw new Error("read-only file system");
+  };
+  expect(() => applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app", writeFile })).toThrow(
+    MoveApplyError,
+  );
+  expect(vault.listAudit(100).filter((r) => r.event === "reveal")).toEqual([]);
+});
+
 test("a plain value that loses to a kept destination is saved in the backup's vault section", () => {
   const { root, vault, dataKey } = setup({ ".env": "K=plain-incoming\n" }, { "global/K": "existing" });
   const plan = makePlan(root, vault, [["K:plaintext", "global"]], { "ks:global/K": "keep" });

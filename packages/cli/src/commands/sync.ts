@@ -462,6 +462,10 @@ async function settleConflicts(
       "local",
     );
     choices.push({ ref, keep: answer as "local" | "remote" });
+    // --reveal printed values in the question above: one row per value shown.
+    if (options.reveal) {
+      for (const value of [local, remote]) if (value !== null) sync.vault.record("reveal", ref);
+    }
   }
   settle(sync, choices, report);
   ok(`Settled ${plural(conflicts.length, "conflict")}. The value that lost is in the sync backup.`);
@@ -672,6 +676,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
         confirmation: pairingConfirmation(secret, { vaultId, deviceId: answer.deviceId, epoch, sealedKey }),
       });
       added = true;
+      ctx.vault.record("device", null);
       ok(`Added ${label}. It pulls the vault as it finishes joining.`);
       return 0;
     } catch (error) {
@@ -683,6 +688,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
             const listed = (await sync.client.devices()).devices.some((d) => d.id === answerId);
             if (listed) {
               added = true;
+              ctx.vault.record("device", null);
               ok("Added the device. It pulls the vault as it finishes joining.");
               return 0;
             }
@@ -815,6 +821,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       ctx.vault.sync.trackAll();
       setFullPull(ctx.vault, true);
     });
+    ctx.vault.record("device", null);
     ok(`Joined the vault on ${server}.`);
 
     const sync: SyncContext = { vault: ctx.vault, dataKey: ctx.dataKey, config, client };
@@ -888,6 +895,7 @@ async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<
       return 1;
     }
     recordResult(ctx.vault, null);
+    ctx.vault.record("device", null);
     if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
     ok(`Removed ${label} and replaced the sync key. Your other devices pick up the new key on their next sync.`);
     console.log(
