@@ -131,7 +131,7 @@ export async function waitForSyncLock(file: string, timeoutMs: number): Promise<
  * NODE_OPTIONS or BUN_OPTIONS (see daemonEnv), and never the caller's other
  * variables, which under `exec` can be resolved secrets.
  */
-const NETWORK_SETTINGS = [
+export const NETWORK_SETTINGS = [
   "HTTPS_PROXY",
   "https_proxy",
   "HTTP_PROXY",
