@@ -80,7 +80,7 @@ ${env}
 
 /** A systemd word: `%` is a specifier, so it doubles; a word with spaces or quotes is quoted. */
 function sdWord(s: string): string {
-  const pct = s.replace(/%/g, "%%");
+  const pct = s.replace(/%/g, "%%").replace(/\$/g, "$$$$");
   if (!/[\s"'\\]/.test(s)) return pct;
   return `"${pct.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

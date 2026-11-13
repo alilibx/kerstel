@@ -88,6 +88,7 @@ test("renders a path with spaces and XML specials", () => {
   expect(service).toContain('ExecStart="/Users/a b/K&R <x>/kerstel" sync --background --timer');
   expect(service).toContain('Environment="KERSTEL_HOME=/h/a\\"b\\\\c 100%%"');
   expect(renderSystemdUnits({ name: "n", argv: ["/p/50%/k", "x"], env: {} }).service).toContain("ExecStart=/p/50%%/k x");
+  expect(renderSystemdUnits({ name: "n", argv: ["/p/$x/k", "\${y}"], env: {} }).service).toContain("ExecStart=/p/$$x/k $${y}");
 });
 
 test.skipIf(process.platform !== "darwin")("the plist passes plutil -lint", () => {
