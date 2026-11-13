@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { uiCommand } from "../src/commands/ui";
 import type { ProjectRefs } from "../src/project-refs";
 import { initialState, rowsFor, update, type Event, type State } from "../src/tui/app";
-import { sortSecrets, type SecretRow, type UiData } from "../src/tui/data";
+import { sortSecrets, type AuditView, type SecretRow, type UiData } from "../src/tui/data";
+import { auditRows } from "../src/tui/screens/audit";
+import { ROTATE_HINT } from "../src/audit/report";
+import type { AuditRow } from "../src/vault/store";
 import { centre, columnWidths, fit, scrollTop } from "../src/tui/frame";
 import { KeyParser, type Key } from "../src/tui/keys";
 import { MIN_HEIGHT, MIN_WIDTH, render } from "../src/tui/render";
@@ -196,7 +199,7 @@ test("every frame line is the terminal's width, and the mask never shows a lengt
   const frame = render(s, plain);
   expect(frame).toHaveLength(16);
   for (const line of frame) expect(Bun.stringWidth(line)).toBe(64);
-  expect(frame[0]).toMatch(/^ 1 Secrets {3}2 References +kerstel ui$/);
+  expect(frame[0]).toMatch(/^ 1 Secrets {3}2 References {3}3 Audit +kerstel ui$/);
   expect(frame[1]).toMatch(/^ {2}Reference +Value +Updated/);
   expect(frame[2]).toMatch(/^› ks:global\/OPENAI_API_KEY +•{12} /);
   expect(frame[15]).toMatch(/^r reveal {2}a add {2}e edit {2}d delete {2}\/ filter {2}\? keys {2}q quit/);
@@ -266,6 +269,7 @@ const unused = {
   reveal: () => null,
   store: () => true,
   remove: () => false,
+  audit: () => ({ counts: { reveals: 0, appReads: 0, processes: 0, projects: 0, changes: 0 }, entries: [], more: false }),
 };
 const data: UiData = { load: () => ({ secrets, refs }), ...unused };
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -392,4 +396,109 @@ test("a reveal cancelled in the same read never decrypts, so it writes no audit 
   expect(reveals).toBe(1);
   term.send("q");
   await done;
+});
+
+// --- Audit screen -------------------------------------------------------------
+
+const auditRow = (over: Partial<AuditRow> & Pick<AuditRow, "id" | "event">): AuditRow => ({
+  ts: new Date(2026, 10, 12, 9, 30).getTime(),
+  scope: "web",
+  key: "DATABASE_URL",
+  pid: 10,
+  processName: "node",
+  chain: ["node", "zsh"],
+  project: null,
+  ...over,
+});
+
+const counts = { reveals: 3, appReads: 412, processes: 37, projects: 4, changes: 5 };
+
+function auditView(over: Partial<AuditView> = {}): AuditView {
+  return {
+    counts,
+    entries: [
+      { row: auditRow({ id: 4, event: "reveal", scope: "global", key: "STRIPE_SECRET_KEY" }), rotate: true },
+      { row: auditRow({ id: 3, event: "resolve" }), rotate: false },
+      { row: auditRow({ id: 2, event: "reveal", scope: "web", key: "GONE_KEY", chain: null }), rotate: false },
+      { row: auditRow({ id: 1, event: "device", scope: "", key: "", chain: [] }), rotate: false },
+    ],
+    more: false,
+    ...over,
+  };
+}
+
+const withAudit = (view: AuditView = auditView()): State => update(press(loaded(), char("3")), { type: "auditLoaded", view }).state;
+
+test("entering Audit loads it, with Tab or 3", () => {
+  const entered = update(loaded(), char("3"));
+  expect(entered.state.screen).toBe("audit");
+  expect(entered.state.loading).toBe(true);
+  expect(entered.effects).toEqual([{ type: "audit", action: null, limit: 200 }]);
+  expect(update(press(loaded(), named("tab")), named("tab")).effects).toEqual([{ type: "audit", action: null, limit: 200 }]);
+  const s = update(entered.state, { type: "auditLoaded", view: auditView() }).state;
+  expect(s.loading).toBe(false);
+  expect(rowsFor(s)).toHaveLength(auditRows(auditView(), null).length);
+});
+
+test("a cycles the action and reloads with 200", () => {
+  let s = withAudit(auditView({ more: true }));
+  s = press(s, char("n")); // limit 400
+  const seen: (string | null)[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    const r = update(s, char("a"));
+    s = r.state;
+    seen.push(s.auditAction);
+    expect(r.effects).toEqual([{ type: "audit", action: s.auditAction, limit: 200 }]);
+    expect(s.auditLimit).toBe(200);
+  }
+  expect(seen).toEqual(["resolve", "run", "reveal", "set", "remove", "sync", "device", null]);
+});
+
+test("n loads 200 more only while there are more", () => {
+  const none = update(withAudit(), char("n"));
+  expect(none.effects).toEqual([]);
+  const more = update(withAudit(auditView({ more: true })), char("n"));
+  expect(more.effects).toEqual([{ type: "audit", action: null, limit: 400 }]);
+  expect(more.state.auditLimit).toBe(400);
+});
+
+test("Enter on an audit row jumps to its secret; a removed secret's row does nothing", () => {
+  let s = withAudit();
+  // Rows: heading, reveal STRIPE, hint, resolve web/DATABASE_URL, reveal GONE_KEY, device.
+  s = press(s, char("j"));
+  s = press(s, named("enter"));
+  expect(s.screen).toBe("secrets");
+  expect(rowsFor(s)[s.lists.secrets.cursor]!.reference).toBe("ks:global/STRIPE_SECRET_KEY");
+  const gone = press(withAudit(), char("j"), char("j"), char("j"), char("j"));
+  expect(rowsFor(gone)[gone.lists.audit.cursor]!.reference).toBe("ks:web/GONE_KEY");
+  expect(press(gone, named("enter")).screen).toBe("audit");
+  const keyless = press(gone, char("j"));
+  expect(press(keyless, named("enter")).screen).toBe("audit");
+});
+
+test("auditRows: the summary, reveal tone, the rotate hint, unknown chains and keyless rows", () => {
+  const rows = auditRows(auditView({ more: true }), null);
+  expect(rows[0]).toEqual({
+    cells: ["Last 7 days: 3 reveals · 412 app reads by 37 processes in 4 projects · 5 changes"],
+    tone: "heading",
+  });
+  expect(rows[1]!.tone).toBe("problem");
+  expect(rows[1]!.cells.slice(1)).toEqual(["reveal", "ks:global/STRIPE_SECRET_KEY", "node ← zsh"]);
+  expect(rows[2]).toEqual({ cells: ["", "", ROTATE_HINT, ""], tone: "dim" });
+  expect(rows[3]!.tone).toBe("normal");
+  expect(rows[4]!.cells[3]).toBe("unknown");
+  expect(rows[5]!.cells.slice(1)).toEqual(["device", "—", "unknown"]);
+  expect(rows[5]!.reference).toBeUndefined();
+  expect(rows[6]).toEqual({ cells: ["n for 200 more"], tone: "dim" });
+  expect(auditRows(auditView(), "reveal")[0]!.cells[0]).toEndWith("5 changes (showing reveal)");
+});
+
+test("the Audit screen shows its tab and a keys bar that fits 60 columns", () => {
+  const s = update(initialState(60, 16), { type: "loaded", secrets, refs }).state;
+  const audit = update(update(s, char("3")).state, { type: "auditLoaded", view: auditView() }).state;
+  const frame = render(audit, plain);
+  expect(frame[0]).toContain("3 Audit");
+  expect(frame.every((l) => Bun.stringWidth(l) === 60)).toBe(true);
+  expect(frame[frame.length - 1]).toContain("Enter to secret  a action  n more  / filter  ? keys  q quit");
+  expect(frame[2]).toContain("Last 7 days");
 });

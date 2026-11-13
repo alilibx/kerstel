@@ -6,6 +6,7 @@ import type { ProjectRefs } from "../src/project-refs";
 import { MAX_VALUE_CHARS } from "../src/secret-value";
 import { initialState, rowsFor, update, type Effect, type Event, type State } from "../src/tui/app";
 import { sortSecrets, vaultData, type SecretRow } from "../src/tui/data";
+import { auditRows } from "../src/tui/screens/audit";
 import { KeyParser, type Key } from "../src/tui/keys";
 import { render } from "../src/tui/render";
 import { frameText, runEffect } from "../src/tui/run";
@@ -281,4 +282,36 @@ test("at 60 columns the delete question keeps the whole name and shows the defau
   expect(frame[13]).toContain("Referenced by no project file that could be read.");
   expect(frame[14]).toContain("Delete ks:global/OPENAI_API_KEY?");
   expect(frame[15]).toContain("n no (Enter)");
+});
+
+test("the data adapter's audit view: counts, a page of 200 with more, and no value in any row", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-ui-audit-"));
+  dirs.push(dir);
+  const vault = openVault(generateDataKey(), join(dir, "vault.db"));
+  try {
+    const data = vaultData(vault);
+    const ref = { scope: "global", key: "OPENAI_API_KEY" };
+    const value = "sk-live-audit-value-123456789";
+    vault.setSecret(ref, value);
+    for (let i = 0; i < 200; i += 1) vault.record("resolve", ref);
+    const view = runEffect({ type: "audit", action: null, limit: 200 }, data);
+    if (view.type !== "auditLoaded") throw new Error("expected auditLoaded");
+    // 201 rows: the set and 200 resolves.
+    expect(view.view.entries).toHaveLength(200);
+    expect(view.view.more).toBe(true);
+    expect(view.view.counts).toMatchObject({ appReads: 200, changes: 1 });
+    expect(view.view.entries[0]!.row.event).toBe("resolve");
+
+    data.reveal(ref);
+    const all = data.audit({ action: null, limit: 500 });
+    expect(all.more).toBe(false);
+    expect(all.entries).toHaveLength(202);
+    expect(all.entries[0]!.row.event).toBe("reveal");
+    const onlySet = data.audit({ action: "set", limit: 200 });
+    expect(onlySet.entries.map((e) => e.row.event)).toEqual(["set"]);
+    expect(JSON.stringify(all)).not.toContain(value);
+    expect(JSON.stringify(auditRows(all, null))).not.toContain(value);
+  } finally {
+    vault.close();
+  }
 });

@@ -13,7 +13,7 @@ import { inverse, renderList } from "./widgets/list";
 export const MIN_WIDTH = 60;
 export const MIN_HEIGHT = 16;
 
-const TITLES: Record<ScreenName, string> = { secrets: "Secrets", references: "References" };
+const TITLES: Record<ScreenName, string> = { secrets: "Secrets", references: "References", audit: "Audit" };
 
 const KEYS: Record<ScreenName, [string, string][]> = {
   // Fits the 60-column minimum; Tab is listed under ?.
@@ -35,6 +35,16 @@ const KEYS: Record<ScreenName, [string, string][]> = {
     ["?", "keys"],
     ["q", "quit"],
   ],
+  // Fits the 60-column minimum; Tab is listed under ?.
+  // "go to secret" would be 62 columns; "to secret" keeps the bar at 59.
+  audit: [
+    ["Enter", "to secret"],
+    ["a", "action"],
+    ["n", "more"],
+    ["/", "filter"],
+    ["?", "keys"],
+    ["q", "quit"],
+  ],
 };
 
 const HELP: Record<ScreenName, [string, string][]> = {
@@ -49,10 +59,15 @@ const HELP: Record<ScreenName, [string, string][]> = {
     ["b", "Group by key instead of by project"],
     ["R", "Scan the project files again"],
   ],
+  audit: [
+    ["a", "Show only one action, or all of them"],
+    ["n", "Load 200 more rows"],
+    ["Enter", "Go to the secret on this row, on the Secrets screen"],
+  ],
 };
 
 const EVERYWHERE: [string, string][] = [
-  ["Tab, Shift-Tab, 1 2", "Switch screen"],
+  ["Tab, Shift-Tab, 1 2 3", "Switch screen"],
   ["j k, ↑ ↓", "Move"],
   ["PageUp PageDown, g G", "Move a page, or to the start or end"],
   ["/", "Filter the list; Esc clears"],

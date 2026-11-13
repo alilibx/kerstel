@@ -1,6 +1,7 @@
 import { scanProjectRefs, type ProjectRefs } from "../project-refs";
 import { formatReference, type SecretRef } from "../reference";
-import type { Vault } from "../vault/store";
+import { shouldRotate } from "../audit/report";
+import type { AuditAction, AuditCounts, AuditRow, Vault } from "../vault/store";
 
 /**
  * What the UI reads from and writes to the vault. Terminal UI spec §4.2: the
@@ -21,8 +22,19 @@ export interface Loaded {
   refs: ProjectRefs;
 }
 
+export interface AuditView {
+  counts: AuditCounts;
+  entries: { row: AuditRow; rotate: boolean }[];
+  /** Another page exists beyond the rows loaded. */
+  more: boolean;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export interface UiData {
   load(): Loaded;
+  /** Counts over the last 7 days; entries newest first, every retained row; `more` when another page exists. */
+  audit(query: { action: AuditAction | null; limit: number }): AuditView;
   /** The value, after writing the `reveal` audit row; null when the secret is gone. */
   reveal(ref: SecretRef): string | null;
   /**
@@ -60,6 +72,16 @@ export function vaultData(vault: Vault): UiData {
       );
       const refs = scanProjectRefs(vault.listProjects(), new Set(summaries.map((s) => `${s.scope}/${s.key}`)));
       return { secrets, refs };
+    },
+    audit({ action, limit }) {
+      const counts = vault.auditCounts({ since: Date.now() - 7 * DAY_MS });
+      // One row more than asked for says whether another page exists.
+      const rows = vault.listAudit({ limit: limit + 1, events: action ? [action] : undefined });
+      return {
+        counts,
+        entries: rows.slice(0, limit).map((row) => ({ row, rotate: shouldRotate(vault, row) })),
+        more: rows.length > limit,
+      };
     },
     reveal(ref) {
       if (vault.getSecret(ref) === null) return null;

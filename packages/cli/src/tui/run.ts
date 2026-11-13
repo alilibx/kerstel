@@ -25,6 +25,8 @@ export function runEffect(effect: Effect, data: UiData): Event {
   switch (effect.type) {
     case "reload":
       return { type: "loaded", ...data.load() };
+    case "audit":
+      return { type: "auditLoaded", view: data.audit({ action: effect.action, limit: effect.limit }) };
     case "reveal":
       return { type: "revealed", id: effect.id, reference: reference(effect.ref), value: data.reveal(effect.ref) };
     case "store":
