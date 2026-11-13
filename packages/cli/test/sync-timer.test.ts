@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   renderLaunchdPlist,
@@ -26,6 +26,14 @@ test("timerEnv keeps only the allowlist", () => {
   expect(Object.keys(env).sort()).toEqual(["HTTPS_PROXY", "KERSTEL_DAEMON_SCRUBBED", "KERSTEL_HOME"]);
   expect(env.KERSTEL_HOME).toBe(resolve("rel/home"));
   expect(env.KERSTEL_DAEMON_SCRUBBED).toBe("1");
+});
+
+test("timerEnv always pins the home, so a manager's KERSTEL_HOME can't pick another vault", () => {
+  // Unset in the shell: the default home, written out, not left to the manager.
+  expect(timerEnv({ PATH: "/usr/bin" })).toEqual({ KERSTEL_HOME: join(homedir(), ".kerstel"), KERSTEL_DAEMON_SCRUBBED: "1" });
+  expect(timerEnv({ KERSTEL_HOME: "" }).KERSTEL_HOME).toBe(join(homedir(), ".kerstel"));
+  // The home the timer is for wins over the shell's.
+  expect(timerEnv({ KERSTEL_HOME: "/elsewhere" }, "/h/.kerstel").KERSTEL_HOME).toBe("/h/.kerstel");
 });
 
 test("timerEnv passes the keychain settings when set", () => {
@@ -73,8 +81,71 @@ test("the systemd service runs from /, discards output, and unsets the runtime o
   expect(lines).toContain("WorkingDirectory=/");
   expect(lines).toContain("StandardOutput=null");
   expect(lines).toContain("StandardError=null");
-  // Variables imported into the user manager must not reach a process marked scrubbed.
-  expect(lines).toContain("UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS");
+  // Variables imported into the user manager must not reach a process marked scrubbed,
+  // and a keychain setting this shell left unset must not come from the manager either.
+  expect(lines).toContain("UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS KERSTEL_KEYCHAIN_BACKEND KERSTEL_KEYCHAIN_SERVICE");
+});
+
+test("the systemd service unsets only the keychain settings the shell did not set", () => {
+  const { service } = renderSystemdUnits({
+    name: "kerstel-sync",
+    argv,
+    env: { KERSTEL_HOME: "/h", KERSTEL_KEYCHAIN_BACKEND: "file" },
+  });
+  const lines = service.split("\n");
+  expect(lines).toContain("UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS KERSTEL_KEYCHAIN_SERVICE");
+  expect(lines).toContain('Environment="KERSTEL_KEYCHAIN_BACKEND=file"');
+  // Applied after Environment=, so nothing the unit sets may be on it.
+  expect(lines.filter((l) => l.startsWith("UnsetEnvironment=")).join(" ")).not.toContain("KERSTEL_KEYCHAIN_BACKEND");
+});
+
+/** The strings in a plist's ProgramArguments array. */
+function programArguments(plist: string): string[] {
+  const block = plist.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/)![1]!;
+  return [...block.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]!);
+}
+
+test("the plist clears the runtime options and unset keychain settings with env -u", () => {
+  // EnvironmentVariables only adds: `launchctl setenv BUN_OPTIONS` would otherwise reach the vault.
+  const plist = renderLaunchdPlist({ label: "dev.kerstel.sync", argv, env: { KERSTEL_HOME: "/h" } });
+  expect(programArguments(plist)).toEqual([
+    "/usr/bin/env",
+    "-u",
+    "BUN_OPTIONS",
+    "-u",
+    "NODE_OPTIONS",
+    "-u",
+    "KERSTEL_KEYCHAIN_BACKEND",
+    "-u",
+    "KERSTEL_KEYCHAIN_SERVICE",
+    ...argv,
+  ]);
+  const set = renderLaunchdPlist({ label: "l", argv, env: { KERSTEL_HOME: "/h", KERSTEL_KEYCHAIN_SERVICE: "svc" } });
+  expect(programArguments(set)).toEqual([
+    "/usr/bin/env",
+    "-u",
+    "BUN_OPTIONS",
+    "-u",
+    "NODE_OPTIONS",
+    "-u",
+    "KERSTEL_KEYCHAIN_BACKEND",
+    ...argv,
+  ]);
+  expect(set).toContain("<key>KERSTEL_KEYCHAIN_SERVICE</key>");
+});
+
+test.skipIf(process.platform !== "darwin")("the env -u prefix clears what the session set", () => {
+  const plist = renderLaunchdPlist({ label: "l", argv: ["/usr/bin/printenv"], env: { KERSTEL_HOME: "/h" } });
+  const r = Bun.spawnSync(programArguments(plist), {
+    env: { PATH: "/usr/bin:/bin", BUN_OPTIONS: "--preload /x.js", NODE_OPTIONS: "--inspect", KERSTEL_KEYCHAIN_BACKEND: "file", KEPT: "1" },
+    stdout: "pipe",
+  });
+  const out = r.stdout.toString();
+  expect(r.exitCode).toBe(0);
+  expect(out).toContain("KEPT=1");
+  expect(out).not.toContain("BUN_OPTIONS");
+  expect(out).not.toContain("NODE_OPTIONS");
+  expect(out).not.toContain("KERSTEL_KEYCHAIN_BACKEND");
 });
 
 test("systemd units have the schedule", () => {
@@ -290,6 +361,38 @@ describe("syncTimer", () => {
   test("another platform is unavailable", () => {
     const { deps } = fixture({ platform: "win32" });
     expect(syncTimer(deps).status()).toEqual({ state: "unavailable", reason: "not supported on win32" });
+  });
+
+  test("the units always carry the timer's home, even when the shell sets none", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const { userHome, deps } = fixture({ platform, env: {} });
+      expect(syncTimer(deps).ensure({ rewrite: false })).toBe("installed");
+      const text =
+        platform === "darwin"
+          ? readFileSync(join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist"), "utf8")
+          : readFileSync(join(userHome, ".config", "systemd", "user", "kerstel-sync.service"), "utf8");
+      const home = join(userHome, ".kerstel");
+      expect(text).toContain(platform === "darwin" ? `<string>${home}</string>` : `Environment="KERSTEL_HOME=${home}"`);
+    }
+  });
+
+  test("a shell that names the default home and one that leaves it unset agree the timer is current", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const { deps } = fixture({ platform });
+      const home = deps.home!;
+      expect(syncTimer({ ...deps, env: { KERSTEL_HOME: home } }).ensure({ rewrite: false })).toBe("installed");
+      for (const env of [{}, { KERSTEL_HOME: "" }, { KERSTEL_HOME: `${home}/` }, { KERSTEL_HOME: home }]) {
+        const t = syncTimer({ ...deps, env });
+        expect({ platform, env, status: t.status() }).toEqual({
+          platform,
+          env,
+          status: { state: "installed", kind: platform === "darwin" ? "launchd" : "systemd", current: true },
+        });
+        expect(t.ensure({ rewrite: true })).toBe("unchanged");
+      }
+      // A keychain setting still changes the unit, so it is not current.
+      expect(syncTimer({ ...deps, env: { KERSTEL_KEYCHAIN_BACKEND: "file" } }).status()).toMatchObject({ current: false });
+    }
   });
 
   test("status is not current when argv differs", () => {

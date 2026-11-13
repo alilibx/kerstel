@@ -10,7 +10,8 @@ import { renderDiff } from "../init/wiring";
 import { SyncHttpError, type Fetch } from "../sync/http";
 import { syncTimer, type SyncTimer } from "../sync/timer";
 import { loadSync, type SyncConfig } from "../sync/state";
-import { clientFor } from "./sync";
+import { syncLockPath, waitForSyncLock } from "../sync/background";
+import { clientFor, LOCK_WAIT_MS } from "./sync";
 import { fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
 import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type UninstallPlan } from "../uninstall/plan";
@@ -283,8 +284,8 @@ export async function uninstallCommand(
     compiled: isCompiledBinary(),
     invokedAs: process.argv0,
   },
-  /** For tests: how the sync server is reached. */
-  syncDeps: { fetch?: Fetch; now?: () => number; timer?: SyncTimer } = {},
+  /** For tests: how the sync server is reached, the timer, and how long to wait for the sync lock. */
+  syncDeps: { fetch?: Fetch; now?: () => number; timer?: SyncTimer; lockWaitMs?: number } = {},
 ): Promise<number> {
   const options = parseUninstallArgs(args);
   if ("error" in options) {
@@ -458,21 +459,40 @@ export async function uninstallCommand(
   }
 
   if (synced) await leaveSyncedVault(synced, deleteRemote, syncDeps);
-  try {
-    timer.remove();
-  } catch {
-    // A pull timer that will not go must not keep Kerstel installed.
-  }
-
-  // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
-  // a leftover key with no vault is harmless, but a keyless vault would block
-  // every re-run if the key delete happened first and this one failed after.
-  if (await stopDaemonIfRunning({ settle: true })) ok("Stopped the Kerstel daemon.");
   const home = kerstelHome();
-  // Retried: a process that still had a file open in the home (a daemon
-  // stopped by hand a moment ago, an editor) can make one pass fail with
-  // ENOTEMPTY or EBUSY. Checked: `force` would otherwise hide that.
-  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  // A background sync installs a missing timer only under the sync lock, and
+  // only while the vault is there. Held from the timer's removal until the
+  // home is gone, so no sync finishing meanwhile brings the timer back. A sync
+  // that keeps it past the wait does not keep Kerstel installed.
+  const lock = syncLockPath(join(home, "vault.db"));
+  const held = existsSync(home) ? await waitForSyncLock(lock, syncDeps.lockWaitMs ?? LOCK_WAIT_MS) : null;
+  const releaseLock = () => {
+    try {
+      held?.();
+    } catch {
+      // Its file went with the home, so the commit fails; the close after it still frees the lock.
+    }
+  };
+  try {
+    try {
+      timer.remove();
+    } catch {
+      // A pull timer that will not go must not keep Kerstel installed.
+    }
+
+    // Phase 2: Kerstel itself. ~/.kerstel goes before the credential-store key:
+    // a leftover key with no vault is harmless, but a keyless vault would block
+    // every re-run if the key delete happened first and this one failed after.
+    if (await stopDaemonIfRunning({ settle: true })) ok("Stopped the Kerstel daemon.");
+    // Windows can't delete a file that is open. It has no pull timer to guard.
+    if (process.platform === "win32") releaseLock();
+    // Retried: a process that still had a file open in the home (a daemon
+    // stopped by hand a moment ago, an editor) can make one pass fail with
+    // ENOTEMPTY or EBUSY. Checked: `force` would otherwise hide that.
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } finally {
+    releaseLock();
+  }
   if (existsSync(home)) {
     fail(`Could not delete ${home}: something still has files open in it. Close it, then run uninstall again.`);
     return 1;

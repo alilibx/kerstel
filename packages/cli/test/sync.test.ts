@@ -1622,6 +1622,40 @@ describe("the pull timer", () => {
     }
   });
 
+  test("a background sync that finds the lock taken after its sync leaves scheduling to the next run", async () => {
+    // `sync off` or `uninstall` may hold the lock to remove the timer: scheduling
+    // outside it could bring the timer back.
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    const fake = fakeTimer({ ensure: "installed" });
+    let other: (() => void) | null = null;
+    const context = async () => {
+      const vault = a.open();
+      const deleteMeta = vault.deleteMeta.bind(vault);
+      vault.deleteMeta = (key: string) => {
+        deleteMeta(key);
+        // The sync's last write: once it releases the lock, someone else takes it.
+        if (key === SYNC_META.lastError) queueMicrotask(() => (other = tryLockSync(syncLockPath(vault.file))));
+      };
+      return { vault, dataKey: a.key } as unknown as CliContext;
+    };
+    try {
+      const { result, out } = await quiet(() =>
+        syncCommand(["--background"], { fetch: s.fetch, context, interactive: false, now: tick(s), timer: fake.timer }),
+      );
+      expect(other).not.toBeNull();
+      expect({ result, out, ensured: fake.calls.ensure }).toEqual({ result: 0, out: "", ensured: [] });
+      expect(takeSyncNotice(a.home)).toBeNull();
+    } finally {
+      (other as (() => void) | null)?.();
+    }
+    // The lock is free again: the next run schedules.
+    expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
+    expect(fake.calls.ensure).toEqual([{ rewrite: false }]);
+  });
+
   test("a failed background sync still schedules pulls, and still fails", async () => {
     // A 0.3.0 device whose server is down for a moment must still get the timer.
     const s = server();
@@ -1716,13 +1750,24 @@ describe("the pull timer", () => {
     expect((await run(a, s, ["--background", "--timer", "--nope"], fakeTimer().timer)).result).toBe(2);
   });
 
-  test("sync off removes the timer", async () => {
+  test("sync off removes the timer, holding the sync lock", async () => {
     const s = server();
     const a = device();
     await setUp(a, s);
     const fake = fakeTimer();
-    expect((await run(a, s, ["off", "--delete-vault"], fake.timer)).result).toBe(0);
+    const lockFree: boolean[] = [];
+    const timer: SyncTimer = {
+      ...fake.timer,
+      remove: () => {
+        const release = tryLockSync(syncLockPath(join(a.home, "vault.db")));
+        lockFree.push(release !== null);
+        release?.();
+        return fake.timer.remove();
+      },
+    };
+    expect((await run(a, s, ["off", "--delete-vault"], timer)).result).toBe(0);
     expect(fake.calls.remove).toBe(1);
+    expect(lockFree).toEqual([false]);
   });
 
   test("sync off on a device no longer in the vault removes the timer", async () => {

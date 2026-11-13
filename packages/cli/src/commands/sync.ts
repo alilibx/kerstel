@@ -35,7 +35,7 @@ import {
   type SyncContext,
   type SyncReport,
 } from "../sync/engine";
-import { leaveSyncNotice, syncLockPath, waitForSyncLock } from "../sync/background";
+import { leaveSyncNotice, syncLockPath, tryLockSync, waitForSyncLock } from "../sync/background";
 import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
 import {
   forgetSync,
@@ -152,8 +152,8 @@ async function waitFor<T>(check: () => Promise<T | null>, everyMs: number, deps:
   return null;
 }
 
-/** How long a sync you started waits for a background one to finish. */
-const LOCK_WAIT_MS = 30_000;
+/** How long a sync you started, or `uninstall`, waits for a background one to finish. */
+export const LOCK_WAIT_MS = 30_000;
 /** How long a background sync waits for the one before it, which may be a pairing that takes minutes. */
 const BACKGROUND_LOCK_WAIT_MS = 2 * 60_000;
 
@@ -397,8 +397,8 @@ function refreshTimer(vault: Vault, deps: SyncDeps): void {
 
 /**
  * Whether this vault still syncs. A background sync asks after it released the
- * lock: `uninstall` or `sync off` may have removed the vault or turned sync off
- * meanwhile, and installing the timer then would bring it back.
+ * lock and took it again: `uninstall` or `sync off` may have removed the vault
+ * or turned sync off meanwhile, and installing the timer then would bring it back.
  */
 function stillSynced(vault: Vault): boolean {
   try {
@@ -408,8 +408,23 @@ function stillSynced(vault: Vault): boolean {
   }
 }
 
-/** After a background sync: install a missing timer, and leave a line for the next command. Never throws. */
+/**
+ * After a background sync: install a missing timer, and leave a line for the
+ * next command. Never throws. Under the sync lock, which `sync off` and
+ * `uninstall` hold to remove the timer, so one can't come back after they
+ * removed it. When the lock is taken, the next run schedules.
+ */
 function backgroundTimer(vault: Vault, deps: SyncDeps): void {
+  const release = tryLockSync(syncLockPath(vault.file));
+  if (!release) return;
+  try {
+    scheduleFromBackground(vault, deps);
+  } finally {
+    release();
+  }
+}
+
+function scheduleFromBackground(vault: Vault, deps: SyncDeps): void {
   const home = dirname(vault.file);
   if (!stillSynced(vault)) return;
   const result = ensureTimer(deps, false);

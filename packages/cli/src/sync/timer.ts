@@ -16,18 +16,31 @@ const KEYCHAIN_SETTINGS = ["KERSTEL_KEYCHAIN_BACKEND", "KERSTEL_KEYCHAIN_SERVICE
 /**
  * The environment a pull timer runs with. An allowlist built from scratch, so
  * nothing else (and nothing a test flag adds) can reach a unit file.
+ *
+ * KERSTEL_HOME is always written out, as `home` or else the home `base`
+ * resolves to: left out, a KERSTEL_HOME in the user manager (systemd, or
+ * `launchctl setenv`) would point the timer at another vault.
  */
-export function timerEnv(base: NodeJS.ProcessEnv): Record<string, string> {
-  const env: Record<string, string> = {};
-  if (typeof base.KERSTEL_HOME === "string" && base.KERSTEL_HOME !== "") {
-    env.KERSTEL_HOME = resolve(base.KERSTEL_HOME);
-  }
+export function timerEnv(base: NodeJS.ProcessEnv, home?: string): Record<string, string> {
+  const named = typeof base.KERSTEL_HOME === "string" && base.KERSTEL_HOME !== "";
+  const env: Record<string, string> = {
+    KERSTEL_HOME: resolve(home ?? (named ? base.KERSTEL_HOME! : join(homedir(), ".kerstel"))),
+  };
   for (const name of [...KEYCHAIN_SETTINGS, ...NETWORK_SETTINGS]) {
     const value = base[name];
     if (typeof value === "string") env[name] = value;
   }
   env[SCRUBBED_MARKER] = "1";
   return env;
+}
+
+/**
+ * What the timer's process must not inherit from the user manager: the
+ * runtime options (see daemon/env.ts), and each keychain setting this shell
+ * left unset, which the manager must not fill in.
+ */
+function unsetNames(env: Record<string, string>): string[] {
+  return ["BUN_OPTIONS", "NODE_OPTIONS", ...KEYCHAIN_SETTINGS.filter((name) => !(name in env))];
 }
 
 /** One timer per Kerstel home: the default home keeps the plain name. */
@@ -49,7 +62,10 @@ function xml(s: string): string {
 }
 
 export function renderLaunchdPlist(o: { label: string; argv: string[]; env: Record<string, string> }): string {
-  const args = o.argv.map((a) => `    <string>${xml(a)}</string>`).join("\n");
+  // EnvironmentVariables only adds to the GUI session's environment, so
+  // `launchctl setenv BUN_OPTIONS` would still reach the process. env -u clears it.
+  const argv = ["/usr/bin/env", ...unsetNames(o.env).flatMap((name) => ["-u", name]), ...o.argv];
+  const args = argv.map((a) => `    <string>${xml(a)}</string>`).join("\n");
   const env = Object.entries(o.env)
     .map(([k, v]) => `    <key>${xml(k)}</key>\n    <string>${xml(v)}</string>`)
     .join("\n");
@@ -113,8 +129,9 @@ export function renderSystemdUnits(o: {
     // or not mounted yet when the timer runs.
     "WorkingDirectory=/",
     // Imported into the user manager by a login script, these would reach a
-    // process that trusts its environment.
-    "UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS",
+    // process that trusts its environment. Applied after Environment=, so it
+    // names only what the unit does not set.
+    `UnsetEnvironment=${unsetNames(o.env).join(" ")}`,
     ...envLines,
     `ExecStart=${o.argv.map(sdWord).join(" ")}`,
     "StandardOutput=null",
@@ -223,7 +240,7 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
   const label = timerName(deps.home, deps.defaultHome, "launchd");
   const file = join(deps.userHome, "Library", "LaunchAgents", `${label}.plist`);
   const domain = `gui/${deps.uid}`;
-  const wanted = () => renderLaunchdPlist({ label, argv: deps.argv, env: timerEnv(deps.env) });
+  const wanted = () => renderLaunchdPlist({ label, argv: deps.argv, env: timerEnv(deps.env, deps.home) });
   const bootout = () => deps.run(["launchctl", "bootout", `${domain}/${label}`]);
   // Over SSH, or with nobody logged in to the desktop, there is no GUI domain
   // to bootstrap into, and none will appear for a background sync either.
@@ -303,7 +320,7 @@ export function managerConfigHome(showEnvironment: string): string | null {
 
 function systemdTimer(deps: TimerDeps): SyncTimer {
   const name = timerName(deps.home, deps.defaultHome, "systemd");
-  const wanted = () => renderSystemdUnits({ name, argv: deps.argv, env: timerEnv(deps.env) });
+  const wanted = () => renderSystemdUnits({ name, argv: deps.argv, env: timerEnv(deps.env, deps.home) });
   const ctl = (...args: string[]) => deps.run(["systemctl", "--user", ...args]);
 
   /** Whether a user manager answers, and the folder it reads units from. */

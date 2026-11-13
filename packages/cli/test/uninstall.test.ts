@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { keyBelongsToHome, parseUninstallArgs, removeLinks, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
 import { CancelledError, ScriptedPrompter, type Prompter } from "../src/init/prompts";
+import { syncLockPath, tryLockSync } from "../src/sync/background";
 import type { SyncTimer } from "../src/sync/timer";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
 import { fileBackend } from "../src/vault/keychain/file";
@@ -509,6 +510,48 @@ test("uninstall removes the timer", async () => {
   expect(timer.removed).toBe(1);
   expect(existsSync(home)).toBe(false);
   expect(output.join("\n")).toContain("Removes the scheduled sync pull.");
+});
+
+test("uninstall removes the timer holding the sync lock", async () => {
+  // A background sync schedules pulls only under the lock: removing the timer
+  // outside it could let that sync bring the timer back.
+  const { home } = await setup();
+  const lockFree: boolean[] = [];
+  const timer: SyncTimer = {
+    status: () => ({ state: "installed", kind: "launchd", current: true }),
+    ensure: () => "unchanged",
+    remove: () => {
+      const release = tryLockSync(syncLockPath(join(home, "vault.db")));
+      lockFree.push(release !== null);
+      release?.();
+      return true;
+    },
+  };
+  capture();
+  expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer })).toBe(0);
+  expect(lockFree).toEqual([false]);
+  expect(existsSync(home)).toBe(false);
+});
+
+test("uninstall removes the timer anyway when the sync lock stays taken", async () => {
+  const { home } = await setup();
+  const timer = fakeTimer(true);
+  const held = tryLockSync(syncLockPath(join(home, "vault.db")))!;
+  expect(held).not.toBeNull();
+  try {
+    capture();
+    const started = Date.now();
+    expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer, lockWaitMs: 300 })).toBe(0);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(timer.removed).toBe(1);
+    expect(existsSync(home)).toBe(false);
+  } finally {
+    try {
+      held();
+    } catch {
+      // Its file went with the home: the close after the failed commit still frees it.
+    }
+  }
 });
 
 test("a timer that throws on removal never stops the uninstall", async () => {
