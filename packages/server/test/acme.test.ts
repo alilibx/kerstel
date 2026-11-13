@@ -134,7 +134,7 @@ describe("obtainCertificate", () => {
     expect(error).toBeInstanceOf(AcmeError);
     expect((error as AcmeError).problem?.type).toBe("urn:ietf:params:acme:error:connection");
     expect(acmeAdvice(error as AcmeError, DOMAIN, 80)).toBe(
-      `Let's Encrypt could not fetch http://${DOMAIN}/.well-known/acme-challenge/ from this host. Check that port 80 is open to the internet and reaches kerstel-server.`,
+      `The ACME CA could not fetch http://${DOMAIN}/.well-known/acme-challenge/ from this host. Check that port 80 is open to the internet and reaches kerstel-server.`,
     );
     expect(challenges.size).toBe(0);
 
@@ -192,11 +192,13 @@ describe("acmeAdvice", () => {
 
   test("names the port for a connection or unauthorized problem", () => {
     expect(advice("urn:ietf:params:acme:error:unauthorized")).toContain("port 8080");
+    // --acme-directory may name another CA than Let's Encrypt.
+    expect(advice("urn:ietf:params:acme:error:unauthorized")).toStartWith("The ACME CA could not fetch");
   });
 
   test("says the CA is rate limiting", () => {
     expect(advice("urn:ietf:params:acme:error:rateLimited")).toBe(
-      "The CA is rate limiting this domain. kerstel-server tries again in an hour.",
+      "The ACME CA is rate limiting this domain. kerstel-server tries again in an hour.",
     );
   });
 

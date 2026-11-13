@@ -7,7 +7,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 ### Added
 
 - `kerstel-server` serves HTTPS itself. `--tls self` makes a certificate that your devices pin, so a server at home or on a VPS needs no domain and no proxy; it prints the pin when it starts. `--domain` gets and renews a Let's Encrypt certificate. A plain HTTP server behind your own proxy works as before. See [Sync](https://kerstel.dev/docs/sync).
-- `kerstel sync setup <url> --pin sha256/…` syncs with a server that pins its certificate. The pin travels in the join value, so other devices pair as before, and every request checks the server's key. If the key changes, nothing is sent, and `kerstel sync off` still turns sync off on that device.
+- `kerstel sync setup <url> --pin sha256/…` syncs with a server that pins its certificate. The pin travels in the join value, so other devices pair as before, and every request checks the server's key. If the key changes, nothing is sent, and `kerstel sync off` still turns sync off on that device. Without `--pin`, setup against such a server says to pass the pin.
 - Pair a device by pasting one value. `kerstel sync add-device` prints one `kerstel sync join ks1-…` line and copies it to the clipboard when it can, and `kerstel sync join` takes it as an argument or, with no arguments, at a hidden prompt. The fingerprint check is unchanged. A device on an older Kerstel can't read the value, so update it first; `kerstel sync join <url> <code>` still works for pairing from an older device. See [Sync](https://kerstel.dev/docs/sync).
 - `kerstel audit` shows what Kerstel did with your secrets on this device, without printing a value. It opens with a summary, then lists every reveal (with a hint to rotate a credential that is unchanged since you revealed it), the reads your apps made, grouped by project and process, and every change. It covers the last 7 days and 50 rows per section by default; `--since`, `--limit`, `--scope`, `--key` and `--action` narrow or widen it. Each row records the chain of programs that started the command or app, and the project checkout. The chain is names only, so a program that wants to hide can fake it. Rows stay on this device and never sync, and the daemon deletes rows older than 90 days. See the [CLI reference](https://kerstel.dev/docs/cli) and the [security model](https://kerstel.dev/security).
 - `kerstel ui` has a third screen, **Audit** (`3` or `Tab`): the same log as a list, newest first, with reveals marked. Its summary covers the last 7 days, and its rows go back through everything kept. `a` shows one action or all of them, `n` loads more rows, and `Enter` jumps to the secret.
@@ -18,6 +18,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 - `kerstel run` and `exec` start a background sync when none has started in the last minute (five minutes after a failed one), instead of when none had finished in the last five.
 - `kerstel resolve` is now recorded as a reveal, not a resolve, since a person asked to see the value.
+
+### Fixed
+
+- `kerstel sync off` turns sync off on a device whose sync settings are damaged or incomplete. Before, it failed with the same advice to run `kerstel sync off`.
 
 ## 0.3.0 (2026-11-11)
 

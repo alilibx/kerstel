@@ -9,7 +9,7 @@ The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflict
 Every [release](https://github.com/alilibx/kerstel/releases/latest) ships the server next to the CLI, with the same version: `kerstel-server-<platform>` binaries for Linux and macOS, covered by the release's `SHA256SUMS`, and an image:
 
 ```bash
-docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 ```
 
 The image is tagged with each version (`0.3.0`), each minor version (`0.3`) and `latest`.
@@ -49,7 +49,7 @@ kerstel sync setup https://203.0.113.7:8787 --pin sha256/…
 
 The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs`.
 
-**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. Ports 80 and 443 must reach the server. It renews when fewer than 30 days remain, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`.
+**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. Ports 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener, and if that fails the server exits, so something must start it again.
 
 **Files.** The key, certificate and ACME account key sit beside the database: `<db>.tls-key.pem` (mode `0600`), `<db>.tls-cert.pem` and `<db>.acme-account.pem` (mode `0600`). The key survives restarts, so the pin does too.
 

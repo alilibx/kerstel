@@ -85,7 +85,7 @@ The server keeps its key and certificate beside its database, as `<db>.tls-key.p
 With Docker, name the address and set the mode with environment variables, and publish the port:
 
 ```bash
-docker run -d -p 8787:8787 -v kerstel-server:/data \
+docker run -d --restart unless-stopped -p 8787:8787 -v kerstel-server:/data \
   -e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7 \
   ghcr.io/alilibx/kerstel-server:latest
 docker logs <container> | grep 'Certificate pin'
@@ -100,12 +100,14 @@ sudo ./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
   --domain sync.example.com --acme-email you@example.com
 ```
 
-Running with `--domain` means you agree to Let's Encrypt's terms of service. `--acme-email` is optional. If the server can't get a certificate, it says what to fix, prints `No certificate yet. Trying again in an hour.`, and retries. The ACME account key lives beside the database as `<db>.acme-account.pem`.
+Listening on 80 and 443 needs root, as `sudo` gives here, or `CAP_NET_BIND_SERVICE` on Linux.
 
-With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443:
+Running with `--domain` means you agree to the ACME CA's terms of service (Let's Encrypt by default). `--acme-email` is optional. If the server can't get a certificate, it says what to fix, prints `No certificate yet. Trying again in an hour.`, and retries. The ACME account key lives beside the database as `<db>.acme-account.pem`.
+
+With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep `--restart unless-stopped`: a renewal restarts the HTTPS listener, and if that fails, the server exits so Docker can start it again.
 
 ```bash
-docker run -d -p 80:80 -p 443:443 -v kerstel-server:/data \
+docker run -d --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \
   -e KERSTEL_SERVER_DOMAIN=sync.example.com \
   -e KERSTEL_SERVER_LISTEN=0.0.0.0:443 \
   ghcr.io/alilibx/kerstel-server:latest
@@ -131,7 +133,7 @@ tailscale serve --bg 8787
 With Docker, publish the port on the loopback address and run the same `tailscale serve` command on the host:
 
 ```bash
-docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 tailscale serve --bg 8787
 ```
 
@@ -159,7 +161,7 @@ On the device that holds your vault:
 kerstel sync setup https://sync.example.com
 ```
 
-For a server with its own certificate, add the pin the server printed: `kerstel sync setup https://203.0.113.7:8787 --pin sha256/…`. `--pin` works only with an `https://` URL.
+For a server with its own certificate, add the pin the server printed: `kerstel sync setup https://203.0.113.7:8787 --pin sha256/…`. `--pin` works only with an `https://` URL. Without it, `sync setup` can't check that server's certificate, and says to pass `--pin`. A pin that is not the server's fails, and nothing is sent.
 
 It shows the server, whether its certificate is pinned, how many secrets and scopes it will upload, and this device's name, then asks before uploading. The device name is sealed, so the server never sees it.
 
@@ -210,7 +212,7 @@ kerstel sync remove-device old-laptop
 
 Removing a device replaces the sync key. Every record is encrypted again under a new key that only the remaining devices receive, and the server refuses the removed device's requests. The removed device already had every value, so rotate any secret it should no longer hold, at its provider.
 
-To stop syncing the device you are on, run `kerstel sync off`. Its secrets stay on it. `kerstel uninstall` leaves the vault first.
+To stop syncing the device you are on, run `kerstel sync off`. Its secrets stay on it. If this device's sync settings are damaged, `sync off` still turns sync off here, but can't leave the vault on the server. `kerstel uninstall` leaves the vault first.
 
 ## What the server sees
 

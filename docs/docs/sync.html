@@ -146,7 +146,7 @@ chmod +x kerstel-server-linux-x64
 <p>Kerstel checks the server&#39;s key on every request. If the key changes, it sends nothing and says so. The pin travels inside the line that <code>add-device</code> prints, so your other devices pair as before and never type it.</p>
 <p>The server keeps its key and certificate beside its database, as <code>&lt;db&gt;.tls-key.pem</code> and <code>&lt;db&gt;.tls-cert.pem</code>. The key stays the same across restarts, so the pin does too. A new database file means a new key and a new pin.</p>
 <p>With Docker, name the address and set the mode with environment variables, and publish the port:</p>
-<pre><code class="language-bash">docker run -d -p 8787:8787 -v kerstel-server:/data \
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 8787:8787 -v kerstel-server:/data \
   -e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7 \
   ghcr.io/alilibx/kerstel-server:latest
 docker logs &lt;container&gt; | grep &#39;Certificate pin&#39;
@@ -156,9 +156,10 @@ docker logs &lt;container&gt; | grep &#39;Certificate pin&#39;
 <pre><code class="language-bash">sudo ./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
   --domain sync.example.com --acme-email you@example.com
 </code></pre>
-<p>Running with <code>--domain</code> means you agree to Let&#39;s Encrypt&#39;s terms of service. <code>--acme-email</code> is optional. If the server can&#39;t get a certificate, it says what to fix, prints <code>No certificate yet. Trying again in an hour.</code>, and retries. The ACME account key lives beside the database as <code>&lt;db&gt;.acme-account.pem</code>.</p>
-<p>With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443:</p>
-<pre><code class="language-bash">docker run -d -p 80:80 -p 443:443 -v kerstel-server:/data \
+<p>Listening on 80 and 443 needs root, as <code>sudo</code> gives here, or <code>CAP_NET_BIND_SERVICE</code> on Linux.</p>
+<p>Running with <code>--domain</code> means you agree to the ACME CA&#39;s terms of service (Let&#39;s Encrypt by default). <code>--acme-email</code> is optional. If the server can&#39;t get a certificate, it says what to fix, prints <code>No certificate yet. Trying again in an hour.</code>, and retries. The ACME account key lives beside the database as <code>&lt;db&gt;.acme-account.pem</code>.</p>
+<p>With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep <code>--restart unless-stopped</code>: a renewal restarts the HTTPS listener, and if that fails, the server exits so Docker can start it again.</p>
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \
   -e KERSTEL_SERVER_DOMAIN=sync.example.com \
   -e KERSTEL_SERVER_LISTEN=0.0.0.0:443 \
   ghcr.io/alilibx/kerstel-server:latest
@@ -173,7 +174,7 @@ docker logs &lt;container&gt; | grep &#39;Certificate pin&#39;
 tailscale serve --bg 8787
 </code></pre>
 <p>With Docker, publish the port on the loopback address and run the same <code>tailscale serve</code> command on the host:</p>
-<pre><code class="language-bash">docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 tailscale serve --bg 8787
 </code></pre>
 <p>Turn on HTTPS certificates for your tailnet first: in the Tailscale admin console, open DNS and enable MagicDNS and HTTPS Certificates. Every device that syncs must be on the tailnet. The address is <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>, with no pin:</p>
@@ -189,7 +190,7 @@ tailscale serve --bg 8787
 <p>On the device that holds your vault:</p>
 <pre><code class="language-bash">kerstel sync setup https://sync.example.com
 </code></pre>
-<p>For a server with its own certificate, add the pin the server printed: <code>kerstel sync setup https://203.0.113.7:8787 --pin sha256/…</code>. <code>--pin</code> works only with an <code>https://</code> URL.</p>
+<p>For a server with its own certificate, add the pin the server printed: <code>kerstel sync setup https://203.0.113.7:8787 --pin sha256/…</code>. <code>--pin</code> works only with an <code>https://</code> URL. Without it, <code>sync setup</code> can&#39;t check that server&#39;s certificate, and says to pass <code>--pin</code>. A pin that is not the server&#39;s fails, and nothing is sent.</p>
 <p>It shows the server, whether its certificate is pinned, how many secrets and scopes it will upload, and this device&#39;s name, then asks before uploading. The device name is sealed, so the server never sees it.</p>
 <h2>Add a device</h2>
 <p>On the device that is already syncing:</p>
@@ -215,7 +216,7 @@ tailscale serve --bg 8787
 kerstel sync remove-device old-laptop
 </code></pre>
 <p>Removing a device replaces the sync key. Every record is encrypted again under a new key that only the remaining devices receive, and the server refuses the removed device&#39;s requests. The removed device already had every value, so rotate any secret it should no longer hold, at its provider.</p>
-<p>To stop syncing the device you are on, run <code>kerstel sync off</code>. Its secrets stay on it. <code>kerstel uninstall</code> leaves the vault first.</p>
+<p>To stop syncing the device you are on, run <code>kerstel sync off</code>. Its secrets stay on it. If this device&#39;s sync settings are damaged, <code>sync off</code> still turns sync off here, but can&#39;t leave the vault on the server. <code>kerstel uninstall</code> leaves the vault first.</p>
 <h2>What the server sees</h2>
 <div class="table-wrap"><table>
 <thead>

@@ -53,13 +53,34 @@ function readKey(path: string): string {
   return pem;
 }
 
+/** Codes a filesystem without hard links gives (exFAT, some NAS mounts). */
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS", "EXDEV"]);
+
+/**
+ * Writes and syncs `text` to a new file at `path`, mode `0600`. Throws EEXIST
+ * when `path` exists. A failed write removes the file, so no half key is left.
+ */
+function writeNewFile(path: string, text: string): void {
+  const fd = openSync(path, "wx", 0o600);
+  try {
+    writeSync(fd, text);
+    fsyncSync(fd);
+  } catch (error) {
+    closeSync(fd);
+    rmSync(path, { force: true });
+    throw error;
+  }
+  closeSync(fd);
+}
+
 /**
  * The key in `path`, created when there is none. The new key is written and
  * synced to a temporary file first, then linked into place: the link fails
  * when a key exists, so an existing key is never replaced, and no reader ever
- * sees a partly written one.
+ * sees a partly written one. On a filesystem without hard links, the key is
+ * written in place instead, still never over an existing one. `link` is for tests.
  */
-function loadOrCreateKey(path: string): string {
+export function loadOrCreateKey(path: string, link: (from: string, to: string) => void = linkSync): string {
   try {
     return readKey(path);
   } catch (error) {
@@ -68,20 +89,21 @@ function loadOrCreateKey(path: string): string {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
   const temp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  const existed = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
   try {
-    const fd = openSync(temp, "wx", 0o600);
+    writeNewFile(temp, pem);
     try {
-      writeSync(fd, pem);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    try {
-      linkSync(temp, path);
+      link(temp, path);
     } catch (error) {
       // Another process put its key in place first: use that one.
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return readKey(path);
-      throw error;
+      if (existed(error)) return readKey(path);
+      if (!NO_HARD_LINKS.has(String((error as NodeJS.ErrnoException).code))) throw error;
+      try {
+        writeNewFile(path, pem);
+      } catch (inPlace) {
+        if (existed(inPlace)) return readKey(path);
+        throw inPlace;
+      }
     }
     syncDirectory(dirname(path));
     return pem;

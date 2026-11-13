@@ -222,9 +222,9 @@ function retryAfter(response: Response): number {
 export function acmeAdvice(error: AcmeError, domain: string, httpPort: number): string {
   const type = error.problem?.type ?? "";
   if (type.endsWith(":connection") || type.endsWith(":unauthorized")) {
-    return `Let's Encrypt could not fetch http://${domain}/.well-known/acme-challenge/ from this host. Check that port ${httpPort} is open to the internet and reaches kerstel-server.`;
+    return `The ACME CA could not fetch http://${domain}/.well-known/acme-challenge/ from this host. Check that port ${httpPort} is open to the internet and reaches kerstel-server.`;
   }
   if (type.endsWith(":dns")) return `${domain} does not resolve. Point an A or AAAA record at this host.`;
-  if (type.endsWith(":rateLimited")) return "The CA is rate limiting this domain. kerstel-server tries again in an hour.";
+  if (type.endsWith(":rateLimited")) return "The ACME CA is rate limiting this domain. kerstel-server tries again in an hour.";
   return error.problem?.detail ?? error.message;
 }

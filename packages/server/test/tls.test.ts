@@ -4,11 +4,13 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acmeAdvice, AcmeError } from "../src/acme";
-import { pinOfCertificate } from "../src/pin";
+import { pinnedFetch } from "../../cli/src/sync/http";
+import { parsePin, pinOfCertificate } from "../src/pin";
 import {
   AcmeManager,
   certificateName,
   keepCertificate,
+  loadOrCreateKey,
   loadSelfSigned,
   serveChallenges,
   tlsFiles,
@@ -112,6 +114,42 @@ describe("loadSelfSigned", () => {
     const third = loadSelfSigned(db, NAMES);
     expect(third.pin.equals(second.pin)).toBe(true);
     expect(pinOfCertificate(third.certDer).equals(third.pin)).toBe(true);
+  });
+});
+
+describe("loadOrCreateKey on a filesystem without hard links", () => {
+  /** A link that fails as exFAT or some NAS mounts do, after running `before`. */
+  const noLinks = (code: string, before: () => void = () => {}) => () => {
+    before();
+    throw Object.assign(new Error(`${code}: operation not permitted, link`), { code });
+  };
+
+  test("writes the key in place, mode 0600, and leaves no temporary file", () => {
+    for (const code of ["EPERM", "ENOTSUP", "ENOSYS", "EXDEV"]) {
+      const path = join(dir, `${code}.pem`);
+      const pem = loadOrCreateKey(path, noLinks(code));
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      // Compared without toBe, so a failure never prints a private key.
+      expect(readFileSync(path, "utf8") === pem).toBe(true);
+      expect(createPublicKey(pem).asymmetricKeyType).toBe("ec");
+      expect(loadOrCreateKey(path, noLinks(code)) === pem).toBe(true);
+    }
+    expect(readdirSync(dir).sort()).toEqual(["ENOSYS.pem", "ENOTSUP.pem", "EPERM.pem", "EXDEV.pem"]);
+  });
+
+  test("uses a key another process wrote first", () => {
+    const path = join(dir, "key.pem");
+    const theirs = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    const pem = loadOrCreateKey(path, noLinks("EPERM", () => writeFileSync(path, theirs, { mode: 0o600 })));
+    expect(pem === theirs).toBe(true);
+    expect(readFileSync(path, "utf8") === theirs).toBe(true);
+    expect(readdirSync(dir)).toEqual(["key.pem"]);
+  });
+
+  test("any other link error is thrown", () => {
+    const path = join(dir, "key.pem");
+    expect(() => loadOrCreateKey(path, noLinks("EIO"))).toThrow("EIO");
+    expect(readdirSync(dir)).toEqual([]);
   });
 });
 
@@ -346,15 +384,68 @@ describe("keepCertificate", () => {
   });
 });
 
-describe("kerstel-server --domain", () => {
-  /** A port nothing listens on just now. */
-  const freePort = () => {
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
-    const port = server.port!;
-    server.stop(true);
-    return port;
-  };
+/** A port nothing listens on just now. */
+const freePort = () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = server.port!;
+  server.stop(true);
+  return port;
+};
 
+describe("kerstel-server --tls self", () => {
+  /** Reads `stream` until `pattern` matches what came so far, or `ms` pass. */
+  async function waitForLine(stream: ReadableStream<Uint8Array>, pattern: RegExp, ms: number): Promise<{ match: RegExpExecArray | null; text: string }> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    const deadline = Date.now() + ms;
+    let text = "";
+    try {
+      while (Date.now() < deadline) {
+        const next = await Promise.race([reader.read(), Bun.sleep(deadline - Date.now()).then(() => null)]);
+        if (next === null || next.done) break;
+        text += decoder.decode(next.value, { stream: true });
+        const match = pattern.exec(text);
+        if (match) return { match, text };
+      }
+      return { match: null, text };
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  test("prints its pin, and a client pinned to it reaches the server", async () => {
+    const port = freePort();
+    const server = `https://127.0.0.1:${port}`;
+    const proc = Bun.spawn(
+      [process.execPath, join(import.meta.dir, "../src/index.ts"), "--db", db, "--tls", "self", "--listen", `127.0.0.1:${port}`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    try {
+      const { match, text } = await waitForLine(proc.stdout, /^Certificate pin: (sha256\/[A-Za-z0-9_-]{43})$/m, 10_000);
+      if (!match) {
+        proc.kill();
+        throw new Error(`kerstel-server printed no pin. Its stdout:\n${text}\nIts stderr:\n${await new Response(proc.stderr).text()}`);
+      }
+      expect(text).toContain(`listening on ${server}`);
+      const pin = parsePin(match[1]!);
+      expect(pin).not.toBeNull();
+      // The pin is the key's, which the server keeps beside its database.
+      expect(pin!.equals(pinOfCertificate(new X509Certificate(readFileSync(tlsFiles(db).cert)).raw))).toBe(true);
+
+      const response = await pinnedFetch(server, pin!)(new Request(`${server}/v1/health`));
+      expect(response.status).toBe(200);
+      await response.body?.cancel();
+
+      proc.kill("SIGTERM");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  }, 20_000);
+});
+
+describe("kerstel-server --domain", () => {
   test("answers the challenge, then serves HTTPS with the certificate it got", async () => {
     const httpPort = freePort();
     const httpsPort = freePort();

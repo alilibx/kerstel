@@ -26,7 +26,6 @@
 - `--listen` and `--trust-proxy` keep working unchanged for a server behind a reverse proxy.
 - Tests never print a secret or a private key, and clean up every temporary home, database, key and listener.
 - Copy uses `cliName()` for the command name. Every user-visible change gets a `CHANGELOG.md` line, and the website and README match the source (AGENTS.md).
-- Never mention a hosted or paid sync server anywhere.
 
 ## Decisions for the maintainer
 

@@ -201,7 +201,7 @@
 </thead>
 <tbody><tr>
 <td><code>kerstel sync setup &lt;url&gt; [--pin &lt;pin&gt;] [--yes]</code></td>
-<td>Turn sync on for this vault and upload every secret. The URL must be <code>https://</code>, or <code>http://</code> to this machine. <code>--pin sha256/…</code> pins the certificate of a server that runs <code>kerstel-server --tls self</code>, which prints the pin when it starts; it needs an <code>https://</code> URL. The pin travels in the <code>add-device</code> line, so other devices never type it, and every request checks the server&#39;s key: if it changes, nothing is sent. It shows the server, the pin when there is one, how many secrets and scopes it will upload, and this device&#39;s name (sealed, so the server never sees it), then asks before uploading; without a terminal it needs <code>--yes</code>. A server that needs an enroll token reads it from <code>KERSTEL_SYNC_ENROLL_TOKEN</code>.</td>
+<td>Turn sync on for this vault and upload every secret. The URL must be <code>https://</code>, or <code>http://</code> to this machine. <code>--pin sha256/…</code> pins the certificate of a server that runs <code>kerstel-server --tls self</code>, which prints the pin when it starts; it needs an <code>https://</code> URL. The pin travels in the <code>add-device</code> line, so other devices never type it, and every request checks the server&#39;s key: if it changes, nothing is sent. Without <code>--pin</code>, such a server&#39;s certificate can&#39;t be checked, and setup says to pass the pin. It shows the server, the pin when there is one, how many secrets and scopes it will upload, and this device&#39;s name (sealed, so the server never sees it), then asks before uploading; without a terminal it needs <code>--yes</code>. A server that needs an enroll token reads it from <code>KERSTEL_SYNC_ENROLL_TOKEN</code>.</td>
 </tr>
 <tr>
 <td><code>kerstel sync [--keep local|remote] [--reveal]</code></td>
@@ -229,7 +229,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync off [--delete-vault]</code></td>
-<td>Stop syncing this device and remove its scheduled pull: it leaves the vault on the server, and its secrets stay here. On the vault&#39;s last device it refuses unless <code>--delete-vault</code>, which deletes the vault from the server too. A device that another one already removed just turns sync off, and so does a device whose pinned server now answers with a different key, since it can no longer leave the vault there.</td>
+<td>Stop syncing this device and remove its scheduled pull: it leaves the vault on the server, and its secrets stay here. On the vault&#39;s last device it refuses unless <code>--delete-vault</code>, which deletes the vault from the server too. A device that another one already removed just turns sync off, and so does a device whose pinned server now answers with a different key, or whose sync settings can&#39;t be read, since it can no longer leave the vault there.</td>
 </tr>
 </tbody></table>
 </div><h2>Daemon and diagnostics</h2>
