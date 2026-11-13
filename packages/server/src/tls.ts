@@ -5,7 +5,7 @@
  * with a new database file. With `--domain`, a certificate from an ACME CA for
  * the same key, renewed before it expires.
  */
-import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
+import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname } from "node:path";
@@ -75,11 +75,41 @@ function writeNewFile(path: string, text: string, mode = 0o600): void {
 }
 
 /**
- * The key in `path`, created when there is none. The new key is written and
- * synced to a temporary file first, then linked into place: the link fails
- * when a key exists, so an existing key is never replaced, and no reader ever
- * sees a partly written one. On a filesystem without hard links, the key is
- * written in place instead, still never over an existing one. `link` is for tests.
+ * Creates `path` holding `text`, mode `0600`, unless it exists. Returns false,
+ * having written nothing, when it exists. The text is written and synced to a
+ * temporary file first, then linked into place: the link fails when the file
+ * exists, so an existing file is never replaced, and no reader ever sees a
+ * partly written one. On a filesystem without hard links, the file is written
+ * in place instead, still never over an existing one. `link` is for tests.
+ */
+export function createFileOnce(path: string, text: string, link: (from: string, to: string) => void = linkSync): boolean {
+  const temp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  const existed = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
+  try {
+    writeNewFile(temp, text);
+    try {
+      link(temp, path);
+    } catch (error) {
+      // Another process put its file in place first.
+      if (existed(error)) return false;
+      if (!NO_HARD_LINKS.has(String((error as NodeJS.ErrnoException).code))) throw error;
+      try {
+        writeNewFile(path, text);
+      } catch (inPlace) {
+        if (existed(inPlace)) return false;
+        throw inPlace;
+      }
+    }
+    syncDirectory(dirname(path));
+    return true;
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
+/**
+ * The key in `path`, created with `createFileOnce` when there is none. When
+ * another process creates one first, that key is used. `link` is for tests.
  */
 export function loadOrCreateKey(path: string, link: (from: string, to: string) => void = linkSync): string {
   try {
@@ -89,28 +119,7 @@ export function loadOrCreateKey(path: string, link: (from: string, to: string) =
   }
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-  const temp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
-  const existed = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
-  try {
-    writeNewFile(temp, pem);
-    try {
-      link(temp, path);
-    } catch (error) {
-      // Another process put its key in place first: use that one.
-      if (existed(error)) return readKey(path);
-      if (!NO_HARD_LINKS.has(String((error as NodeJS.ErrnoException).code))) throw error;
-      try {
-        writeNewFile(path, pem);
-      } catch (inPlace) {
-        if (existed(inPlace)) return readKey(path);
-        throw inPlace;
-      }
-    }
-    syncDirectory(dirname(path));
-    return pem;
-  } finally {
-    rmSync(temp, { force: true });
-  }
+  return createFileOnce(path, pem, link) ? pem : readKey(path);
 }
 
 /** Makes a new directory entry durable. Not every platform can open a directory, so this is best effort. */
@@ -120,7 +129,7 @@ function syncDirectory(dir: string): void {
     fd = openSync(dir, "r");
     fsyncSync(fd);
   } catch {
-    // The key is synced; only its name could be lost in a crash, and then a new one is made.
+    // The file is synced; only its name could be lost in a crash, and then a new one is made.
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -134,6 +143,33 @@ function readCertificate(path: string): Buffer | null {
   }
 }
 
+/** The `--tls self` key in `pem`, read from `path`, with its pin. Throws unless it is an ECDSA P-256 private key. */
+function selfSignedKey(path: string, pem: string): { key: KeyObject; pin: Buffer } {
+  let key;
+  try {
+    key = createPrivateKey(pem);
+  } catch {
+    throw new Error(`${path} does not hold a private key.`);
+  }
+  if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+    throw new Error(`${path} must hold an ECDSA P-256 key.`);
+  }
+  return { key, pin: pinOfSpki(createPublicKey(key).export({ type: "spki", format: "der" })) };
+}
+
+/** The pin of the `--tls self` key beside `db`, or null when there is no key yet. It never creates one. */
+export function readSelfSignedPin(db: string): Buffer | null {
+  const path = tlsFiles(db).key;
+  let pem: string;
+  try {
+    pem = readKey(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  return selfSignedKey(path, pem).pin;
+}
+
 /**
  * The key and certificate for `--tls self`, with the key's pin. It creates the
  * key when missing, and issues a certificate when there is none, when it names
@@ -145,16 +181,7 @@ export function loadSelfSigned(
 ): { keyPem: string; certPem: string; certDer: Buffer; pin: Buffer } {
   const files = tlsFiles(db);
   const keyPem = loadOrCreateKey(files.key);
-  let key;
-  try {
-    key = createPrivateKey(keyPem);
-  } catch {
-    throw new Error(`${files.key} does not hold a private key.`);
-  }
-  if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
-    throw new Error(`${files.key} must hold an ECDSA P-256 key.`);
-  }
-  const pin = pinOfSpki(createPublicKey(key).export({ type: "spki", format: "der" }));
+  const { key, pin } = selfSignedKey(files.key, keyPem);
 
   const existing = readCertificate(files.cert);
   if (existing && pinOfCertificate(existing).equals(pin) && sameNames(certificateNames(existing), names)) {

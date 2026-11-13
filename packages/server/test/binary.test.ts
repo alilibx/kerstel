@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "../src/index";
@@ -11,6 +11,7 @@ describe("parseArgs", () => {
       hostname: "127.0.0.1",
       port: 8787,
       enrollToken: null,
+      enrollTokenFile: null,
       trustProxy: false,
       tls: { mode: "off" },
     });
@@ -22,17 +23,12 @@ describe("parseArgs", () => {
     expect(parseArgs(["--listen", "[::1]:80", "--trust-proxy"], {})).toMatchObject({ hostname: "::1", port: 80, trustProxy: true });
   });
 
-  test("reads the enroll token from a file, never from argv", () => {
-    const dir = mkdtempSync(join(tmpdir(), "kerstel-server-args-"));
-    try {
-      const file = join(dir, "token");
-      writeFileSync(file, "tok-123\n");
-      expect(parseArgs(["--enroll-token-file", file], {})).toMatchObject({ enrollToken: "tok-123" });
-      writeFileSync(file, "\n");
-      expect(() => parseArgs(["--enroll-token-file", file], {})).toThrow("empty");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test("takes the enroll token from a file, never from argv", () => {
+    // The file is read, or created, when the server starts: see server.test.ts.
+    expect(parseArgs(["--enroll-token-file", "/data/enroll-token"], {})).toMatchObject({
+      enrollToken: null,
+      enrollTokenFile: "/data/enroll-token",
+    });
   });
 
   test("rejects bad input", () => {
