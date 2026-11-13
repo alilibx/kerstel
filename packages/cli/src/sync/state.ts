@@ -1,3 +1,5 @@
+import { formatPin, parsePin } from "../../../server/src/pin";
+import { cliName } from "../ui/cli-name";
 import { decrypt, encrypt } from "../vault/crypto";
 import { SYNC_VAULT_META, type Vault } from "../vault/store";
 import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
@@ -11,6 +13,8 @@ import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
 export const SYNC_META = {
   vaultId: SYNC_VAULT_META,
   server: "sync_server",
+  /** The server's key pin (#112), as `formatPin` writes it. No row: the server is not pinned. */
+  pin: "sync_pin",
   deviceId: "sync_device_id",
   epoch: "sync_epoch",
   syncKey: "sync_key",
@@ -31,6 +35,8 @@ export const SYNC_META = {
 
 export interface SyncConfig {
   server: string;
+  /** The SHA-256 of the server's public key, when this device pins it (#112). */
+  pin: Buffer | null;
   vaultId: string;
   deviceId: string;
   epoch: number;
@@ -59,8 +65,15 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
     if (v === null) throw new Error(`This vault's sync settings are incomplete (${k} is missing). Run ks sync off, then set sync up again.`);
     return v;
   };
+  const pinText = get(SYNC_META.pin);
+  const pin = pinText === null ? null : parsePin(pinText);
+  // Never read as unpinned: that would drop the pin's protection without a word.
+  if (pinText !== null && pin === null) {
+    throw new Error(`This vault's sync settings are damaged (${SYNC_META.pin} is not a pin). Run ${cliName()} sync off, then set sync up again.`);
+  }
   return {
     server: need(SYNC_META.server),
+    pin,
     vaultId,
     deviceId: need(SYNC_META.deviceId),
     epoch: Number(need(SYNC_META.epoch)),
@@ -84,6 +97,8 @@ export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): voi
 /** `saveSync` without its own transaction, for a caller that holds one. */
 export function writeSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
   vault.setMeta(SYNC_META.server, config.server);
+  if (config.pin) vault.setMeta(SYNC_META.pin, formatPin(config.pin));
+  else vault.deleteMeta(SYNC_META.pin);
   vault.setMeta(SYNC_META.deviceId, config.deviceId);
   vault.setMeta(SYNC_META.epoch, String(config.epoch));
   vault.setMeta(SYNC_META.syncKey, sealed(config.syncKey.toString("base64"), dataKey));

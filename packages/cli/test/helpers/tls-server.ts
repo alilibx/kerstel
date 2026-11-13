@@ -17,6 +17,8 @@ export interface TlsServerOptions {
   advertise?: (served: Buffer) => Buffer | null;
   /** Answers a request before the app does, when it returns a response. */
   intercept?: (request: Request) => Response | undefined;
+  /** The server's clock; real time by default. */
+  now?: () => number;
 }
 
 export interface TlsServer {
@@ -44,6 +46,7 @@ export function startTlsServer(options: TlsServerOptions = {}): TlsServer {
   const app = createApp({
     db,
     version: "test",
+    now: options.now,
     certificate: () => (options.advertise ? options.advertise(state.certDer) : state.certDer),
   });
   const paths: string[] = [];

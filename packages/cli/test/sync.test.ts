@@ -54,6 +54,8 @@ import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
 import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
+import { serverKey, startTlsServer, type TlsServer } from "./helpers/tls-server";
+import { formatPin } from "../../server/src/pin";
 
 /** Sync spec §12: the client against the real server, in-process. */
 
@@ -98,6 +100,8 @@ function device() {
 
 type Device = ReturnType<typeof device>;
 type Server = ReturnType<typeof server>;
+/** What the helpers below need of a server: its clock, and how to reach it. */
+type Reach = Pick<Server, "fetch" | "clock">;
 
 async function quiet<T>(work: () => Promise<T>): Promise<{ result: T; out: string }> {
   const log = captureLog();
@@ -153,10 +157,10 @@ async function addSecond(a: Device, b: Device, s: Server): Promise<void> {
     now: () => (s.clock.t += 1),
   }).keys();
   const syncKey = openSyncKey(sealed.sealedKey, keys.enc, { vaultId: config.vaultId, deviceId, epoch: sealed.epoch });
-  b.with((v) => saveSync(v, b.key, { server: SERVER, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
+  b.with((v) => saveSync(v, b.key, { server: SERVER, pin: null, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
 }
 
-async function sync(d: Device, s: Server, args: string[] = []): Promise<{ code: number; out: string }> {
+async function sync(d: Device, s: Reach, args: string[] = []): Promise<{ code: number; out: string }> {
   const { result, out } = await quiet(() => syncCommand(args, { fetch: s.fetch, context: d.context, interactive: false, now: () => (s.clock.t += 1) }));
   return { code: result, out };
 }
@@ -265,10 +269,12 @@ describe("one device and the server", () => {
     expect(out).toContain("2 secrets in 2 scopes");
     expect(out).toContain("Synced 2 secrets.");
     expect(a.with((v) => v.sync.rows().every((r) => !r.dirty && r.baseRev > 0))).toBe(true);
+    expect(a.with((v) => loadSync(v, a.key))!.pin).toBeNull();
 
     const status = await sync(a, s, ["status"]);
     expect(status.out).toContain(`Server        ${SERVER}`);
     expect(status.out).toContain("Pending       0 changes to push");
+    expect(status.out).not.toContain("Certificate");
     const list = await sync(a, s, ["devices"]);
     expect(list.out).toContain("this device");
     for (const out of [status.out, list.out]) {
@@ -717,9 +723,9 @@ describe("pairing crypto", () => {
 });
 
 describe("pairing, joining and removing devices", () => {
-  const tick = (s: Server) => () => (s.clock.t += 1);
+  const tick = (s: Reach) => () => (s.clock.t += 1);
   /** Pairing waits move the server's clock, so codes age and rate limits refill as they would. */
-  const sleeper = (s: Server) => async () => {
+  const sleeper = (s: Reach) => async () => {
     s.clock.t += 3_000;
     await Bun.sleep(1);
   };
@@ -741,7 +747,7 @@ describe("pairing, joining and removing devices", () => {
   async function pairUp(
     a: Device,
     b: Device,
-    s: Server,
+    s: Reach,
     options: {
       answer?: "yes" | "no";
       joinFetch?: Fetch;
@@ -989,9 +995,10 @@ describe("pairing, joining and removing devices", () => {
     const far = await joinWith([remote]);
     expect(far.code).toBe(2);
     expect(far.out).toContain("http://sync.example.com is not a server Kerstel will send your vault to");
+    // A pin is checked by TLS, so a pinned value must name https:// servers only.
     const pin = await joinWith([pinned]);
     expect(pin.code).toBe(2);
-    expect(pin.out).toContain("pins its certificate");
+    expect(pin.out).toContain("A pinned server must use an https:// URL.");
 
     expect(requests).toEqual([]);
     expect(b.with((v) => loadSync(v, b.key))).toBeNull();
@@ -1320,6 +1327,159 @@ describe("pairing, joining and removing devices", () => {
     const refused = await sync(a, s, ["remove-device", "old-phone"]);
     expect(refused.code).toBe(1);
     expect(refused.out).toContain("Settle the open sync conflicts first");
+  });
+
+  describe("a pinned server (#112)", () => {
+    const listeners: TlsServer[] = [];
+    afterEach(() => {
+      while (listeners.length > 0) listeners.pop()!.stop();
+    });
+
+    /** `kerstel-server --tls self` on 127.0.0.1, on a test clock. Its `fetch` is Bun's own, recording each URL. */
+    function pinnedServer() {
+      const clock = { t: Date.now() };
+      const listener = startTlsServer({ now: () => clock.t });
+      listeners.push(listener);
+      const requests: string[] = [];
+      const fetch: Fetch = (request, init) => {
+        requests.push(request.url);
+        return globalThis.fetch(request, init as RequestInit);
+      };
+      return { clock, fetch, listener, requests, pin: formatPin(listener.pin) };
+    }
+    type Pinned = ReturnType<typeof pinnedServer>;
+
+    async function setUpPinned(d: Device, p: Pinned, args: string[] = [p.listener.url, "--pin", p.pin]) {
+      return quiet(() =>
+        syncCommand(["setup", ...args, "--yes"], {
+          fetch: p.fetch,
+          context: d.context,
+          interactive: false,
+          now: tick(p),
+          deviceName: "first",
+          timer: fakeTimer().timer,
+        }),
+      );
+    }
+
+    async function pinnedDevice(p: Pinned, secrets: Record<string, string> = {}): Promise<Device> {
+      const a = device();
+      a.with((v) => {
+        for (const [k, value] of Object.entries(secrets)) v.setSecret(ref("app", k), value);
+      });
+      expect((await setUpPinned(a, p)).result).toBe(0);
+      return a;
+    }
+
+    /** Starts the listener again on the same port with another key, as a server that lost its data would. */
+    const newKey = (p: Pinned) => p.listener.restart({ key: serverKey(), names: ["localhost", "127.0.0.1"] });
+
+    test("setup with a pin syncs and saves the pin", async () => {
+      const p = pinnedServer();
+      const a = device();
+      a.with((v) => v.setSecret(ref("app", "DB"), "db-pinned-1"));
+      const { result, out } = await setUpPinned(a, p);
+      expect(result).toBe(0);
+      expect(out).toContain(`  Certificate  pinned (${p.pin})`);
+      expect(out).toContain("Synced 1 secret.");
+      // The pinned client fetched the certificate to check it against the pin.
+      expect(p.listener.paths).toContain("/v1/certificate");
+      expect(a.with((v) => loadSync(v, a.key))!.pin).toEqual(p.listener.pin);
+      expect(a.with((v) => v.getMeta(SYNC_META.pin))).toBe(p.pin);
+
+      const status = await sync(a, p, ["status"]);
+      expect(status.code).toBe(0);
+      expect(status.out).toContain(`Server        ${p.listener.url}\nCertificate   pinned (${p.pin})`);
+      for (const text of [out, status.out]) expect(text).not.toContain("db-pinned-1");
+    });
+
+    test("setup refuses a bad pin before any request", async () => {
+      const p = pinnedServer();
+      const a = device();
+      for (const bad of ["nope", p.pin.slice("sha256/".length)]) {
+        const { result, out } = await setUpPinned(a, p, [p.listener.url, "--pin", bad]);
+        expect(result).toBe(2);
+        expect(out).toContain(
+          "That is not a certificate pin. It looks like sha256/ followed by 43 letters, digits, - and _, as kerstel-server prints when it starts.",
+        );
+      }
+      const plain = await setUpPinned(a, p, ["http://127.0.0.1:8787", "--pin", p.pin]);
+      expect(plain.result).toBe(2);
+      expect(plain.out).toContain("A pinned server must use an https:// URL.");
+      const missing = await setUpPinned(a, p, [p.listener.url, "--pin"]);
+      expect(missing.result).toBe(2);
+      expect(missing.out).toContain("sync setup <url> [--pin <pin>] [--yes]");
+
+      expect(p.requests).toEqual([]);
+      expect(p.listener.paths).toEqual([]);
+      expect(a.with((v) => loadSync(v, a.key))).toBeNull();
+    });
+
+    test("pairing carries the pin", async () => {
+      const p = pinnedServer();
+      const a = await pinnedDevice(p, { DB: "db-pin-pair" });
+      const b = device();
+      const { added, joined, value, out } = await pairUp(a, b, p);
+      expect([added, joined]).toEqual([0, 0]);
+      expect(decoded(value).pin).toEqual(p.listener.pin);
+      expect(decoded(value).urls).toEqual([p.listener.url]);
+      expect(b.with((v) => loadSync(v, b.key))!.pin).toEqual(p.listener.pin);
+      expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-pin-pair");
+      expect(out).not.toContain("db-pin-pair");
+    });
+
+    test("join refuses a server whose key is not the pinned one, and saves nothing", async () => {
+      const p = pinnedServer();
+      const b = device();
+      const value = encodeJoinValue({ urls: [p.listener.url], pin: Buffer.alloc(32, 7), secret: newPairingSecret() });
+      const { result, out } = await quiet(() =>
+        syncCommand(["join", value], { fetch: p.fetch, context: b.context, interactive: false, now: tick(p) }),
+      );
+      expect(result).toBe(1);
+      expect(out).toContain("presented a key this device does not trust");
+      // Only the certificate went out; the pairing answer did not.
+      expect(p.listener.paths).toEqual(["/v1/certificate"]);
+      expect(b.with((v) => loadSync(v, b.key))).toBeNull();
+    });
+
+    test("sync off works when the pin no longer matches", async () => {
+      const p = pinnedServer();
+      const a = await pinnedDevice(p, { DB: "db-off-1" });
+      const c = await pinnedDevice(p, { DB: "db-off-2" });
+      newKey(p);
+      for (const [d, args] of [
+        [a, ["off"]],
+        [c, ["off", "--delete-vault"]],
+      ] as const) {
+        const { timer, calls } = fakeTimer();
+        const { result, out } = await quiet(() =>
+          syncCommand([...args], { fetch: p.fetch, context: d.context, interactive: false, now: tick(p), timer }),
+        );
+        expect(result).toBe(0);
+        expect(out).toContain(
+          "The server no longer has the key this device pinned, so this device could not remove itself from the vault there. " +
+            "Sync is off here; your secrets stay here. To sync again, run",
+        );
+        expect(out).toContain("sync setup and pair your other devices again.");
+        expect(d.with((v) => loadSync(v, d.key))).toBeNull();
+        expect(d.with((v) => v.getMeta(SYNC_META.pin))).toBeNull();
+        expect(calls.remove).toBe(1);
+        expect(d.with((v) => v.listSecrets().length)).toBe(1);
+      }
+    });
+
+    test("a pin mismatch in a sync says what to do", async () => {
+      const p = pinnedServer();
+      const a = await pinnedDevice(p, { DB: "db-mismatch" });
+      const pinned = p.listener.pin;
+      newKey(p);
+      const { code, out } = await sync(a, p);
+      expect(code).toBe(1);
+      expect(out).toContain("presented a key this device does not trust");
+      expect(out).not.toContain("db-mismatch");
+      // Sync stays on, with the same pin: whether the server really started again is for the person to decide.
+      expect(a.with((v) => loadSync(v, a.key))!.pin).toEqual(pinned);
+    });
   });
 });
 
