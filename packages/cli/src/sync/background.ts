@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { daemonCwd, daemonEnv } from "../daemon/env";
 import { cliCommand } from "../daemon/spawn";
 import { kerstelHome, vaultPath } from "../paths";
-import { SYNC_META } from "./state";
+import { shownAddress, SYNC_META } from "./state";
 
 /**
  * Sync in the background. Sync spec §8.1: a command that writes the vault
@@ -27,6 +27,7 @@ export interface SyncGlance {
   /** Changes made here that are waiting to be pushed. */
   pending: number;
   conflicts: number;
+  /** The server's address that answered the last sync, or its first one. */
   server: string | null;
   lastOk: number | null;
   lastTry: number | null;
@@ -73,6 +74,16 @@ export function writeSpawnMarker(ms: number, file: string = spawnMarkerPath()): 
   }
 }
 
+/** `shownAddress`, from the raw settings: no data key needed, and never throws. */
+function glancedServer(meta: Map<string, string>): string | null {
+  const server = meta.get(SYNC_META.server);
+  if (server === undefined) return null;
+  const row = meta.get(SYNC_META.servers);
+  // A row that does not start with sync_server is one `loadSync` does not use either.
+  const servers = row === undefined || row.split("\n")[0] !== server ? [server] : row.split("\n");
+  return shownAddress(servers, meta.get(SYNC_META.lastAddress) ?? null);
+}
+
 /** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
 export function glanceSync(file: string = vaultPath()): SyncGlance {
   if (!existsSync(file)) return OFF;
@@ -98,7 +109,7 @@ export function glanceSync(file: string = vaultPath()): SyncGlance {
       on: true,
       pending: counts?.pending ?? 0,
       conflicts: counts?.conflicts ?? 0,
-      server: meta.get(SYNC_META.server) ?? null,
+      server: glancedServer(meta),
       lastOk: time(SYNC_META.lastOk),
       lastTry: time(SYNC_META.lastTry),
       lastError: meta.get(SYNC_META.lastError) ?? null,

@@ -12,7 +12,12 @@ import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
 
 export const SYNC_META = {
   vaultId: SYNC_VAULT_META,
+  /** The server's first address, as 0.3 reads it. */
   server: "sync_server",
+  /** Every address of the server, in the order they are tried, one per line. No row: `server` alone, as 0.3 wrote it. */
+  servers: "sync_servers",
+  /** The address that answered the last successful sync. */
+  lastAddress: "sync_last_address",
   /** The server's key pin (#112), as `formatPin` writes it. No row: the server is not pinned. */
   pin: "sync_pin",
   deviceId: "sync_device_id",
@@ -34,7 +39,8 @@ export const SYNC_META = {
 } as const;
 
 export interface SyncConfig {
-  server: string;
+  /** The server's addresses, at least one, in the order they are tried: its `.local` name and its LAN IP, say. */
+  servers: string[];
   /** The SHA-256 of the server's public key, when this device pins it (#112). */
   pin: Buffer | null;
   vaultId: string;
@@ -96,8 +102,10 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
   if (pinText !== null && pin === null) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is not a pin)`);
   const server = need(SYNC_META.server);
   if (pin && !isHttps(server)) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is set for an http:// server)`);
+  const servers = readServers(server, get(SYNC_META.servers));
+  if (pin && !servers.every(isHttps)) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is set for an http:// server)`);
   return {
-    server,
+    servers,
     pin,
     vaultId,
     deviceId: need(SYNC_META.deviceId),
@@ -112,6 +120,30 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
 }
 
 /**
+ * The addresses in `sync_servers`, or `[server]` for a vault without the row.
+ * A row that does not start with `server` was left by an older Kerstel, which
+ * knows only `sync_server`: its `sync off` keeps the row and its `setup`
+ * writes `sync_server` alone. It names another server, so it is not used.
+ */
+function readServers(server: string, row: string | null): string[] {
+  if (row === null) return [server];
+  const servers = row.split("\n");
+  if (servers.some((url) => url === "")) throw new SyncSettingsError(`damaged (${SYNC_META.servers} is empty)`);
+  if (!servers.every(isSafeServerUrl)) {
+    throw new SyncSettingsError(`damaged (${SYNC_META.servers} names a server Kerstel will not send your vault to)`);
+  }
+  return servers[0] === server ? servers : [server];
+}
+
+/**
+ * The address to name for this device's server: the one that answered last,
+ * while it is still one of `servers`, or the first.
+ */
+export function shownAddress(servers: string[], last: string | null): string {
+  return last !== null && servers.includes(last) ? last : servers[0]!;
+}
+
+/**
  * Writes every setting in one transaction, so an interrupted write never pairs
  * a new epoch with the old key. The vault ID turns sync, and change tracking, on.
  */
@@ -121,7 +153,9 @@ export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): voi
 
 /** `saveSync` without its own transaction, for a caller that holds one. */
 export function writeSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
-  vault.setMeta(SYNC_META.server, config.server);
+  // The first address stays in `sync_server`, so an older Kerstel still reads this vault.
+  vault.setMeta(SYNC_META.server, config.servers[0]!);
+  vault.setMeta(SYNC_META.servers, config.servers.join("\n"));
   if (config.pin) vault.setMeta(SYNC_META.pin, formatPin(config.pin));
   else vault.deleteMeta(SYNC_META.pin);
   vault.setMeta(SYNC_META.deviceId, config.deviceId);
@@ -146,10 +180,12 @@ export function saveHead(vault: Vault, head: number): void {
   vault.setMeta(SYNC_META.head, String(head));
 }
 
-export function recordResult(vault: Vault, error: string | null): void {
+/** Records how a sync ended. `address` is the one that answered a sync that succeeded, when the client knows it. */
+export function recordResult(vault: Vault, error: string | null, address: string | null = null): void {
   vault.setMeta(SYNC_META.lastTry, String(Date.now()));
   if (error === null) {
     vault.setMeta(SYNC_META.lastOk, String(Date.now()));
+    if (address !== null) vault.setMeta(SYNC_META.lastAddress, address);
     vault.deleteMeta(SYNC_META.lastError);
   } else {
     vault.setMeta(SYNC_META.lastError, error);

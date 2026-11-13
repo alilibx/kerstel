@@ -53,7 +53,8 @@ export class SyncHttpError extends Error {
 }
 
 export interface ClientOptions {
-  server: string;
+  /** The server's addresses, at least one, in the order they are tried. */
+  servers: string[];
   vaultId: string;
   deviceId: string;
   sign: KeyObject;
@@ -255,6 +256,39 @@ function clientFetch(server: string, base: Fetch | undefined, pin: Buffer | null
   return base ?? plainFetch;
 }
 
+/**
+ * Sends to the first of a server's addresses that answers. Until one has, each
+ * request tries them in order, and moves on only when an address can't be
+ * reached: any answer, an error or a pin mismatch included, comes from that
+ * address and is final. The address that answered is used for the rest of the
+ * client's life. `onTry` hears of each address before a request first goes to it.
+ */
+function addresses(servers: string[], base: Fetch | undefined, pin: Buffer | null | undefined, onTry?: (server: string) => void) {
+  if (servers.length === 0) throw new Error("a sync client needs at least one server address");
+  // Made now, so a pinned http:// address fails here, as one address always did.
+  const fetches = servers.map((server) => clientFetch(server, base, pin));
+  let chosen: number | null = null;
+  return {
+    address: (): string | null => (chosen === null ? null : servers[chosen]!),
+    async send<T>(request: (server: string, doFetch: Fetch) => Promise<T>): Promise<T> {
+      if (chosen !== null) return request(servers[chosen]!, fetches[chosen]!);
+      for (let i = 0; ; i += 1) {
+        onTry?.(servers[i]!);
+        try {
+          const result = await request(servers[i]!, fetches[i]!);
+          chosen = i;
+          return result;
+        } catch (error) {
+          const unreachable = error instanceof SyncHttpError && error.code === "unreachable";
+          if (!unreachable) chosen = i;
+          if (unreachable && i + 1 < servers.length) continue;
+          throw error;
+        }
+      }
+    },
+  };
+}
+
 /** One request, without following redirects; a non-2xx answer becomes a SyncHttpError. */
 async function send<T>(doFetch: Fetch, server: string, method: string, path: string, raw: Uint8Array | null, headers: Record<string, string>): Promise<T> {
   let response: Response;
@@ -306,7 +340,7 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
 const encode = (body: unknown): Uint8Array | null => (body === undefined ? null : new TextEncoder().encode(JSON.stringify(body)));
 
 export function syncClient(options: ClientOptions) {
-  const doFetch = clientFetch(options.server, options.fetch, options.pin);
+  const server = addresses(options.servers, options.fetch, options.pin);
   const clock = options.now ?? Date.now;
   // Never the same millisecond twice: Ed25519 signatures are deterministic, so
   // two identical requests stamped alike would carry the same signature, and
@@ -320,11 +354,16 @@ export function syncClient(options: ClientOptions) {
       ...signRequest(options.sign, options.deviceId, method, `${PROTOCOL_PREFIX}${path}`, raw ?? new Uint8Array(), now()),
       ...extra,
     };
-    return send<T>(doFetch, options.server, method, path, raw, headers);
+    // Signed once for every address: one that timed out may still have
+    // delivered the request, and the server then refuses the same signature
+    // as a replay rather than applying the request twice.
+    return server.send((url, doFetch) => send<T>(doFetch, url, method, path, raw, headers));
   }
 
   const vault = `/vaults/${options.vaultId}`;
   return {
+    /** The address that answered, or null before one has. */
+    address: server.address,
     createVault(body: CreateVaultBody, enrollToken: string | null) {
       return call<{ epoch: number; head: number }>("POST", "/vaults", body, enrollToken ? { [HEADERS.enrollToken]: enrollToken } : {});
     },
@@ -368,16 +407,19 @@ export type SyncClient = ReturnType<typeof syncClient>;
 
 /**
  * The new device's half of pairing, before it has a key the server knows:
- * unsigned. The answer is sealed with the pairing secret instead.
+ * unsigned. The answer is sealed with the pairing secret instead. `onTry`
+ * hears of each address before a request first goes to it.
  */
-export function pairingClient(server: string, fetchImpl?: Fetch, pin?: Buffer | null) {
-  const doFetch = clientFetch(server, fetchImpl, pin);
+export function pairingClient(servers: string[], fetchImpl?: Fetch, pin?: Buffer | null, onTry?: (server: string) => void) {
+  const server = addresses(servers, fetchImpl, pin, onTry);
   return {
+    /** The address that answered, or null before one has. */
+    address: server.address,
     answer(pairingId: string, payload: string) {
-      return send<void>(doFetch, server, "PUT", `/pairings/${pairingId}`, encode({ payload }), {});
+      return server.send((url, doFetch) => send<void>(doFetch, url, "PUT", `/pairings/${pairingId}`, encode({ payload }), {}));
     },
     state(pairingId: string) {
-      return send<PairingStateOut>(doFetch, server, "GET", `/pairings/${pairingId}`, null, {});
+      return server.send((url, doFetch) => send<PairingStateOut>(doFetch, url, "GET", `/pairings/${pairingId}`, null, {}));
     },
   };
 }

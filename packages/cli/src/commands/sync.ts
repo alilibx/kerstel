@@ -46,6 +46,7 @@ import {
   recordResult,
   saveSync,
   setFullPull,
+  shownAddress,
   SYNC_META,
   SyncSettingsError,
   writeSync,
@@ -316,7 +317,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     const deviceId = newId();
     const keys = generateDeviceKeys();
     const syncKey = generateSyncKey();
-    const client = syncClient({ server, vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
+    const client = syncClient({ servers: [server], vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
     await client.createVault(
       {
         vaultId,
@@ -335,12 +336,12 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
       process.env.KERSTEL_SYNC_ENROLL_TOKEN || null,
     );
 
-    const config: SyncConfig = { server, pin, vaultId, deviceId, epoch: 1, syncKey, keys, head: 0 };
+    const config: SyncConfig = { servers: [server], pin, vaultId, deviceId, epoch: 1, syncKey, keys, head: 0 };
     saveSync(ctx.vault, ctx.dataKey, config);
     ctx.vault.sync.trackAll();
     const report = emptyReport();
     await push({ vault: ctx.vault, dataKey: ctx.dataKey, config, client }, report);
-    recordResult(ctx.vault, null);
+    recordResult(ctx.vault, null, client.address());
     ok(`Synced ${plural(report.pushed.length, "secret")}. Add another device with: ${cliName()} sync add-device`);
     schedule(ctx.vault, deps);
     return 0;
@@ -358,7 +359,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
 /** A signed client for this device's vault. */
 export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "now"> = {}) {
   return syncClient({
-    server: config.server,
+    servers: config.servers,
     vaultId: config.vaultId,
     deviceId: config.deviceId,
     sign: config.keys.sign,
@@ -600,7 +601,7 @@ async function backgroundSync(ctx: CliContext, deps: SyncDeps, started: number):
     const pending = ctx.vault.sync.rows().some((row) => row.dirty && row.conflict === null);
     if (lastTry >= started && !pending) return 0;
     await syncOnce(sync);
-    recordResult(ctx.vault, null);
+    recordResult(ctx.vault, null, sync.client.address());
     return 0;
   } catch (error) {
     recordResult(ctx.vault, explain(error));
@@ -632,7 +633,7 @@ async function finish(
   if (report.conflicts.length > 0) {
     const settled = await settleConflicts(sync, report, options);
     if (settled === null) {
-      recordResult(sync.vault, null);
+      recordResult(sync.vault, null, sync.client.address());
       return 1;
     }
     // Push what was kept here.
@@ -646,7 +647,7 @@ async function finish(
         fail(`${plural(still.length, "key was", "keys were")} changed on another device again while you chose:`);
         for (const ref of still) console.log(`  ${describe(ref)}`);
         console.log(`Run ${cliName()} sync again to choose.`);
-        recordResult(sync.vault, null);
+        recordResult(sync.vault, null, sync.client.address());
         return 1;
       }
     } catch (error) {
@@ -656,7 +657,7 @@ async function finish(
     }
   }
   if (report.applied.length + report.pushed.length + report.conflicts.length === 0) ok("Up to date.");
-  recordResult(sync.vault, null);
+  recordResult(sync.vault, null, sync.client.address());
   return 0;
 }
 
@@ -741,7 +742,9 @@ async function status(args: string[], deps: SyncDeps, open: () => Promise<CliCon
     const pending = rows.filter((r) => r.dirty && !r.conflict).length;
     const conflicts = rows.filter((r) => r.conflict).length;
     const { lastOk, lastError } = lastResult(ctx.vault);
-    console.log(`Server        ${config.server}`);
+    const shown = shownAddress(config.servers, ctx.vault.getMeta(SYNC_META.lastAddress));
+    const others = config.servers.filter((url) => url !== shown);
+    console.log(`Server        ${shown}${others.length > 0 ? ` (also ${others.join(", ")})` : ""}`);
     if (config.pin) console.log(`Certificate   pinned (${formatPin(config.pin)})`);
     console.log(`Last sync     ${when(lastOk)}`);
     console.log(`Pulls         ${pullsLine(ctx.vault, deps)}`);
@@ -908,7 +911,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
     try {
       // The value is a secret while the slot is open: it goes to the terminal
       // and the clipboard's stdin, never to a log or another command's argv.
-      const line = `${cliName()} sync join ${encodeJoinValue({ urls: [sync.config.server], pin: sync.config.pin, secret })}`;
+      const line = `${cliName()} sync join ${encodeJoinValue({ urls: sync.config.servers, pin: sync.config.pin, secret })}`;
       console.log("On the new device, run:");
       console.log("");
       console.log(`  ${line}`);
@@ -1075,32 +1078,35 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     const signPub = publicKeyOf(keys.sign);
     const pairingId = pairingIdOf(secret);
     const sealedAnswer = sealPairingAnswer(secret, { v: 1, deviceId, signPub, encPub: publicKeyOf(keys.enc), ...me });
-    // The value may name several addresses for one server. Only an address
-    // that can't be reached moves on to the next; the first that answers is
-    // the one this device polls, joins through and keeps.
-    let server = "";
-    let pairing = pairingClient(servers[0]!, deps.fetch, pin);
-    for (const [i, url] of servers.entries()) {
-      server = url;
-      pairing = pairingClient(url, deps.fetch, pin);
+    // The value may name several addresses for one server. The pairing client
+    // moves on only from an address that can't be reached; the first that
+    // answers is the one this device polls and joins through.
+    let tried = servers[0]!;
+    let attempts = 0;
+    const pairing = pairingClient(servers, deps.fetch, pin, (url) => {
+      tried = url;
+      attempts += 1;
       // Named before the request, so the person sees which server each attempt goes to.
       console.log(`Joining the vault on ${url}.`);
-      try {
-        await pairing.answer(pairingId, sealedAnswer);
-        break;
-      } catch (error) {
-        if (error instanceof SyncHttpError && error.code === "unreachable" && i + 1 < servers.length) continue;
-        if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
-          fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
-        } else {
-          fail(`Could not join: ${explainBeforeSync(error, url, JOIN_PIN_DOES_NOT_MATCH)}`);
-          if (codeForm && isUnpinnedSelfSigned(error)) {
-            info(`If this server pins its own certificate, pair with the ks1- line from ${cliName()} sync add-device instead.`);
-          }
+    });
+    try {
+      await pairing.answer(pairingId, sealedAnswer);
+    } catch (error) {
+      const code = error instanceof SyncHttpError ? error.code : null;
+      if (code === "pairing_used" && attempts > 1) {
+        // An address before this one may have delivered the answer and then timed out.
+        fail("That pairing may already have been answered. On the other device, check whether this device was added.");
+      } else if (code === "not_found" || code === "pairing_used") {
+        fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
+      } else {
+        fail(`Could not join: ${explainBeforeSync(error, tried, JOIN_PIN_DOES_NOT_MATCH)}`);
+        if (codeForm && isUnpinnedSelfSigned(error)) {
+          info(`If this server pins its own certificate, pair with the ks1- line from ${cliName()} sync add-device instead.`);
         }
-        return 1;
       }
+      return 1;
     }
+    const server = pairing.address() ?? tried;
     console.log(`This device: ${bold(me.name)}, key fingerprint ${fingerprint(signPub)}`);
     console.log(dim("Confirm it on the other device, and check that it shows the same fingerprint. Waiting…"));
 
@@ -1123,7 +1129,8 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       return 1;
     }
 
-    const client = syncClient({ server, vaultId: accepted.vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
+    // The address that answered, alone: the rest of this process goes there, as a client's would.
+    const client = syncClient({ servers: [server], vaultId: accepted.vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
     let sealed;
     try {
       sealed = await client.keys();
@@ -1148,7 +1155,8 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       return 1;
     }
     const config: SyncConfig = {
-      server,
+      // Every address in the value, in order: another network may reach another one.
+      servers,
       pin,
       vaultId: accepted.vaultId,
       deviceId,
@@ -1239,7 +1247,7 @@ async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<
       fail(`Could not remove ${label}: ${explain(error)}`);
       return 1;
     }
-    recordResult(ctx.vault, null);
+    recordResult(ctx.vault, null, sync.client.address());
     recordDevice(ctx.vault);
     if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
     ok(`Removed ${label} and replaced the sync key. Your other devices pick up the new key on their next sync.`);

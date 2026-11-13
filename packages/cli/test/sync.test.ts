@@ -61,6 +61,8 @@ import { selfSignedCertificate } from "../../server/src/x509";
 /** Sync spec §12: the client against the real server, in-process. */
 
 const SERVER = "http://127.0.0.1:8787";
+/** An address nothing answers at: every fetch to it fails, as a refused connection does. */
+const DOWN = "http://127.0.0.1:1";
 const dirs: string[] = [];
 afterEach(() => {
   restoreEnv();
@@ -150,7 +152,7 @@ async function addSecond(a: Device, b: Device, s: Server): Promise<void> {
   expect(res.status).toBe(201);
   // B opens its own sealed copy of the key, as `join` will.
   const sealed = await syncClient({
-    server: SERVER,
+    servers: [SERVER],
     vaultId: config.vaultId,
     deviceId,
     sign: keys.sign,
@@ -158,7 +160,24 @@ async function addSecond(a: Device, b: Device, s: Server): Promise<void> {
     now: () => (s.clock.t += 1),
   }).keys();
   const syncKey = openSyncKey(sealed.sealedKey, keys.enc, { vaultId: config.vaultId, deviceId, epoch: sealed.epoch });
-  b.with((v) => saveSync(v, b.key, { server: SERVER, pin: null, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
+  b.with((v) => saveSync(v, b.key, { servers: [SERVER], pin: null, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
+}
+
+/** `s`, except that nothing answers at DOWN; `tried` lists the origin of every request. */
+function behindDown(s: Reach): Reach & { tried: string[] } {
+  const tried: string[] = [];
+  const fetch: Fetch = async (request) => {
+    const origin = new URL(request.url).origin;
+    tried.push(origin);
+    if (origin === DOWN) throw new Error("connection refused");
+    return s.fetch(request);
+  };
+  return { clock: s.clock, fetch, tried };
+}
+
+/** Gives `d`'s sync settings these server addresses. */
+function setServers(d: Device, servers: string[]): void {
+  d.with((v) => saveSync(v, d.key, { ...loadSync(v, d.key)!, servers }));
 }
 
 async function sync(d: Device, s: Reach, args: string[] = []): Promise<{ code: number; out: string }> {
@@ -320,6 +339,120 @@ describe("one device and the server", () => {
     const before = a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length);
     expect((await sync(a, s, ["off", "--delete-vault"])).code).toBe(0);
     expect(a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length)).toBe(before + 1);
+  });
+});
+
+describe("a server with several addresses", () => {
+  test("the next address is tried when one can't be reached", async () => {
+    const s = server();
+    const a = device();
+    a.with((v) => v.setSecret(ref("app", "A"), "1"));
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.setSecret(ref("app", "A"), "2"));
+    const reach = behindDown(s);
+    const { code, out } = await sync(a, reach);
+    expect(code).toBe(0);
+    expect(out).toContain("Pushed 1 change.");
+    // Only the first request walks the list; everything after goes to the address that answered.
+    expect(reach.tried.filter((o) => o === DOWN)).toHaveLength(1);
+    expect(reach.tried.length).toBeGreaterThan(2);
+    expect(a.with((v) => v.getMeta(SYNC_META.lastAddress))).toBe(SERVER);
+  });
+
+  test("an answer that is an error is still an answer: the next address is not tried", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const other = "http://localhost:8787";
+    setServers(a, [SERVER, other]);
+    const tried: string[] = [];
+    const refusing: Reach = {
+      clock: s.clock,
+      fetch: async (request) => {
+        tried.push(new URL(request.url).origin);
+        return Response.json({ error: "unavailable", message: "The server is starting." }, { status: 503 });
+      },
+    };
+    const { code, out } = await sync(a, refusing);
+    expect(code).toBe(1);
+    expect(out).toContain("The server is starting.");
+    expect(tried).toEqual([SERVER]);
+  });
+
+  test("a 0.3 vault loads as one address", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // What a vault set up by 0.3 holds: sync_server alone.
+    a.with((v) => v.deleteMeta(SYNC_META.servers));
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([SERVER]);
+    expect((await sync(a, s)).code).toBe(0);
+  });
+
+  test("every address is saved, and sync_server stays the first for an older Kerstel", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    expect(a.with((v) => [v.getMeta(SYNC_META.server), v.getMeta(SYNC_META.servers)])).toEqual([DOWN, `${DOWN}\n${SERVER}`]);
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([DOWN, SERVER]);
+  });
+
+  test("addresses an older Kerstel left behind for another server are not used", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // 0.3 does not know sync_servers: its sync off leaves the row, and its setup writes sync_server alone.
+    a.with((v) => v.setMeta(SYNC_META.servers, `${DOWN}\nhttps://old.example.com`));
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([SERVER]);
+  });
+
+  test("an empty or unsafe address list is damaged settings", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const cases: Array<[string, string]> = [
+      ["", `This vault's sync settings are damaged (${SYNC_META.servers} is empty).`],
+      [`${SERVER}\n`, `This vault's sync settings are damaged (${SYNC_META.servers} is empty).`],
+      [
+        `${SERVER}\nhttp://sync.example.com`,
+        `This vault's sync settings are damaged (${SYNC_META.servers} names a server Kerstel will not send your vault to).`,
+      ],
+    ];
+    for (const [row, thrown] of cases) {
+      a.with((v) => v.setMeta(SYNC_META.servers, row));
+      expect(() => a.with((v) => loadSync(v, a.key))).toThrow(thrown);
+      expect(() => a.with((v) => loadSync(v, a.key))).toThrow(SyncSettingsError);
+    }
+  });
+
+  test("status shows the address that answered", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
+    // None has answered yet: the first.
+    expect((await sync(a, s, ["status"])).out).toContain(`Server        ${DOWN} (also ${SERVER})`);
+    expect((await sync(a, behindDown(s))).code).toBe(0);
+    expect((await sync(a, s, ["status"])).out).toContain(`Server        ${SERVER} (also ${DOWN})`);
+    // One address: no "also".
+    setServers(a, [SERVER]);
+    const one = (await sync(a, s, ["status"])).out;
+    expect(one).toContain(`Server        ${SERVER}\n`);
+    expect(one).not.toContain("(also");
+  });
+
+  test("doctor's glance names the address that answered", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
+    expect(glanceSync(join(a.home, "vault.db")).server).toBe(DOWN);
+    expect((await sync(a, behindDown(s))).code).toBe(0);
+    expect(glanceSync(join(a.home, "vault.db")).server).toBe(SERVER);
   });
 });
 
@@ -544,7 +677,7 @@ describe("review fixes", () => {
   /** What `remove-device` will do (#82), minus the removal: device A replaces the sync key. */
   async function rotate(a: Device, s: Server): Promise<void> {
     const config = a.with((v) => loadSync(v, a.key))!;
-    const client = syncClient({ server: SERVER, vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: () => (s.clock.t += 1) });
+    const client = syncClient({ servers: [SERVER], vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: () => (s.clock.t += 1) });
     const page = await client.pull(0, true);
     const newKey = generateSyncKey();
     const epoch = config.epoch + 1;
@@ -1027,8 +1160,53 @@ describe("pairing, joining and removing devices", () => {
     expect(named).toEqual(["Joining the vault on http://127.0.0.1:1.", `Joining the vault on ${SERVER}.`]);
     // Only the first request walks the list; everything after goes to the server that answered.
     expect(tried.filter((o) => o === "http://127.0.0.1:1")).toHaveLength(1);
-    expect(b.with((v) => loadSync(v, b.key))!.server).toBe(SERVER);
+    expect(b.with((v) => loadSync(v, b.key))!.servers).toEqual(["http://127.0.0.1:1", SERVER]);
+    expect(b.with((v) => v.getMeta(SYNC_META.lastAddress))).toBe(SERVER);
+    expect(out).toContain(`Joined the vault on ${SERVER}.`);
     expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("join saves every address", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const other = "http://localhost:8787";
+    setServers(a, [SERVER, other]);
+    const b = device();
+    const { added, joined, value } = await pairUp(a, b, s);
+    expect([added, joined]).toEqual([0, 0]);
+    // add-device writes every address into the join value, in order.
+    expect(decoded(value).urls).toEqual([SERVER, other]);
+    expect(b.with((v) => loadSync(v, b.key))!.servers).toEqual([SERVER, other]);
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("a pairing answer that may have arrived before an address timed out", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const config = a.with((v) => loadSync(v, a.key))!;
+    const secret = newPairingSecret();
+    await syncClient({ servers: [SERVER], vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: tick(s) }).openPairing(
+      pairingIdOf(secret),
+    );
+    const b = device();
+    // The first address delivers the answer, then times out before its reply comes back.
+    const late: Fetch = async (request) => {
+      if (new URL(request.url).origin !== DOWN) return s.fetch(request);
+      await s.fetch(new Request(request.url.replace(DOWN, SERVER), request));
+      throw new Error("The operation timed out.");
+    };
+    const { result, out } = await quiet(() =>
+      syncCommand(["join", encodeJoinValue({ urls: [DOWN, SERVER], pin: null, secret })], {
+        fetch: late,
+        context: b.context,
+        interactive: false,
+        now: tick(s),
+      }),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain("That pairing may already have been answered. On the other device, check whether this device was added.");
+    expect(out).not.toContain("expired or was already used");
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
   });
 
   test("join schedules pulls", async () => {
@@ -1117,7 +1295,7 @@ describe("pairing, joining and removing devices", () => {
         name: "forged",
         platform: "Linux",
       });
-      await pairingClient(SERVER, s.fetch).answer(pairingIdOf(decoded(value).secret), forged);
+      await pairingClient([SERVER], s.fetch).answer(pairingIdOf(decoded(value).secret), forged);
       expect(await adding).toBe(1);
       expect(prompter.asked).toEqual([]);
       expect(log.text()).toContain("without this pairing's secret");
