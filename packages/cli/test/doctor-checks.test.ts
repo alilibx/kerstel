@@ -3,6 +3,7 @@ import { howItWorksNote } from "../src/commands/doctor";
 import { backendLabel, exitCode, gatherChecks, type DoctorFacts } from "../src/doctor/checks";
 import type { ProjectStatus } from "../src/init/status";
 import type { SyncGlance } from "../src/sync/background";
+import type { TimerStatus } from "../src/sync/timer";
 
 const HOME = "/home/kerstel/.kerstel";
 const TOKEN = `${HOME}/session.token`;
@@ -573,6 +574,8 @@ describe("Sync", () => {
     lastOk: NOW - 3 * 60_000,
     lastTry: NOW - 3 * 60_000,
     lastError: null,
+    lastTimer: null,
+    lastSpawn: null,
   };
   const sync = (state: Partial<SyncGlance>) => checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, now: NOW })), "Sync");
 
@@ -599,5 +602,37 @@ describe("Sync", () => {
     expect(sync({ lastOk: null })?.detail).toContain("never synced");
     // Warnings, not problems: doctor still exits 0.
     expect(exitCode(gatherChecks(allPassFacts({ sync: { ...on, conflicts: 1 }, now: NOW })))).toBe(0);
+  });
+
+  describe("the pull schedule", () => {
+    const withTimer = (timer: TimerStatus, state: Partial<SyncGlance> = {}) =>
+      checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, timer, now: NOW })), "Sync");
+
+    test("sync row shows the schedule", () => {
+      const row = withTimer({ state: "installed", kind: "launchd", current: true }, { lastTimer: NOW - 2 * 60_000 });
+      expect(row?.status).toBe("pass");
+      expect(row?.detail).toContain("pulls every 5 minutes, last ran 2 minutes ago");
+      expect(withTimer({ state: "installed", kind: "systemd", current: true })?.detail).toContain("pulls every 5 minutes");
+    });
+
+    test("a missing timer warns", () => {
+      const row = withTimer({ state: "missing", kind: "launchd" });
+      expect(row?.status).toBe("warn");
+      expect(row?.detail).toContain("pulls not scheduled");
+      expect(row?.fix?.endsWith("to schedule them")).toBe(true);
+    });
+
+    test("a stale timer warns", () => {
+      const row = withTimer({ state: "installed", kind: "systemd", current: false });
+      expect(row?.status).toBe("warn");
+      expect(row?.detail).toContain("the scheduled pull's settings differ from this shell's");
+      expect(row?.fix).toBe("ks sync, to update it");
+    });
+
+    test("an unavailable timer is not a warning", () => {
+      const row = withTimer({ state: "unavailable", reason: "no systemd user session" });
+      expect(row?.status).toBe("pass");
+      expect(row?.detail).toContain("pulls not scheduled (no systemd user session)");
+    });
   });
 });

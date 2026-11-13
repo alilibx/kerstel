@@ -79,9 +79,11 @@ A new device that already holds secrets merges them in. A key only it holds is u
 
 ## Day to day
 
-After a command that writes the vault (`set`, `rm`, `init`, `move`, or `ui`), Kerstel syncs in the background. `run` and `exec` start a background sync when none has finished in the last five minutes. Neither one waits for the network, and an unreachable server never fails the command. A value pulled after an app starts reaches it the next time it starts.
+You don't need to run anything. Every synced device pulls changes every five minutes on its own, through a launchd agent on macOS or a systemd user timer on Linux. `sync setup` and `sync join` install it, and a device that already syncs gets it on its next sync. It pulls while you are logged in: a device that was logged out catches up within five minutes of the next login. Kerstel never turns on systemd lingering and never unlocks your keyring. Where pulls can't be scheduled, on Linux with no systemd user session or on a Mac nobody is logged in to (over SSH, for example), `sync setup`, `sync join` and every `kerstel sync` you run say so, and pulls still happen on `run`, `exec` and every write. On macOS, the first time the pull is scheduled, the system shows a "Background Items Added" notification, and turning Kerstel off under Login Items in System Settings stops the pulls.
 
-`kerstel sync` does the same in the foreground and says what changed. `kerstel sync status` and `kerstel doctor` show the server, the last successful sync, changes still waiting to be pushed, open conflicts, and the last error. `doctor` warns after seven days without a successful sync.
+After a command that writes the vault (`set`, `rm`, `init`, `move`, or `ui`), Kerstel pushes the change in the background at once. `run` and `exec` start a background sync when none has started in the last minute, or five minutes after a failed one. Neither one waits for the network, and an unreachable server never fails the command. A value pulled after an app starts reaches it the next time it starts.
+
+`kerstel sync status` and `kerstel doctor` show the server, the last successful sync, when the scheduled pull last ran, changes still waiting to be pushed, open conflicts, and the last error. `doctor` warns after seven days without a successful sync, and when the scheduled pull is missing or its settings differ from your shell's. `kerstel sync off` and `kerstel uninstall` remove the scheduled pull. A scheduled pull that finds no vault, as when `KERSTEL_HOME` is on a drive that isn't mounted yet, does nothing and runs again five minutes later. You need `kerstel sync` itself only to settle a conflict or to see what changed.
 
 The daemon never syncs and never opens a network connection.
 

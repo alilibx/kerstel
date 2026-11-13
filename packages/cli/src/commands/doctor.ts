@@ -13,6 +13,7 @@ import { note, step } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
 import { glanceSync } from "../sync/background";
+import { syncTimer, type TimerStatus } from "../sync/timer";
 import { githubReleases } from "../update/release-source";
 import { VERSION } from "../version";
 import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
@@ -171,6 +172,15 @@ export async function doctorCommand(
     // Started first, so the network round trip overlaps the local checks.
     const latestVersion = deps.latestVersion();
     const project = projectStatus(cwd, ctx.vault);
+    const sync = glanceSync(ctx.vault.file);
+    let timer: TimerStatus | undefined;
+    if (sync.on) {
+      try {
+        timer = syncTimer().status();
+      } catch {
+        // A timer that cannot be read is no reason to fail doctor.
+      }
+    }
     const facts: DoctorFacts = {
       backend: ctx.backend,
       secretCount: ctx.vault.listSecrets().length,
@@ -191,7 +201,8 @@ export async function doctorCommand(
       releaseProblem: deps.releaseProblem ?? null,
       // Set-but-empty injects nothing, so it is not worth a warning.
       bunOptions: process.env.BUN_OPTIONS?.trim() ? process.env.BUN_OPTIONS : null,
-      sync: glanceSync(ctx.vault.file),
+      sync,
+      timer,
       now: Date.now(),
     };
 

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { daemonCwd, daemonEnv } from "../daemon/env";
 import { cliCommand } from "../daemon/spawn";
@@ -9,13 +9,15 @@ import { SYNC_META } from "./state";
 /**
  * Sync in the background. Sync spec §8.1: a command that writes the vault
  * starts a detached `kerstel sync --background`, `run` and `exec` start one
- * when the last sync is more than five minutes old, and one lock file keeps
+ * when the last sync is a minute old (five after a failed one), and one lock file keeps
  * syncs from overlapping. None of it ever waits on the network or fails the
  * command that started it.
  */
 
-/** `run` and `exec` sync in the background when no sync finished in this long. */
-export const BACKGROUND_PULL_AFTER_MS = 5 * 60_000;
+/** `run` and `exec` start a background sync when none started or finished in this long. */
+export const BACKGROUND_PULL_AFTER_MS = 60_000;
+/** After a failed sync they wait this long since one started or finished, so an unreachable server isn't tried on every command. */
+export const BACKGROUND_RETRY_AFTER_MS = 5 * 60_000;
 /** `doctor` warns when the last successful sync is older than this. */
 export const STALE_SYNC_MS = 7 * 24 * 60 * 60_000;
 
@@ -29,9 +31,47 @@ export interface SyncGlance {
   lastOk: number | null;
   lastTry: number | null;
   lastError: string | null;
+  /** When the pull timer last started a sync. */
+  lastTimer: number | null;
+  /** When `run` or `exec` last started a background sync, from the `sync-spawned` file. */
+  lastSpawn: number | null;
 }
 
-const OFF: SyncGlance = { on: false, pending: 0, conflicts: 0, server: null, lastOk: null, lastTry: null, lastError: null };
+const OFF: SyncGlance = {
+  on: false,
+  pending: 0,
+  conflicts: 0,
+  server: null,
+  lastOk: null,
+  lastTry: null,
+  lastError: null,
+  lastTimer: null,
+  lastSpawn: null,
+};
+
+/** Where `run` and `exec` note when they last started a sync, beside the vault. A start, not a finish: a sync that crashes or stalls still counts. */
+export function spawnMarkerPath(home: string = kerstelHome()): string {
+  return join(home, "sync-spawned");
+}
+
+/** The ms timestamp in the marker file, or null when it is missing or garbled. Never throws. */
+export function readSpawnMarker(file: string = spawnMarkerPath()): number | null {
+  try {
+    const value = Number(readFileSync(file, "utf8").trim());
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best effort and never throws: a missing marker only means one extra sync later. */
+export function writeSpawnMarker(ms: number, file: string = spawnMarkerPath()): void {
+  try {
+    writeFileSync(file, String(ms), { mode: 0o600 });
+  } catch {
+    // Ignored.
+  }
+}
 
 /** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
 export function glanceSync(file: string = vaultPath()): SyncGlance {
@@ -62,11 +102,44 @@ export function glanceSync(file: string = vaultPath()): SyncGlance {
       lastOk: time(SYNC_META.lastOk),
       lastTry: time(SYNC_META.lastTry),
       lastError: meta.get(SYNC_META.lastError) ?? null,
+      lastTimer: time(SYNC_META.lastTimer),
+      lastSpawn: readSpawnMarker(spawnMarkerPath(dirname(file))),
     };
   } catch {
     return OFF;
   } finally {
     db?.close();
+  }
+}
+
+// ---- The notice -------------------------------------------------------------
+
+/**
+ * `~/.kerstel/sync-notice`: one line a background sync leaves for the next
+ * command you run, since nobody reads a background process's output.
+ */
+export function syncNoticePath(home: string = kerstelHome()): string {
+  return join(home, "sync-notice");
+}
+
+/** Leaves a line for the next command to print. Never throws. */
+export function leaveSyncNotice(line: string, home: string = kerstelHome()): void {
+  try {
+    writeFileSync(syncNoticePath(home), `${line}\n`, { mode: 0o600 });
+  } catch {
+    // A notice is a courtesy: losing one changes nothing.
+  }
+}
+
+/** The line a background sync left, read once and deleted. Null when there is none. Never throws. */
+export function takeSyncNotice(home: string = kerstelHome()): string | null {
+  const file = syncNoticePath(home);
+  try {
+    const line = readFileSync(file, "utf8").trim();
+    rmSync(file, { force: true });
+    return line === "" ? null : line;
+  } catch {
+    return null;
   }
 }
 
@@ -131,7 +204,7 @@ export async function waitForSyncLock(file: string, timeoutMs: number): Promise<
  * NODE_OPTIONS or BUN_OPTIONS (see daemonEnv), and never the caller's other
  * variables, which under `exec` can be resolved secrets.
  */
-const NETWORK_SETTINGS = [
+export const NETWORK_SETTINGS = [
   "HTTPS_PROXY",
   "https_proxy",
   "HTTP_PROXY",
@@ -149,6 +222,8 @@ export function backgroundSyncEnv(base: NodeJS.ProcessEnv = process.env): Record
     const value = base[name];
     if (typeof value === "string") env[name] = value;
   }
+  // Test-only: keeps a test's background sync from installing a real timer.
+  if (base.KERSTEL_TEST_NO_SYNC_TIMER === "1") env.KERSTEL_TEST_NO_SYNC_TIMER = "1";
   return env;
 }
 
@@ -177,20 +252,30 @@ export interface BackgroundDeps {
   glance?: () => SyncGlance;
   spawn?: () => void;
   now?: () => number;
+  /** Records a start for the throttle. Defaults to the `sync-spawned` file. */
+  markSpawn?: (ms: number) => void;
 }
 
 /**
  * Before a command runs: `run` and `exec` start a sync when none finished in
- * the last five minutes. Before, and not after, because the app they start
+ * the last minute, or the last five after a failed one. "Started" counts: the
+ * `sync-spawned` file records each start here, because the child writes its
+ * own finish time only if it gets that far. Before, and not after, because the app they start
  * may run for hours. Never throws.
  */
 export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): boolean {
   if (!RUNS.has(command)) return false;
   try {
-    const sync = (deps.glance ?? glanceSync)();
+    // The marker is written beside the vault the glance reads it from.
+    const vault = vaultPath();
+    const sync = (deps.glance ?? (() => glanceSync(vault)))();
     if (!sync.on) return false;
-    const last = Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0);
-    if ((deps.now ?? Date.now)() - last < BACKGROUND_PULL_AFTER_MS) return false;
+    const now = (deps.now ?? Date.now)();
+    const spawned = sync.lastSpawn ?? 0;
+    if (sync.lastError !== null) {
+      if (now - Math.max(sync.lastTry ?? 0, spawned) < BACKGROUND_RETRY_AFTER_MS) return false;
+    } else if (now - Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0, spawned) < BACKGROUND_PULL_AFTER_MS) return false;
+    (deps.markSpawn ?? ((ms: number) => writeSpawnMarker(ms, spawnMarkerPath(dirname(vault)))))(now);
     (deps.spawn ?? spawnBackgroundSync)();
     return true;
   } catch {
