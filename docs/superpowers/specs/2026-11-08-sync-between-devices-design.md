@@ -320,4 +320,4 @@ When 0.3.0 ships, the following change in the same PR:
 3. **Excluding scopes.** Should `ks sync setup` let a user leave a scope, such as a work project, off the server? It is simple to add to `sync_state` but changes the conflict and join rules.
 4. **Windows.** The server needs no Windows build. The client follows the CLI's Windows work (#17).
 
-Follow-up: 0.4.0 (easy sync) takes up the setup friction 0.3.0 left: automatic pulls (#105), a command that installs and starts `kerstel-server` (#106), HTTPS for a self-hosted server without a hand-configured proxy (#107), and pairing with one pasted value, which revisits question 2 (#108). Each change updates the section of this spec it touches.
+Follow-up: 0.4.0 (easy sync) takes up the setup friction 0.3.0 left: automatic pulls (#105), a command that installs and starts `kerstel-server` (#106), HTTPS for a self-hosted server without configuring a reverse proxy by hand (#107), and pairing with one pasted value, which revisits question 2 (#108). Each change updates the section of this spec it touches.
