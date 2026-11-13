@@ -43,7 +43,7 @@ chmod +x kerstel-server-linux-x64
 | Option | Environment | Default |
 |---|---|---|
 | `--db <file>` | `KERSTEL_SERVER_DB` | `./kerstel-server.db` |
-| `--listen <host:port>` | `KERSTEL_SERVER_LISTEN` | `127.0.0.1:8787`, or `0.0.0.0:443` with `--domain` |
+| `--listen <host:port>` | `KERSTEL_SERVER_LISTEN` | `127.0.0.1:8787`, or `0.0.0.0:443` with `--domain` when neither this flag nor the variable is set |
 | `--enroll-token-file <file>` | `KERSTEL_SERVER_ENROLL_TOKEN` | none: anyone who can reach the server can create a vault |
 | `--trust-proxy` | | off: rate limits use the socket address, not `X-Forwarded-For` |
 | `--tls self` | `KERSTEL_SERVER_TLS` | off: plain HTTP |
@@ -187,7 +187,7 @@ You don't need to run anything. Every synced device pulls changes every five min
 
 After a command that writes the vault (`set`, `rm`, `init`, `move`, or `ui`), Kerstel pushes the change in the background at once. `run` and `exec` start a background sync when none has started in the last minute, or five minutes after a failed one. Neither one waits for the network, and an unreachable server never fails the command. A value pulled after an app starts reaches it the next time it starts.
 
-`kerstel sync status` and `kerstel doctor` show the server (and, for a pinned server, its pin), the last successful sync, when the scheduled pull last ran, changes still waiting to be pushed, open conflicts, and the last error. `doctor` warns after seven days without a successful sync, and when the scheduled pull is missing or its settings differ from your shell's. `kerstel sync off` and `kerstel uninstall` remove the scheduled pull. A scheduled pull that finds no vault, as when `KERSTEL_HOME` is on a drive that isn't mounted yet, does nothing and runs again five minutes later. You need `kerstel sync` itself only to settle a conflict or to see what changed.
+`kerstel sync status` and `kerstel doctor` show the server, the last successful sync, when the scheduled pull last ran, changes still waiting to be pushed, open conflicts, and the last error. For a pinned server, `sync status` also shows a `Certificate` line with its pin. `doctor` warns after seven days without a successful sync, and when the scheduled pull is missing or its settings differ from your shell's. `kerstel sync off` and `kerstel uninstall` remove the scheduled pull. A scheduled pull that finds no vault, as when `KERSTEL_HOME` is on a drive that isn't mounted yet, does nothing and runs again five minutes later. You need `kerstel sync` itself only to settle a conflict or to see what changed.
 
 The daemon never syncs and never opens a network connection.
 

@@ -26,7 +26,7 @@ bun run --cwd packages/server build        # dist/kerstel-server
 | Option | Environment | Default |
 |---|---|---|
 | `--db <file>` | `KERSTEL_SERVER_DB` | `./kerstel-server.db` |
-| `--listen <host:port>` | `KERSTEL_SERVER_LISTEN` | `127.0.0.1:8787`, or `0.0.0.0:443` with `--domain` |
+| `--listen <host:port>` | `KERSTEL_SERVER_LISTEN` | `127.0.0.1:8787`, or `0.0.0.0:443` with `--domain` when neither this flag nor the variable is set |
 | `--enroll-token-file <file>` | `KERSTEL_SERVER_ENROLL_TOKEN` | none: anyone who can reach the server can create a vault |
 | `--trust-proxy` | | off: rate limits use the socket address, not `X-Forwarded-For` |
 | `--tls self` | `KERSTEL_SERVER_TLS` | off: plain HTTP |
