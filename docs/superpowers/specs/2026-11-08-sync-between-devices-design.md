@@ -144,7 +144,7 @@ Upload the vault? (Y/n)
 ✓ Synced 214 secrets. Add another device with: ks sync add-device
 ```
 
-`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server started with an enroll token gets it from `KERSTEL_SYNC_ENROLL_TOKEN`. Without a terminal, `setup` needs `--yes` to upload. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`.
+`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server started with an enroll token gets it from `KERSTEL_SYNC_ENROLL_TOKEN`. Without a terminal, `setup` needs `--yes` to upload. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`. A server with a certificate of its own (§9.1) is set up with `--pin sha256/…`, which meets the rule because the pin is checked on `https://` only. The client checks the server's key on every request, fetches the certificate once per process from `GET /v1/certificate` and trusts exactly that one, and never retries a mismatch without the pin or follows a redirect. A mismatch sends nothing. The pin is stored with the sync settings and carried in the `ks1-…` join value, so a joining device needs no extra step. `ks sync off` on a device whose server shows another key leaves the vault locally and says it could not leave the server's copy. `ks sync status` shows a `Certificate` line for a pinned server.
 
 **Adding a device.** On a device that is already in the vault:
 
@@ -262,7 +262,12 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 - The log has one line per request: method, the route as a fixed label with every ID as `:id` (`(unknown)` for a path the server does not answer, so no text a caller puts in a path is logged), status and duration. No IDs, addresses or bodies.
 - Before 0.3.0, the server was published only on a nightly channel (a rolling `nightly` pre-release and `ghcr.io/alilibx/kerstel-server:nightly`). The 0.3.0 release PR moved it into `release.yml` and deleted the nightly workflow.
 - The image is `distroless/base` with no shell. It runs as a non-root user, keeps its database in the `/data` volume, and listens on `0.0.0.0:8787` inside the container.
-- TLS is left to a reverse proxy (Caddy, nginx, or a platform's load balancer). The docs give a Caddy example.
+- TLS has three modes, and plain HTTP behind a reverse proxy still works as before (Caddy, nginx, or a platform's load balancer; the docs give a Caddy example).
+  - `--tls self` (`KERSTEL_SERVER_TLS=self`): a certificate of its own, ECDSA P-256, with no expiry (RFC 5280). Names: `localhost`, `127.0.0.1`, the `--listen` host when it is a specific address, and each `--tls-name` (`KERSTEL_SERVER_TLS_NAMES`). The server prints `Certificate pin: sha256/…` when it starts. The pin is the SHA-256 of the certificate's SubjectPublicKeyInfo, so reissuing the certificate for new names with the same key keeps the pin.
+  - `--domain` (`KERSTEL_SERVER_DOMAIN`): a Let's Encrypt certificate over ACME HTTP-01, answered on `--acme-http` (default `0.0.0.0:80`) while the server listens on `0.0.0.0:443` unless `--listen` says otherwise. `--acme-directory` and `--acme-email` set the CA and a contact. It renews when fewer than 30 days remain, checking every 12 hours, and logs what to fix and retries after an hour when an order fails. Running with `--domain` agrees to the CA's terms.
+  - Tailscale: `--listen 127.0.0.1:8787` plus `tailscale serve --bg 8787`. Tailscale holds the certificate, so the client has no pin.
+  - The files sit beside the database: `<db>.tls-key.pem` and `<db>.acme-account.pem` (mode `0600`), and `<db>.tls-cert.pem`. The key survives restarts, and a new key only comes with a new database file.
+  - `GET /v1/certificate` is unauthenticated and returns `{ "certificate": "<base64 DER>" }`, or 404 `not_found` without TLS. The certificate is public data. A pinned client fetches it with `fetch`, so `HTTPS_PROXY` and `NO_PROXY` apply as for every other request.
 
 ### 9.2 API
 
@@ -272,6 +277,7 @@ JSON over HTTPS, versioned under `/v1`. Every request to `/v1/vaults/...` carrie
 |---|---|
 | `POST /v1/vaults` | Create a vault with its first device and sealed sync key |
 | `GET /v1/health` | Version and protocol, unauthenticated |
+| `GET /v1/certificate` | The server's own certificate as base64 DER, unauthenticated; 404 without TLS |
 | `GET /v1/vaults/:id/records?since=<rev>[&full=1][&limit=<n>]` | Records newer than a revision, 500 a page by default, with `more` when another page follows. `full=1` marks a full pull, which skips the `full_pull_required` check. |
 | `POST /v1/vaults/:id/records` | Push a batch with compare-and-swap. Returns accepted revisions and conflicts. |
 | `GET /v1/vaults/:id/keys` | This device's sealed sync key for the current epoch |
