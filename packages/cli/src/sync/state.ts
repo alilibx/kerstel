@@ -23,6 +23,10 @@ export const SYNC_META = {
   lastTry: "sync_last_try",
   /** Set with a new key until the full pull that follows it finishes. */
   fullPull: "sync_full_pull",
+  /** When the pull timer last started a sync, in ms. */
+  lastTimer: "sync_last_timer",
+  /** Set once this device has been told it can't schedule pulls. */
+  timerNoted: "sync_timer_noted",
 } as const;
 
 export interface SyncConfig {

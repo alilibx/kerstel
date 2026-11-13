@@ -573,6 +573,7 @@ describe("Sync", () => {
     lastOk: NOW - 3 * 60_000,
     lastTry: NOW - 3 * 60_000,
     lastError: null,
+    lastTimer: null,
   };
   const sync = (state: Partial<SyncGlance>) => checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, now: NOW })), "Sync");
 

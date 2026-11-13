@@ -15,7 +15,7 @@ import { updateCommand, versionCommand } from "./commands/update";
 import { isScrubbedEnvironment } from "./daemon/env";
 import { bold, fail } from "./output";
 import { ignoreProjectSettings } from "./project-env";
-import { conflictLine, syncAfterCommand, syncBeforeCommand } from "./sync/background";
+import { conflictLine, syncAfterCommand, syncBeforeCommand, takeSyncNotice } from "./sync/background";
 import { printBanner } from "./ui/banner";
 import { cliName } from "./ui/cli-name";
 import { detectTheme, makeTheme, theme } from "./ui/theme";
@@ -107,9 +107,13 @@ export async function runCli(argv: string[]): Promise<number> {
   // Not in a background sync or the daemon: nobody reads their stderr, and they start no sync of their own.
   const background = isScrubbedEnvironment();
   if (!background) {
+    const stderr = makeTheme(detectTheme(process.stderr));
     const conflicts = conflictLine(command, cliName());
     // stderr, so a value `resolve` prints on stdout stays clean.
-    if (conflicts) process.stderr.write(`${makeTheme(detectTheme(process.stderr)).yellow(conflicts)}\n`);
+    if (conflicts) process.stderr.write(`${stderr.yellow(conflicts)}\n`);
+    // A line a background sync left, such as the pull timer being scheduled.
+    const notice = takeSyncNotice();
+    if (notice) process.stderr.write(`${stderr.dim(notice)}\n`);
     syncBeforeCommand(command);
   }
   try {

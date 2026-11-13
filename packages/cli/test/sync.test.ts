@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
-import { timerEnv } from "../src/sync/timer";
+import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
 import { openDatabase } from "../../server/src/db";
 import { TIMING, newId, signRequest } from "../../server/src/protocol";
 import { syncCommand } from "../src/commands/sync";
@@ -33,15 +33,18 @@ import {
   backgroundSyncEnv,
   conflictLine,
   glanceSync,
+  leaveSyncNotice,
   syncAfterCommand,
   syncBeforeCommand,
   syncLockPath,
+  syncNoticePath,
+  takeSyncNotice,
   tryLockSync,
   type SyncGlance,
 } from "../src/sync/background";
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
-import { loadSync, saveSync } from "../src/sync/state";
+import { loadSync, saveSync, SYNC_META } from "../src/sync/state";
 import { generateDataKey } from "../src/vault/crypto";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
@@ -155,6 +158,23 @@ async function sync(d: Device, s: Server, args: string[] = []): Promise<{ code: 
 }
 
 const ref = (scope: string, key: string) => ({ scope, key });
+
+/** A pull timer that records its calls and answers from a script. Never touches launchd or systemd. */
+function fakeTimer(o: { ensure?: EnsureResult; status?: TimerStatus } = {}) {
+  const calls = { ensure: [] as { rewrite: boolean }[], remove: 0 };
+  const timer: SyncTimer = {
+    status: () => o.status ?? { state: "installed", kind: "launchd", current: true },
+    ensure: (x) => {
+      calls.ensure.push(x);
+      return o.ensure ?? "unchanged";
+    },
+    remove: () => {
+      calls.remove += 1;
+      return true;
+    },
+  };
+  return { timer, calls };
+}
 
 describe("crypto", () => {
   test("the sync key opens only for its device, vault and epoch", () => {
@@ -705,7 +725,7 @@ describe("pairing, joining and removing devices", () => {
     a: Device,
     b: Device,
     s: Server,
-    options: { answer?: "yes" | "no"; joinFetch?: Fetch; aName?: string; bName?: string } = {},
+    options: { answer?: "yes" | "no"; joinFetch?: Fetch; aName?: string; bName?: string; joinTimer?: SyncTimer } = {},
   ) {
     const log = captureLog();
     try {
@@ -731,6 +751,7 @@ describe("pairing, joining and removing devices", () => {
         now: tick(s),
         sleep: sleeper(s),
         deviceName: options.bName ?? "second",
+        timer: options.joinTimer,
       });
       const [added, joined] = await Promise.all([adding, joining]);
       return { added, joined, out: log.text(), asked: prompter.asked };
@@ -779,6 +800,17 @@ describe("pairing, joining and removing devices", () => {
     // A code works once.
     const again = await sync(device(), s, ["join", SERVER, out.match(/KS-[0-9A-Z-]{29}/)![0]]);
     expect(again.code).toBe(1);
+  });
+
+  test("join schedules pulls", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const fake = fakeTimer({ ensure: "installed" });
+    const { joined, out } = await pairUp(a, b, s, { joinTimer: fake.timer });
+    expect(joined).toBe(0);
+    expect(fake.calls.ensure).toEqual([{ rewrite: true }]);
+    expect(out).toContain("Pulls changes every five minutes on its own.");
   });
 
   test("add-device, join, and remove-device each write one device row", async () => {
@@ -1270,7 +1302,7 @@ describe("sync in the background", () => {
   });
 
   test("which commands start a background sync, and when", () => {
-    const on: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null };
+    const on: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null };
     const now = 10 * 60_000 + 1;
     const run = (command: string, state: Partial<typeof on>, when: "before" | "after") => {
       let spawned = 0;
@@ -1359,4 +1391,255 @@ describe("sync in the background", () => {
       http.stop(true);
     }
   }, 30_000);
+});
+
+describe("the pull timer", () => {
+  const tick = (s: Server) => () => (s.clock.t += 1);
+  const run = (d: Device, s: Server, args: string[], timer: SyncTimer) =>
+    quiet(() => syncCommand(args, { fetch: s.fetch, context: d.context, interactive: false, now: tick(s), timer }));
+  const unavailable: TimerStatus = { state: "unavailable", reason: "no systemd user session" };
+
+  test("setup schedules pulls", async () => {
+    const s = server();
+    const a = device();
+    const fake = fakeTimer({ ensure: "installed" });
+    const { result, out } = await run(a, s, ["setup", SERVER, "--yes"], fake.timer);
+    expect(result).toBe(0);
+    expect(fake.calls.ensure).toEqual([{ rewrite: true }]);
+    expect(out).toContain("Pulls changes every five minutes on its own.");
+  });
+
+  test("setup says when it can't schedule", async () => {
+    const s = server();
+    const a = device();
+    const fake = fakeTimer({ ensure: "unavailable", status: unavailable });
+    const { result, out } = await run(a, s, ["setup", SERVER, "--yes"], fake.timer);
+    expect(result).toBe(0);
+    expect(out).toContain("Can't schedule pulls here (no systemd user session). Kerstel still pulls when you run, exec, or change a secret.");
+    expect(out).not.toContain("Pulls changes every five minutes");
+    // Told once: neither a sync you run nor a background one says it again.
+    expect((await run(a, s, [], fake.timer)).out).not.toContain("Can't schedule");
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
+    expect(takeSyncNotice(a.home)).toBeNull();
+  });
+
+  test("a failed setup schedules nothing", async () => {
+    const s = server();
+    const a = device();
+    const fake = fakeTimer({ ensure: "installed" });
+    const down: Fetch = async () => {
+      throw new Error("connect ECONNREFUSED");
+    };
+    const { result } = await quiet(() =>
+      syncCommand(["setup", SERVER, "--yes"], { fetch: down, context: a.context, interactive: false, now: tick(s), timer: fake.timer }),
+    );
+    expect(result).toBe(1);
+    expect(fake.calls.ensure).toEqual([]);
+  });
+
+  test("a foreground sync rewrites the timer and says so only when it changed", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const unchanged = fakeTimer({ ensure: "unchanged" });
+    const quietRun = await run(a, s, [], unchanged.timer);
+    expect(quietRun.result).toBe(0);
+    expect(unchanged.calls.ensure).toEqual([{ rewrite: true }]);
+    expect(quietRun.out).not.toContain("scheduled pull");
+    expect(quietRun.out).not.toContain("five minutes");
+
+    const updated = fakeTimer({ ensure: "updated" });
+    const loud = await run(a, s, [], updated.timer);
+    expect(loud.result).toBe(0);
+    expect(loud.out).toContain("Updated the scheduled pull to match this shell's settings.");
+  });
+
+  test("a 0.3.0 device's first foreground sync installs the timer and says how to stop", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const fake = fakeTimer({ ensure: "installed" });
+    const { result, out } = await run(a, s, [], fake.timer);
+    expect(result).toBe(0);
+    expect(out).toContain("Pulls changes every five minutes on its own.");
+    expect(out).toMatch(/Run `\S+ sync off` to stop syncing this device\./);
+  });
+
+  test("a foreground sync says it can't schedule once, then stays quiet", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // A 0.3.0 device: set up before Kerstel could say so.
+    a.with((v) => v.deleteMeta(SYNC_META.timerNoted));
+    const fake = fakeTimer({ ensure: "unavailable", status: unavailable });
+    const line = "Can't schedule pulls here (no systemd user session). Kerstel still pulls when you run, exec, or change a secret.";
+    const first = await run(a, s, [], fake.timer);
+    expect(first.result).toBe(0);
+    expect(first.out).toContain(line);
+    const second = await run(a, s, [], fake.timer);
+    expect(second.result).toBe(0);
+    expect(second.out).not.toContain("Can't schedule");
+  });
+
+  test("a 0.3.0 device gets the timer on its next background sync", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    const fake = fakeTimer({ ensure: "installed" });
+    const { result, out } = await run(a, s, ["--background"], fake.timer);
+    expect(result).toBe(0);
+    expect(out).toBe("");
+    expect(fake.calls.ensure).toEqual([{ rewrite: false }]);
+    expect(takeSyncNotice(a.home)).toMatch(
+      /^kerstel: sync now pulls changes every five minutes on its own\. Run `\S+ sync off` to stop syncing this device\.$/,
+    );
+    expect(takeSyncNotice(a.home)).toBeNull();
+  });
+
+  test("the can't-schedule notice is left once", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // A 0.3.0 device: set up before Kerstel could say so.
+    a.with((v) => v.deleteMeta(SYNC_META.timerNoted));
+    const fake = fakeTimer({ ensure: "unavailable", status: unavailable });
+    a.with((v) => v.setSecret(ref("app", "ONE"), "one-1"));
+    expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
+    expect(takeSyncNotice(a.home)).toBe(
+      "kerstel: can't schedule sync pulls here (no systemd user session). Kerstel still pulls when you run, exec, or change a secret.",
+    );
+    a.with((v) => v.setSecret(ref("app", "TWO"), "two-2"));
+    expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
+    expect(fake.calls.ensure).toHaveLength(2);
+    expect(takeSyncNotice(a.home)).toBeNull();
+  });
+
+  test("a failed background sync leaves the timer alone", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    const fake = fakeTimer({ ensure: "installed" });
+    const down: Fetch = async () => {
+      throw new Error("connect ECONNREFUSED");
+    };
+    const { result } = await quiet(() =>
+      syncCommand(["--background"], { fetch: down, context: a.context, interactive: false, now: tick(s), timer: fake.timer }),
+    );
+    expect(result).toBe(1);
+    expect(fake.calls.ensure).toEqual([]);
+    expect(takeSyncNotice(a.home)).toBeNull();
+  });
+
+  test("a timer that throws changes nothing a background sync prints or returns", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+    const broken: SyncTimer = {
+      status: () => {
+        throw new Error("boom");
+      },
+      ensure: () => {
+        throw new Error("boom");
+      },
+      remove: () => {
+        throw new Error("boom");
+      },
+    };
+    expect(await run(a, s, ["--background", "--timer"], broken)).toEqual({ result: 0, out: "" });
+    expect(glanceSync(join(a.home, "vault.db")).pending).toBe(0);
+  });
+
+  test("a timer run with sync off removes the timer", async () => {
+    const s = server();
+    const a = device();
+    a.with((v) => v.setSecret(ref("app", "A"), "1"));
+    const fake = fakeTimer();
+    expect((await run(a, s, ["--background", "--timer"], fake.timer)).result).toBe(0);
+    expect(fake.calls.remove).toBe(1);
+    const plain = fakeTimer();
+    expect((await run(a, s, ["--background"], plain.timer)).result).toBe(0);
+    expect(plain.calls.remove).toBe(0);
+    // Sync stays off, and nothing about it was written.
+    expect(a.with((v) => v.getMeta(SYNC_META.lastTimer))).toBeNull();
+  });
+
+  test("a timer run records when it ran", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const before = Date.now();
+    expect((await run(a, s, ["--background", "--timer"], fakeTimer().timer)).result).toBe(0);
+    const after = Date.now();
+    const { lastTimer } = glanceSync(join(a.home, "vault.db"));
+    expect(typeof lastTimer).toBe("number");
+    expect(lastTimer!).toBeGreaterThanOrEqual(before);
+    expect(lastTimer!).toBeLessThanOrEqual(after);
+  });
+
+  test("background refuses unknown arguments", async () => {
+    const s = server();
+    const a = device();
+    expect((await run(a, s, ["--background", "--nope"], fakeTimer().timer)).result).toBe(2);
+    expect((await run(a, s, ["--background", "--timer", "--nope"], fakeTimer().timer)).result).toBe(2);
+  });
+
+  test("sync off removes the timer", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const fake = fakeTimer();
+    expect((await run(a, s, ["off", "--delete-vault"], fake.timer)).result).toBe(0);
+    expect(fake.calls.remove).toBe(1);
+  });
+
+  test("sync off on a device no longer in the vault removes the timer", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const b = device();
+    await addSecond(a, b, s);
+    expect((await sync(a, s, ["remove-device", "second"])).code).toBe(0);
+    const fake = fakeTimer();
+    const { result, out } = await run(b, s, ["off"], fake.timer);
+    expect(result).toBe(0);
+    expect(out).toContain("no longer in the synced vault");
+    expect(fake.calls.remove).toBe(1);
+  });
+
+  test("status shows the schedule", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const pulls = async (status: TimerStatus) =>
+      (await run(a, s, ["status"], fakeTimer({ status }).timer)).out.split("\n").find((l) => l.startsWith("Pulls"));
+
+    expect(await pulls({ state: "installed", kind: "launchd", current: true })).toBe("Pulls         every 5 minutes (launchd), last ran never");
+    a.with((v) => v.setMeta(SYNC_META.lastTimer, String(Date.UTC(2026, 10, 13, 9, 30))));
+    expect(await pulls({ state: "installed", kind: "systemd", current: true })).toBe(
+      "Pulls         every 5 minutes (systemd), last ran 2026-11-13 09:30",
+    );
+    expect(Bun.stripANSI((await pulls({ state: "missing", kind: "launchd" }))!)).toMatch(
+      /^Pulls {9}not scheduled: run `\S+ sync` to add it$/,
+    );
+    expect(Bun.stripANSI((await pulls(unavailable))!)).toBe("Pulls         not scheduled (no systemd user session)");
+    // The line sits right after Last sync.
+    const lines = (await run(a, s, ["status"], fakeTimer().timer)).out.split("\n");
+    expect(lines.findIndex((l) => l.startsWith("Pulls"))).toBe(lines.findIndex((l) => l.startsWith("Last sync")) + 1);
+  });
+
+  test("a notice is taken once, and taking one never throws", () => {
+    const home = isolateEnv({ prefix: "sync-notice" });
+    dirs.push(home);
+    expect(syncNoticePath(home)).toBe(join(home, "sync-notice"));
+    expect(takeSyncNotice(home)).toBeNull();
+    leaveSyncNotice("kerstel: hello", home);
+    expect(existsSync(syncNoticePath(home))).toBe(true);
+    expect(takeSyncNotice(home)).toBe("kerstel: hello");
+    expect(existsSync(syncNoticePath(home))).toBe(false);
+    expect(takeSyncNotice(join(home, "missing", "dir"))).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { daemonCwd, daemonEnv } from "../daemon/env";
 import { cliCommand } from "../daemon/spawn";
@@ -29,9 +29,20 @@ export interface SyncGlance {
   lastOk: number | null;
   lastTry: number | null;
   lastError: string | null;
+  /** When the pull timer last started a sync. */
+  lastTimer: number | null;
 }
 
-const OFF: SyncGlance = { on: false, pending: 0, conflicts: 0, server: null, lastOk: null, lastTry: null, lastError: null };
+const OFF: SyncGlance = {
+  on: false,
+  pending: 0,
+  conflicts: 0,
+  server: null,
+  lastOk: null,
+  lastTry: null,
+  lastError: null,
+  lastTimer: null,
+};
 
 /** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
 export function glanceSync(file: string = vaultPath()): SyncGlance {
@@ -62,11 +73,43 @@ export function glanceSync(file: string = vaultPath()): SyncGlance {
       lastOk: time(SYNC_META.lastOk),
       lastTry: time(SYNC_META.lastTry),
       lastError: meta.get(SYNC_META.lastError) ?? null,
+      lastTimer: time(SYNC_META.lastTimer),
     };
   } catch {
     return OFF;
   } finally {
     db?.close();
+  }
+}
+
+// ---- The notice -------------------------------------------------------------
+
+/**
+ * `~/.kerstel/sync-notice`: one line a background sync leaves for the next
+ * command you run, since nobody reads a background process's output.
+ */
+export function syncNoticePath(home: string = kerstelHome()): string {
+  return join(home, "sync-notice");
+}
+
+/** Leaves a line for the next command to print. Never throws. */
+export function leaveSyncNotice(line: string, home: string = kerstelHome()): void {
+  try {
+    writeFileSync(syncNoticePath(home), `${line}\n`, { mode: 0o600 });
+  } catch {
+    // A notice is a courtesy: losing one changes nothing.
+  }
+}
+
+/** The line a background sync left, read once and deleted. Null when there is none. Never throws. */
+export function takeSyncNotice(home: string = kerstelHome()): string | null {
+  const file = syncNoticePath(home);
+  try {
+    const line = readFileSync(file, "utf8").trim();
+    rmSync(file, { force: true });
+    return line === "" ? null : line;
+  } catch {
+    return null;
   }
 }
 

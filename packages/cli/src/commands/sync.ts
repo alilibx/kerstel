@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { dirname } from "node:path";
 import { openContext, type CliContext } from "../context";
 import { ClackPrompter, DefaultsPrompter, type Prompter } from "../init/prompts";
 import { bold, dim, fail, info, ok, yellow } from "../output";
@@ -33,7 +34,7 @@ import {
   type SyncContext,
   type SyncReport,
 } from "../sync/engine";
-import { syncLockPath, waitForSyncLock } from "../sync/background";
+import { leaveSyncNotice, syncLockPath, waitForSyncLock } from "../sync/background";
 import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
 import {
   forgetSync,
@@ -48,6 +49,7 @@ import {
   writeSync,
   type SyncConfig,
 } from "../sync/state";
+import { syncTimer, type EnsureResult, type SyncTimer, type TimerStatus } from "../sync/timer";
 import type { SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
 import type { Vault } from "../vault/store";
@@ -70,6 +72,8 @@ export interface SyncDeps {
   sleep?: (ms: number) => Promise<void>;
   /** For tests: this device's name, in place of the host name. */
   deviceName?: string;
+  /** For tests: the pull timer, in place of the real launchd agent or systemd timer. */
+  timer?: SyncTimer;
 }
 
 /** How often each side of a pairing asks the server for news. The new device's polls count against a per-address limit of 30 a minute. */
@@ -184,7 +188,7 @@ export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<
 
   if (sub === "--background") return background(rest, deps, plain);
   if (sub === "setup") return setup(rest, deps, open);
-  if (sub === "status") return status(rest, plain);
+  if (sub === "status") return status(rest, deps, plain);
   if (sub === "devices") return devices(rest, deps, plain);
   if (sub === "off") return off(rest, deps, open);
   if (sub === "add-device") return addDevice(rest, deps, open);
@@ -278,6 +282,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     await push({ vault: ctx.vault, dataKey: ctx.dataKey, config, client }, report);
     recordResult(ctx.vault, null);
     ok(`Synced ${plural(report.pushed.length, "secret")}. Add another device with: ${cliName()} sync add-device`);
+    schedule(ctx.vault, deps);
     return 0;
   } catch (error) {
     fail(`Sync setup failed: ${explain(error)}`);
@@ -307,6 +312,96 @@ function contextFor(ctx: CliContext, deps: SyncDeps): SyncContext | null {
 
 const notOn = () => info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup <url>.`);
 
+// ---- The pull timer ---------------------------------------------------------
+// Every call goes through these, so a timer that throws never fails a sync.
+
+/** The one place the real timer is built, and only when a command needs it. */
+function timerOf(deps: SyncDeps): SyncTimer {
+  return deps.timer ?? syncTimer();
+}
+
+function ensureTimer(deps: SyncDeps, rewrite: boolean): EnsureResult {
+  try {
+    return timerOf(deps).ensure({ rewrite });
+  } catch {
+    return "unavailable";
+  }
+}
+
+function timerStatus(deps: SyncDeps): TimerStatus {
+  try {
+    return timerOf(deps).status();
+  } catch (error) {
+    return { state: "unavailable", reason: (error as Error).message };
+  }
+}
+
+function removeTimer(deps: SyncDeps): void {
+  try {
+    timerOf(deps).remove();
+  } catch {
+    // Nothing to report: a timer left behind removes itself on its next run.
+  }
+}
+
+/** Why pulls can't be scheduled here, for a message. */
+function unavailableReason(deps: SyncDeps): string {
+  const status = timerStatus(deps);
+  if (status.state === "unavailable") return status.reason;
+  return `${status.kind} would not load it`;
+}
+
+const cantSchedule = (reason: string) =>
+  `Can't schedule pulls here (${reason}). Kerstel still pulls when you run, exec, or change a secret.`;
+
+/** Marks this device as told that pulls can't be scheduled. False when it already was. */
+function noteOnce(vault: Vault): boolean {
+  try {
+    if (vault.getMeta(SYNC_META.timerNoted) !== null) return false;
+    vault.setMeta(SYNC_META.timerNoted, "1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** After `setup` or `join`: schedule pulls, and say whether they are. */
+function schedule(vault: Vault, deps: SyncDeps): void {
+  if (ensureTimer(deps, true) !== "unavailable") {
+    ok("Pulls changes every five minutes on its own.");
+    return;
+  }
+  noteOnce(vault);
+  info(cantSchedule(unavailableReason(deps)));
+}
+
+/** After a sync you ran: bring the timer up to date with this shell's settings. */
+function refreshTimer(vault: Vault, deps: SyncDeps): void {
+  const result = ensureTimer(deps, true);
+  if (result === "updated") console.log(dim("Updated the scheduled pull to match this shell's settings."));
+  else if (result === "installed") {
+    ok("Pulls changes every five minutes on its own.");
+    console.log(dim(`Run \`${cliName()} sync off\` to stop syncing this device.`));
+  } else if (result === "unavailable" && noteOnce(vault)) info(cantSchedule(unavailableReason(deps)));
+}
+
+/** After a background sync: install a missing timer, and leave a line for the next command. Never throws. */
+function backgroundTimer(vault: Vault, deps: SyncDeps): void {
+  const home = dirname(vault.file);
+  const result = ensureTimer(deps, false);
+  if (result === "installed") {
+    leaveSyncNotice(
+      `kerstel: sync now pulls changes every five minutes on its own. Run \`${cliName()} sync off\` to stop syncing this device.`,
+      home,
+    );
+  } else if (result === "unavailable" && noteOnce(vault)) {
+    leaveSyncNotice(
+      `kerstel: can't schedule sync pulls here (${unavailableReason(deps)}). Kerstel still pulls when you run, exec, or change a secret.`,
+      home,
+    );
+  }
+}
+
 async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   let keep: "local" | "remote" | null = null;
   let reveal = false;
@@ -328,15 +423,16 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       notOn();
       return 1;
     }
-    let report: SyncReport;
+    let report: SyncReport | null = null;
     try {
       report = await syncOnce(sync);
     } catch (error) {
       recordResult(ctx.vault, explain(error));
       fail(`Sync failed: ${explain(error)}`);
-      return 1;
     }
-    return await finish(sync, report, { keep, reveal, deps });
+    const code = report === null ? 1 : await finish(sync, report, { keep, reveal, deps });
+    refreshTimer(ctx.vault, deps);
+    return code;
   } finally {
     ctx.vault.close();
   }
@@ -348,13 +444,27 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
  * result goes to `vault_meta` for `sync status` and `doctor`, and a conflict
  * is kept, never chosen (§8.4), for the line every command prints. When
  * another sync holds the lock, that one does the work.
+ *
+ * `--timer` marks a run the pull timer started. One that finds sync off
+ * removes its own timer: `sync off` may not have been able to.
  */
 async function background(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
-  if (args.length > 0) return 2;
+  const fromTimer = args.includes("--timer");
+  if (args.some((a) => a !== "--timer")) return 2;
   const started = Date.now();
   const ctx = await open();
   try {
-    if (ctx.vault.getMeta(SYNC_META.vaultId) === null) return 0;
+    if (ctx.vault.getMeta(SYNC_META.vaultId) === null) {
+      if (fromTimer) removeTimer(deps);
+      return 0;
+    }
+    if (fromTimer) {
+      try {
+        ctx.vault.setMeta(SYNC_META.lastTimer, String(started));
+      } catch {
+        // Only `sync status` reads it: never a reason to skip the pull.
+      }
+    }
     // Waits rather than leaving the work to the holder: it may have collected
     // its changes before the write that started this sync.
     const release = await waitForSyncLock(syncLockPath(ctx.vault.file), BACKGROUND_LOCK_WAIT_MS);
@@ -375,6 +485,7 @@ async function background(args: string[], deps: SyncDeps, open: () => Promise<Cl
     } finally {
       release();
     }
+    backgroundTimer(ctx.vault, deps);
     return 0;
   } finally {
     ctx.vault.close();
@@ -487,7 +598,16 @@ async function settleConflicts(
   return conflicts.length;
 }
 
-async function status(args: string[], open: () => Promise<CliContext>): Promise<number> {
+/** The `Pulls` value in `sync status`. */
+function pullsLine(vault: Vault, deps: SyncDeps): string {
+  const timer = timerStatus(deps);
+  if (timer.state === "unavailable") return dim(`not scheduled (${timer.reason})`);
+  if (timer.state === "missing") return yellow(`not scheduled: run \`${cliName()} sync\` to add it`);
+  const last = vault.getMeta(SYNC_META.lastTimer);
+  return `every 5 minutes (${timer.kind}), last ran ${when(last === null ? null : Number(last))}`;
+}
+
+async function status(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   if (args.length > 0) {
     fail(`Usage: ${cliName()} sync status`);
     return 2;
@@ -505,6 +625,7 @@ async function status(args: string[], open: () => Promise<CliContext>): Promise<
     const { lastOk, lastError } = lastResult(ctx.vault);
     console.log(`Server        ${config.server}`);
     console.log(`Last sync     ${when(lastOk)}`);
+    console.log(`Pulls         ${pullsLine(ctx.vault, deps)}`);
     console.log(`Pending       ${plural(pending, "change")} to push`);
     console.log(`Conflicts     ${conflicts === 0 ? "none" : yellow(`${conflicts} open: run ${cliName()} sync to settle`)}`);
     if (lastError) console.log(yellow(`Last error    ${lastError}`));
@@ -573,6 +694,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
       if (isUnknownDevice(error)) {
         // Already out of the vault: there is nothing to leave on the server.
         forgetSync(ctx.vault);
+        removeTimer(deps);
         ok("This device was no longer in the synced vault. Sync is off for it; your secrets stay here.");
         return 0;
       }
@@ -588,6 +710,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
     }
     recordDevice(ctx.vault);
     forgetSync(ctx.vault);
+    removeTimer(deps);
     ok(deleteVault ? "Deleted the vault on the server. Sync is off; your secrets stay here." : "Sync is off for this device. Your secrets stay here.");
     return 0;
   } finally {
@@ -841,15 +964,17 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     ok(`Joined the vault on ${server}.`);
 
     const sync: SyncContext = { vault: ctx.vault, dataKey: ctx.dataKey, config, client };
-    let report: SyncReport;
+    let report: SyncReport | null = null;
     try {
       report = await syncOnce(sync);
     } catch (error) {
       recordResult(ctx.vault, explain(error));
       fail(`The first sync failed: ${explain(error)}. Run ${cliName()} sync to finish it.`);
-      return 1;
     }
-    return await finish(sync, report, { keep: null, reveal: false, deps });
+    const code = report === null ? 1 : await finish(sync, report, { keep: null, reveal: false, deps });
+    // The device has joined either way: its pulls finish a first sync that failed.
+    schedule(ctx.vault, deps);
+    return code;
   } finally {
     ctx.vault.close();
   }
