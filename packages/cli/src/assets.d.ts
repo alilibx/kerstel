@@ -9,3 +9,9 @@ declare module "*.cjs" {
   const path: string;
   export default path;
 }
+
+/** The server installer, embedded the same way (packages/cli/src/sync/installer.ts). */
+declare module "*.sh" {
+  const path: string;
+  export default path;
+}

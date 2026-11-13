@@ -57,6 +57,8 @@ jobs:
               --define "KERSTEL_SERVER_VERSION=\"$VERSION\"" \
               --target="bun-$target" --outfile "release/kerstel-server-$target"
           done
+          # The installer ships beside the binaries, so SHA256SUMS covers it.
+          cp packages/server/install/kerstel-server.sh release/kerstel-server.sh
           cd release && sha256sum kerstel-* > SHA256SUMS && cat SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
