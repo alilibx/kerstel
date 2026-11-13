@@ -242,6 +242,26 @@ describe("syncTimer", () => {
     expect(a.remove()).toBe(false);
   });
 
+  test("launchd remove deletes the plist before bootout, which may end the calling job", () => {
+    const { userHome, deps } = fixture();
+    const file = join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist");
+    const seen: boolean[] = [];
+    const t = syncTimer({
+      ...deps,
+      run: (argv) => {
+        // bootout of the job that is running this code ends it: anything after never runs.
+        if (argv[1] === "bootout") seen.push(existsSync(file));
+        return { code: 0, stdout: "" };
+      },
+    });
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    seen.length = 0;
+    expect(t.remove()).toBe(true);
+    expect(seen).toEqual([false]);
+    expect(existsSync(file)).toBe(false);
+    expect(t.remove()).toBe(false);
+  });
+
   test("test runs never install", () => {
     expect(process.env.KERSTEL_TEST_NO_SYNC_TIMER).toBe("1");
     const t = syncTimer();

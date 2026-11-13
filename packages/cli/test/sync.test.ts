@@ -1567,6 +1567,21 @@ describe("the pull timer", () => {
     expect(a.with((v) => v.getMeta(SYNC_META.lastTimer))).toBeNull();
   });
 
+  test("a timer run on a home with no vault removes the timer and creates nothing", async () => {
+    const home = isolateEnv({ prefix: "sync-novault" });
+    dirs.push(home);
+    rmSync(home, { recursive: true, force: true });
+    const fake = fakeTimer();
+    let opened = 0;
+    const context = async () => {
+      opened += 1;
+      throw new Error("must not open a vault");
+    };
+    const { result, out } = await quiet(() => syncCommand(["--background", "--timer"], { context, timer: fake.timer }));
+    expect({ result, out, opened, removed: fake.calls.remove }).toEqual({ result: 0, out: "", opened: 0, removed: 1 });
+    expect(existsSync(home)).toBe(false);
+  });
+
   test("a timer run records when it ran", async () => {
     const s = server();
     const a = device();
@@ -1622,8 +1637,8 @@ describe("the pull timer", () => {
     expect(await pulls({ state: "installed", kind: "systemd", current: true })).toBe(
       "Pulls         every 5 minutes (systemd), last ran 2026-11-13 09:30",
     );
-    expect(Bun.stripANSI((await pulls({ state: "missing", kind: "launchd" }))!)).toMatch(
-      /^Pulls {9}not scheduled: run `\S+ sync` to add it$/,
+    expect(Bun.stripANSI((await pulls({ state: "missing", kind: "launchd" }))!)).toBe(
+      "Pulls         not scheduled yet: added on the next sync",
     );
     expect(Bun.stripANSI((await pulls(unavailable))!)).toBe("Pulls         not scheduled (no systemd user session)");
     // The line sits right after Last sync.

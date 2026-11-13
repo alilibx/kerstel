@@ -242,8 +242,10 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
   const remove = (): boolean => {
     try {
       const existed = existsSync(file);
-      bootout();
+      // The file goes first: when the timer's own run removes it, bootout ends
+      // that run (launchd stops a job it unloads), and nothing after it runs.
       rmSync(file, { force: true });
+      bootout();
       return existed;
     } catch {
       return false;

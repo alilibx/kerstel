@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { openContext, type CliContext } from "../context";
 import { ClackPrompter, DefaultsPrompter, type Prompter } from "../init/prompts";
@@ -51,6 +52,7 @@ import {
 } from "../sync/state";
 import { syncTimer, type EnsureResult, type SyncTimer, type TimerStatus } from "../sync/timer";
 import type { SecretRef } from "../reference";
+import { vaultPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import type { Vault } from "../vault/store";
 import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
@@ -446,11 +448,17 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
  * another sync holds the lock, that one does the work.
  *
  * `--timer` marks a run the pull timer started. One that finds sync off
- * removes its own timer: `sync off` may not have been able to.
+ * removes its own timer: `sync off` may not have been able to. One that finds
+ * no vault at all removes it without opening one, which would create a vault
+ * and a new key in a home that was deleted.
  */
 async function background(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   const fromTimer = args.includes("--timer");
   if (args.some((a) => a !== "--timer")) return 2;
+  if (fromTimer && !existsSync(vaultPath())) {
+    removeTimer(deps);
+    return 0;
+  }
   const started = Date.now();
   const ctx = await open();
   try {
@@ -602,7 +610,7 @@ async function settleConflicts(
 function pullsLine(vault: Vault, deps: SyncDeps): string {
   const timer = timerStatus(deps);
   if (timer.state === "unavailable") return dim(`not scheduled (${timer.reason})`);
-  if (timer.state === "missing") return yellow(`not scheduled: run \`${cliName()} sync\` to add it`);
+  if (timer.state === "missing") return yellow("not scheduled yet: added on the next sync");
   const last = vault.getMeta(SYNC_META.lastTimer);
   return `every 5 minutes (${timer.kind}), last ran ${when(last === null ? null : Number(last))}`;
 }
