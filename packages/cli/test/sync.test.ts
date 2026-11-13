@@ -398,6 +398,21 @@ describe("two devices", () => {
       ]);
     });
 
+    test("rows exist even when the prompt is aborted after the values were shown", async () => {
+      const { s, b } = await conflicted();
+      const aborted = quiet(() =>
+        syncCommand(["--reveal"], {
+          fetch: s.fetch,
+          context: b.context,
+          interactive: true,
+          prompter: new ScriptedPrompter([]),
+          now: () => (s.clock.t += 1),
+        }),
+      );
+      await expect(aborted).rejects.toThrow();
+      expect(reveals(b)).toHaveLength(2);
+    });
+
     test("without --reveal it writes none", async () => {
       const { s, b } = await conflicted();
       await settle(s, b, false);
@@ -408,7 +423,7 @@ describe("two devices", () => {
       const { s, b } = await conflicted(null);
       await settle(s, b, true);
       // Only the other device's value was printed.
-      expect(reveals(b)).toHaveLength(1);
+      expect(reveals(b).map((r) => [r.scope, r.key])).toEqual([["app", "DB"]]);
     });
   });
 

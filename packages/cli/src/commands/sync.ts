@@ -380,6 +380,15 @@ async function background(args: string[], deps: SyncDeps, open: () => Promise<Cl
   }
 }
 
+/** A failed audit write must not turn a finished pairing or removal into a failure. */
+function recordDevice(vault: Vault): void {
+  try {
+    vault.record("device", null);
+  } catch (error) {
+    process.stderr.write(`Could not write the audit row for this device change: ${explain(error)}\n`);
+  }
+}
+
 /** Reports a sync, settles its conflicts, and pushes what was settled. The exit code. */
 async function finish(
   sync: SyncContext,
@@ -453,6 +462,10 @@ async function settleConflicts(
     const row = sync.vault.sync.row(ref)!;
     const local = sync.vault.getSecret(ref);
     const remote = conflictValue(sync, ref, row.conflict!);
+    // --reveal puts values in the labels below: log each one before it is on screen.
+    if (options.reveal) {
+      for (const value of [local, remote]) if (value !== null) sync.vault.record("reveal", ref);
+    }
     const answer = await prompter.select(
       `${bold(ref.key)} (${ref.scope}) was changed on this device and another one. Which value stays?`,
       [
@@ -462,10 +475,6 @@ async function settleConflicts(
       "local",
     );
     choices.push({ ref, keep: answer as "local" | "remote" });
-    // --reveal printed values in the question above: one row per value shown.
-    if (options.reveal) {
-      for (const value of [local, remote]) if (value !== null) sync.vault.record("reveal", ref);
-    }
   }
   settle(sync, choices, report);
   ok(`Settled ${plural(conflicts.length, "conflict")}. The value that lost is in the sync backup.`);
@@ -676,7 +685,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
         confirmation: pairingConfirmation(secret, { vaultId, deviceId: answer.deviceId, epoch, sealedKey }),
       });
       added = true;
-      ctx.vault.record("device", null);
+      recordDevice(ctx.vault);
       ok(`Added ${label}. It pulls the vault as it finishes joining.`);
       return 0;
     } catch (error) {
@@ -688,7 +697,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
             const listed = (await sync.client.devices()).devices.some((d) => d.id === answerId);
             if (listed) {
               added = true;
-              ctx.vault.record("device", null);
+              recordDevice(ctx.vault);
               ok("Added the device. It pulls the vault as it finishes joining.");
               return 0;
             }
@@ -821,7 +830,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       ctx.vault.sync.trackAll();
       setFullPull(ctx.vault, true);
     });
-    ctx.vault.record("device", null);
+    recordDevice(ctx.vault);
     ok(`Joined the vault on ${server}.`);
 
     const sync: SyncContext = { vault: ctx.vault, dataKey: ctx.dataKey, config, client };
@@ -895,7 +904,7 @@ async function removeDevice(args: string[], deps: SyncDeps, open: () => Promise<
       return 1;
     }
     recordResult(ctx.vault, null);
-    ctx.vault.record("device", null);
+    recordDevice(ctx.vault);
     if (report.applied.length > 0) ok(`Pulled ${plural(report.applied.length, "change")} from your other devices.`);
     ok(`Removed ${label} and replaced the sync key. Your other devices pick up the new key on their next sync.`);
     console.log(
