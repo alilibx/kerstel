@@ -50,6 +50,7 @@ import {
 } from "../sync/state";
 import type { SecretRef } from "../reference";
 import { cliName } from "../ui/cli-name";
+import type { Vault } from "../vault/store";
 import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 
 /**
