@@ -17,7 +17,7 @@
 - The pin is the SHA-256 of the certificate's DER SubjectPublicKeyInfo. Its text form is `sha256/` followed by 43 characters of unpadded base64url.
 - A pin mismatch fails the request with a clear message and is never retried without the pin. No redirect is followed, including on the certificate request.
 - The client keeps `redirect: "manual"` on every request. The certificate request carries no secret and no signature.
-- A pinned client passes `tls: { ca: <the server's own certificate>, checkServerIdentity }` and nothing else: Bun 1.4.2's `ca` replaces the default roots, and its `checkServerIdentity` fails a request only when it throws (a returned `Error` is ignored).
+- A pinned client passes `tls: { ca: <the server's own certificate>, checkServerIdentity }` and nothing else: Bun 1.4.2's `ca` replaces the default roots, and its `checkServerIdentity` fails a request when it throws (always throw; never rely on a returned `Error`).
 - An unpinned client (Let's Encrypt, Tailscale, a reverse proxy) passes no `tls` option, so the normal certificate authority and hostname checks apply.
 - The certificate request honours `HTTPS_PROXY` and `NO_PROXY` because it is an ordinary Bun `fetch`, like every other sync request (sync spec §8.1).
 - The server's key lives beside its database, mode `0600`, and is never logged. It survives restarts. A new key only comes with a new database file.
