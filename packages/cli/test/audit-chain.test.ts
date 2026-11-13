@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatChain, processChain, systemProcessLookup, type ProcessLookup } from "../src/audit/chain";
+import { createChainSource, formatChain, processChain, systemProcessLookup, type ProcessLookup } from "../src/audit/chain";
 
 function table(rows: Array<[number, number, string]>): ProcessLookup {
   const map = new Map(rows.map(([pid, ppid, name]) => [pid, { ppid, name }]));
@@ -104,4 +104,29 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")("syst
   const chain = processChain(process.pid, systemProcessLookup());
   expect(chain.length).toBeGreaterThan(0);
   expect(chain[0]).toBe("bun");
+});
+
+test("a burst of distinct pids shares one process snapshot", () => {
+  let takes = 0;
+  let clock = 1000;
+  const source = createChainSource({
+    now: () => clock,
+    snapshot: () => {
+      takes++;
+      const map = new Map<number, { ppid: number; name: string }>([[50, { ppid: 1, name: "zsh" }]]);
+      for (let i = 0; i < 75; i++) map.set(100 + i, { ppid: 50, name: `/bin/p${i}` });
+      return map;
+    },
+  });
+  for (let i = 0; i < 75; i++) {
+    clock += 1;
+    expect(source.chainFor(100 + i)).toEqual([`p${i}`, "zsh"]);
+  }
+  expect(takes).toBe(1);
+  // A pid that is not in the snapshot refreshes it, but not within 250 ms.
+  expect(source.chainFor(999)).toEqual([]);
+  expect(takes).toBe(1);
+  clock += 300;
+  source.chainFor(999);
+  expect(takes).toBe(2);
 });

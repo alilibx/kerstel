@@ -68,24 +68,71 @@ function emptyLookup(): ProcessLookup {
 }
 
 /** One `ps` snapshot, from the absolute path so a shadowing `ps` on PATH (npm run puts node_modules/.bin first) never runs, parsed. Each line is `pid ppid command...`, and the command may hold spaces. */
+function psSnapshot(): Map<number, ProcessInfo> {
+  const table = new Map<number, ProcessInfo>();
+  try {
+    const res = Bun.spawnSync(["/bin/ps", "-axo", "pid=,ppid=,comm="], { stdout: "pipe", stderr: "ignore" });
+    if (res.exitCode === 0) {
+      for (const line of res.stdout.toString().split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+        if (m) table.set(Number(m[1]), { ppid: Number(m[2]), name: m[3]! });
+      }
+    }
+  } catch {
+    // No /bin/ps: the table stays empty and every lookup misses.
+  }
+  return table;
+}
+
+/** One `ps` snapshot per lookup function; each lookup reads it. */
 function psLookup(): ProcessLookup {
   let table: Map<number, ProcessInfo> | null = null;
   return (pid) => {
-    if (table === null) {
-      table = new Map();
-      try {
-        const res = Bun.spawnSync(["/bin/ps", "-axo", "pid=,ppid=,comm="], { stdout: "pipe", stderr: "ignore" });
-        if (res.exitCode === 0) {
-          for (const line of res.stdout.toString().split("\n")) {
-            const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
-            if (m) table.set(Number(m[1]), { ppid: Number(m[2]), name: m[3]! });
-          }
-        }
-      } catch {
-        // No /bin/ps: the table stays empty and every lookup misses.
-      }
-    }
+    table ??= psSnapshot();
     return table.get(pid) ?? null;
+  };
+}
+
+/** A snapshot is shared for this long. */
+export const SNAPSHOT_TTL_MS = 2000;
+/** A pid missing from the shared snapshot refreshes it only if it is at least this old. */
+export const SNAPSHOT_RETRY_MS = 250;
+
+export interface ChainSource {
+  chainFor(pid: number): string[];
+}
+
+/**
+ * Names the chain for many pids from one shared process snapshot. A snapshot
+ * costs tens of milliseconds, so a burst of new pids reuses the current one
+ * for 2 seconds. A pid that is not in it may have started since, so it takes
+ * a new snapshot, at most once per request and not within 250 ms of the last.
+ * Where there is no table to snapshot (Linux reads /proc per pid), lookups go
+ * straight to the system.
+ */
+export function createChainSource(options: {
+  snapshot?: (() => Map<number, ProcessInfo>) | null;
+  now?: () => number;
+} = {}): ChainSource {
+  const take = options.snapshot !== undefined ? options.snapshot : process.platform === "darwin" ? psSnapshot : null;
+  const now = options.now ?? Date.now;
+  if (take === null) {
+    const lookup = systemProcessLookup();
+    return { chainFor: (pid) => processChain(pid, lookup) };
+  }
+  let table: Map<number, ProcessInfo> | null = null;
+  let takenAt = 0;
+  const refresh = () => {
+    table = take();
+    takenAt = now();
+  };
+  return {
+    chainFor(pid) {
+      if (table === null || now() - takenAt >= SNAPSHOT_TTL_MS) refresh();
+      else if (!table.has(pid) && now() - takenAt >= SNAPSHOT_RETRY_MS) refresh();
+      const current = table!;
+      return processChain(pid, (p) => current.get(p) ?? null);
+    },
   };
 }
 
