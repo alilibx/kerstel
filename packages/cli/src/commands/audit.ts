@@ -43,7 +43,7 @@ function parseArgs(args: string[]): AuditOptions | { error: string } {
       }
       options.action = value as AuditAction;
     } else {
-      if (!/^[1-9]\d*$/.test(value)) return { error: `--limit takes a positive whole number, not "${value}".` };
+      if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) return { error: `--limit takes a positive whole number, not "${value}".` };
       options.limit = Number(value);
     }
   }
@@ -51,6 +51,8 @@ function parseArgs(args: string[]): AuditOptions | { error: string } {
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const more = (shown: number, total: number) =>
+  shown < total ? [`  ${theme.dim(`Showing ${shown} of ${total}. Use --limit to see more.`)}`] : [];
 const reference = (row: AuditRow) => (row.key === "" ? "—" : formatReference(row.scope, row.key));
 
 export async function auditCommand(args: string[]): Promise<number> {
@@ -109,6 +111,7 @@ export async function auditCommand(args: string[]): Promise<number> {
         out.push(theme.yellow(lines[i]!));
         if (rotate) out.push(hintIndent + theme.dim(ROTATE_HINT));
       });
+      out.push(...more(report.reveals.length, counts.reveals));
     }
 
     if (report.appReadRows.length > 0) {
@@ -147,6 +150,7 @@ export async function auditCommand(args: string[]): Promise<number> {
           report.changes.map((row) => [formatAuditTime(row.ts), row.event, reference(row), formatChain(row.chain)]),
           { indent: 2 },
         ),
+        ...more(report.changes.length, counts.changes),
       );
     }
 
