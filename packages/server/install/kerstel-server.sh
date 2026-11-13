@@ -40,8 +40,11 @@ DEFAULT_RELEASES_URL="https://github.com/alilibx/kerstel"
 # Test-only: the installer tests set this to a temporary directory, so the
 # files this script writes outside HOME (/etc/systemd/system,
 # /Library/LaunchDaemons) and the systemd check (/run/systemd/system) happen
-# under it. Never set it on a real host.
-ROOT="${KERSTEL_INSTALL_ROOT:-}"
+# under it. Never set it on a real host. Anything but an absolute path is ignored.
+ROOT=""
+case "${KERSTEL_INSTALL_ROOT:-}" in
+  /*) ROOT="$KERSTEL_INSTALL_ROOT" ;;
+esac
 KH="$HOME/.kerstel-server"
 UNIT="$ROOT/etc/systemd/system/kerstel-server.service"
 PLIST="$ROOT/Library/LaunchDaemons/$LAUNCHD_LABEL.plist"
@@ -337,7 +340,7 @@ systemd_quote() {
 systemd_unit() {
   printf '%s\n' "[Unit]" "Description=Kerstel sync server" "After=network-online.target" "Wants=network-online.target" "" "[Service]"
   printf 'User=%s\n' "$(id -un)"
-  printf 'WorkingDirectory=%s\n' "$KH"
+  printf 'WorkingDirectory=%s\n' "$(printf '%s' "$KH" | sed 's/%/%%/g')"
   printf 'ExecStart=%s\n' "$(systemd_quote "$KH/bin/kerstel-server")"
   service_env | while IFS= read -r kv; do printf 'Environment=%s\n' "$(systemd_quote "$kv")"; done
   if [ "$REACH" = domain ]; then printf 'AmbientCapabilities=CAP_NET_BIND_SERVICE\n'; fi
@@ -491,7 +494,18 @@ fetch() {
   if command -v curl >/dev/null 2>&1; then
     curl --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" -fsSL "$1" -o "$2"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$2" "$1"
+    if [ "$CURL_PROTO" = "=http" ]; then
+      wget -q -O "$2" "$1"
+      return
+    fi
+    # wget documents --https-only for recursive mode, so the headers of every
+    # hop are checked too: a redirect to plain HTTP fails the download.
+    wget --help 2>&1 | grep -q -- '--https-only' || die "This wget cannot be limited to HTTPS. Install curl, then run this again."
+    wget -q -S --https-only -O "$2" "$1" 2>"$TMP/wget.headers" || return 1
+    if grep -Eqi '^ *Location: *http:' "$TMP/wget.headers"; then
+      rm -f "$2"
+      die "A download from $1 was redirected to plain HTTP."
+    fi
   else
     die "Downloading kerstel-server needs curl or wget."
   fi
@@ -571,7 +585,7 @@ tailscale_run() {
 tailscale_serve() {
   say "Serving it on your tailnet at https://$TS_NAME."
   if tailscale_run serve --bg "$PORT"; then return 0; fi
-  if grep -Eqi 'https|cert|not enabled' "$TMP/tailscale.out"; then
+  if grep -Eq 'HTTPS|[Cc]ert|not enabled' "$TMP/tailscale.out"; then
     say "Tailscale cannot serve HTTPS on your tailnet yet. Turn on MagicDNS and HTTPS Certificates under DNS in the Tailscale admin console (https://login.tailscale.com/admin/dns), then run this again."
   fi
   die "tailscale serve --bg $PORT failed."
@@ -589,6 +603,8 @@ tailscale_unserve() {
 
 # Sets FOUND_RUNTIME (docker, service or empty) and FOUND_ID. With "ask" it
 # may use sudo to reach Docker, after saying why; with "quiet" it never asks.
+# A unit or plist without this user's install-id file is a service another
+# user set up: it counts as installed, with no ID, so nothing here touches it.
 find_install() {
   FOUND_RUNTIME=""
   FOUND_ID=""
@@ -597,11 +613,25 @@ find_install() {
     FOUND_ID="$(cat "$KH/install-id")"
     return 0
   fi
+  case "$OS" in
+    linux | darwin)
+      if [ -f "$(service_file)" ]; then
+        FOUND_RUNTIME="service"
+        return 0
+      fi
+      ;;
+  esac
   command -v docker >/dev/null 2>&1 || return 0
   if [ "$1" = ask ]; then
-    docker_access "Checking for a Kerstel server in Docker" || return 0
+    checked=0
+    docker_access "Checking for a Kerstel server in Docker" || checked=1
   else
-    docker_access_quiet || return 0
+    checked=0
+    docker_access_quiet || checked=1
+  fi
+  if [ "$checked" != 0 ]; then
+    say "could not check Docker for a Kerstel server."
+    return 0
   fi
   if found="$(dk container inspect --format "{{index .Config.Labels \"$LABEL.install-id\"}}" "$CONTAINER" 2>/dev/null)"; then
     FOUND_RUNTIME="docker"
@@ -636,8 +666,17 @@ check_owner() {
   fi
 }
 
+# Exits 3 when the server found here is not this user's to manage.
+require_own_install() {
+  if [ "$FOUND_RUNTIME" = service ] && [ ! -f "$KH/install-id" ]; then
+    say "this host already runs a Kerstel server that another device set up."
+    exit 3
+  fi
+}
+
 require_install() {
   if [ -z "$FOUND_RUNTIME" ]; then die "No Kerstel server is installed on this host."; fi
+  require_own_install
   RUNTIME="$FOUND_RUNTIME"
   INSTALL_ID="$FOUND_ID"
   if [ "$RUNTIME" = service ]; then load_service_settings; fi
@@ -763,7 +802,12 @@ cmd_install() {
         NAMES="${NAMES:+$NAMES,}$2"
         shift 2
         ;;
-      --domain) need $# "$1"; DOMAIN="$2"; shift 2 ;;
+      --domain)
+        need $# "$1"
+        matches '^[A-Za-z0-9.-]+$' "$2" || usage_error "--domain must be a DNS name, got $2."
+        DOMAIN="$2"
+        shift 2
+        ;;
       --port) need $# "$1"; PORT="$2"; shift 2 ;;
       --releases-url) need $# "$1"; RELEASES_URL="$2"; shift 2 ;;
       --url) need $# "$1"; add_url "$2"; shift 2 ;;
@@ -822,6 +866,7 @@ install_docker() {
       say "The container $CONTAINER already runs $IMAGE with these settings."
     else
       say "Starting the container $CONTAINER."
+      LEFT="Left in place: the container $CONTAINER, stopped, and its volume $VOLUME. Run the same command again to continue."
       dk start "$CONTAINER" >/dev/null
     fi
   else
@@ -832,6 +877,7 @@ install_docker() {
       LEFT="Left in place: the volume $VOLUME, which holds the server's data. Run the same command again to continue."
     fi
     say "Starting $IMAGE in the container $CONTAINER."
+    LEFT="Left in place: the volume $VOLUME, and the container $CONTAINER if Docker created it. Run the same command again to continue."
     docker_run
   fi
   LEFT="Left in place: the container $CONTAINER and its volume $VOLUME. Run the same command again to continue."
@@ -925,7 +971,7 @@ update_docker() {
   ensure_image "$IMAGE"
   say "Replacing the container $CONTAINER with $IMAGE, keeping its data and settings."
   dk rm -f "$CONTAINER" >/dev/null
-  LEFT="Left in place: the volume $VOLUME, which holds the server's data. The container is gone: run install again to recreate it."
+  LEFT="Left in place: the volume $VOLUME, which holds the server's data, and the container $CONTAINER if Docker created it. Run install again to finish."
   docker_run
   LEFT="Left in place: the container $CONTAINER, running $IMAGE, and its volume $VOLUME."
   wait_running
@@ -971,6 +1017,7 @@ cmd_remove() {
     esac
   done
   find_install ask
+  require_own_install
   case "$FOUND_RUNTIME" in
     docker) remove_docker ;;
     service) remove_service ;;
@@ -1037,6 +1084,8 @@ main() {
   trap on_exit EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  # A dropped `ssh -t` session hangs up: exit, so the EXIT trap still cleans up.
+  trap 'exit 129' HUP
   if [ $# -eq 0 ]; then usage_error "Name a command."; fi
   command="$1"
   shift

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseServerValue } from "../src/server-value";
 import { readSelfSignedPin } from "../src/tls";
 import { FakeHost, RELEASES_URL, type HostConfig, type RunResult } from "./helpers/fake-host";
@@ -215,6 +215,7 @@ describe("install with Docker", () => {
       ["--reach", "self"],
       ["--reach", "self", "--name", "box.local", "--port", "70000"],
       ["--reach", "elsewhere"],
+      ["--reach", "self", "--name", "box.local", "--domain", "a|b.example.com"],
     ]) {
       const r = await install(h, extra);
       expect(r.code).toBe(2);
@@ -284,6 +285,34 @@ describe("reruns", () => {
       expect(r.code).toBe(3);
       expect(dockerCalls(service, "run")).toEqual([]);
       expect(read(join(service.serverHome, "install-id")).trim()).toBe(ID);
+    },
+    SLOW,
+  );
+  test(
+    "another user's service is left alone",
+    async () => {
+      for (const config of [{}, { os: "Darwin", arch: "arm64", docker: false, systemd: false }] as const) {
+        const h = host(config);
+        const file = config.os === "Darwin" ? h.plistPath : h.unitPath;
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, "another user's service\n");
+        const detect = lines(await h.run(["detect"]));
+        expect(detect).toContain("installed=service");
+        expect(detect.some((l) => l.startsWith("install-id="))).toBe(false);
+        for (const args of [
+          ["install", "--version", VERSION, "--install-id", ID, "--runtime", "service", "--releases-url", RELEASES_URL, "--reach", "self", "--name", "box.local"],
+          ["stop"],
+          ["update", "--version", VERSION, "--releases-url", RELEASES_URL],
+          ["remove", "--delete-data"],
+        ]) {
+          const r = await h.run(args);
+          expect(r.code).toBe(3);
+          expect(r.stderr).toContain("kerstel-server.sh: this host already runs a Kerstel server that another device set up.\n");
+        }
+        expect(read(file)).toBe("another user's service\n");
+        expect(existsSync(h.serverHome)).toBe(false);
+        expect(h.calls("sudo")).toEqual([]);
+      }
     },
     SLOW,
   );
