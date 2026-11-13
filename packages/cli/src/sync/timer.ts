@@ -110,7 +110,7 @@ export function renderSystemdUnits(o: {
     "Type=oneshot",
     // Not $HOME, the default for a user service: Bun would load a ~/.env into
     // a process marked scrubbed. Not the Kerstel home either, which may be gone
-    // when the timer runs to remove itself.
+    // or not mounted yet when the timer runs.
     "WorkingDirectory=/",
     // Imported into the user manager by a login script, these would reach a
     // process that trusts its environment.
@@ -246,6 +246,7 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
       const s = status();
       if (s.state === "unavailable") return "unavailable";
       if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
+      const old = readOrNull(file);
       writeUnit(file, wanted());
       bootout();
       const bootstrap = () => deps.run(["launchctl", "bootstrap", domain, file]).code === 0;
@@ -253,7 +254,13 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
       if (!bootstrap()) {
         Bun.sleepSync(200);
         if (!bootstrap()) {
-          rmSync(file, { force: true });
+          // An update that won't load must not cost a timer that worked: put
+          // the old plist back and load it. Only a fresh install goes.
+          if (old === null) rmSync(file, { force: true });
+          else {
+            writeUnit(file, old);
+            bootstrap();
+          }
           return "unavailable";
         }
       }
@@ -330,12 +337,22 @@ function systemdTimer(deps: TimerDeps): SyncTimer {
       if (s.state === "unavailable") return "unavailable";
       if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
       const w = wanted();
+      const old = { service: readOrNull(at.serviceFile), timer: readOrNull(at.timerFile) };
       writeUnit(at.serviceFile, w.service);
       writeUnit(at.timerFile, w.timer);
-      if (ctl("daemon-reload").code !== 0 || ctl("enable", "--now", `${name}.timer`).code !== 0) {
-        rmSync(at.serviceFile, { force: true });
-        rmSync(at.timerFile, { force: true });
-        ctl("daemon-reload");
+      const load = () => ctl("daemon-reload").code === 0 && ctl("enable", "--now", `${name}.timer`).code === 0;
+      if (!load()) {
+        // An update that won't load must not cost a timer that worked: put
+        // the old units back and load them. Only a fresh install goes.
+        for (const [file, text] of [
+          [at.serviceFile, old.service],
+          [at.timerFile, old.timer],
+        ] as const) {
+          if (text === null) rmSync(file, { force: true });
+          else writeUnit(file, text);
+        }
+        if (s.state === "installed") load();
+        else ctl("daemon-reload");
         return "unavailable";
       }
       return s.state === "installed" ? "updated" : "installed";

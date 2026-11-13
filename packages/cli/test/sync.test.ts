@@ -1209,6 +1209,19 @@ describe("sync in the background", () => {
     expect(glanceSync(join(a.home, "missing.db")).on).toBe(false);
   });
 
+  test("glance reads the spawn marker beside the vault it was given, not from KERSTEL_HOME", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // A different KERSTEL_HOME, with a marker of its own.
+    const other = isolateEnv({ prefix: "sync-other-home" });
+    dirs.push(other);
+    expect(spawnMarkerPath()).toBe(join(other, "sync-spawned"));
+    writeFileSync(spawnMarkerPath(), "1111");
+    writeFileSync(join(a.home, "sync-spawned"), "2222");
+    expect(glanceSync(join(a.home, "vault.db")).lastSpawn).toBe(2222);
+  });
+
   test("a background sync pushes and pulls, prints nothing, and records the result", async () => {
     const { s, a, b } = await two();
     a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
@@ -1609,7 +1622,8 @@ describe("the pull timer", () => {
     }
   });
 
-  test("a failed background sync leaves the timer alone", async () => {
+  test("a failed background sync still schedules pulls, and still fails", async () => {
+    // A 0.3.0 device whose server is down for a moment must still get the timer.
     const s = server();
     const a = device();
     await setUp(a, s);
@@ -1618,12 +1632,11 @@ describe("the pull timer", () => {
     const down: Fetch = async () => {
       throw new Error("connect ECONNREFUSED");
     };
-    const { result } = await quiet(() =>
+    const { result, out } = await quiet(() =>
       syncCommand(["--background"], { fetch: down, context: a.context, interactive: false, now: tick(s), timer: fake.timer }),
     );
-    expect(result).toBe(1);
-    expect(fake.calls.ensure).toEqual([]);
-    expect(takeSyncNotice(a.home)).toBeNull();
+    expect({ result, out, ensured: fake.calls.ensure }).toEqual({ result: 1, out: "", ensured: [{ rewrite: false }] });
+    expect(takeSyncNotice(a.home)).toContain("every five minutes");
   });
 
   test("a timer that throws changes nothing a background sync prints or returns", async () => {
@@ -1660,7 +1673,9 @@ describe("the pull timer", () => {
     expect(a.with((v) => v.getMeta(SYNC_META.lastTimer))).toBeNull();
   });
 
-  test("a timer run on a home with no vault removes the timer and creates nothing", async () => {
+  test("a timer run on a home with no vault leaves the timer and creates nothing", async () => {
+    // The home may be on a volume that is not mounted yet at login: the timer
+    // must still be there when it is. `uninstall` and `sync off` remove it.
     const home = isolateEnv({ prefix: "sync-novault" });
     dirs.push(home);
     rmSync(home, { recursive: true, force: true });
@@ -1671,7 +1686,13 @@ describe("the pull timer", () => {
       throw new Error("must not open a vault");
     };
     const { result, out } = await quiet(() => syncCommand(["--background", "--timer"], { context, timer: fake.timer }));
-    expect({ result, out, opened, removed: fake.calls.remove }).toEqual({ result: 0, out: "", opened: 0, removed: 1 });
+    expect({ result, out, opened, removed: fake.calls.remove, ensured: fake.calls.ensure }).toEqual({
+      result: 0,
+      out: "",
+      opened: 0,
+      removed: 0,
+      ensured: [],
+    });
     expect(existsSync(home)).toBe(false);
   });
 

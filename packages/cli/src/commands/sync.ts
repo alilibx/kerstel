@@ -342,7 +342,7 @@ function removeTimer(deps: SyncDeps): void {
   try {
     timerOf(deps).remove();
   } catch {
-    // Nothing to report: a timer left behind removes itself on its next run.
+    // Nothing to report: a timer left behind on a vault with sync off removes itself on its next run.
   }
 }
 
@@ -471,16 +471,17 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
  *
  * `--timer` marks a run the pull timer started. One that finds sync off
  * removes its own timer: `sync off` may not have been able to. One that finds
- * no vault at all removes it without opening one, which would create a vault
- * and a new key in a home that was deleted.
+ * no vault file does nothing and keeps its timer: the home may be on a volume
+ * that isn't mounted yet, and opening a vault there would create a vault and
+ * a new key. `uninstall` and `sync off` remove the timer.
+ *
+ * Once the vault is open and syncs, the run installs a missing timer whatever
+ * the sync's outcome, so a device whose server is briefly down still gets it.
  */
 async function background(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   const fromTimer = args.includes("--timer");
   if (args.some((a) => a !== "--timer")) return 2;
-  if (fromTimer && !existsSync(vaultPath())) {
-    removeTimer(deps);
-    return 0;
-  }
+  if (fromTimer && !existsSync(vaultPath())) return 0;
   const started = Date.now();
   const ctx = await open();
   try {
@@ -495,30 +496,40 @@ async function background(args: string[], deps: SyncDeps, open: () => Promise<Cl
         // Only `sync status` reads it: never a reason to skip the pull.
       }
     }
-    // Waits rather than leaving the work to the holder: it may have collected
-    // its changes before the write that started this sync.
-    const release = await waitForSyncLock(syncLockPath(ctx.vault.file), BACKGROUND_LOCK_WAIT_MS);
-    if (!release) return 0;
+    const code = await backgroundSync(ctx, deps, started);
     try {
-      // Read after the wait: the holder may have replaced the key, or turned sync off.
-      const sync = contextFor(ctx, deps);
-      if (!sync) return 0;
-      // A sync that finished after this one started, and left nothing to push, did its work.
-      const lastTry = Number(ctx.vault.getMeta(SYNC_META.lastTry) ?? "0");
-      const pending = ctx.vault.sync.rows().some((row) => row.dirty && row.conflict === null);
-      if (lastTry >= started && !pending) return 0;
-      await syncOnce(sync);
-      recordResult(ctx.vault, null);
-    } catch (error) {
-      recordResult(ctx.vault, explain(error));
-      return 1;
-    } finally {
-      release();
+      backgroundTimer(ctx.vault, deps);
+    } catch {
+      // The timer never changes what a sync returns.
     }
-    backgroundTimer(ctx.vault, deps);
-    return 0;
+    return code;
   } finally {
     ctx.vault.close();
+  }
+}
+
+/** The sync half of `background`: its exit code. */
+async function backgroundSync(ctx: CliContext, deps: SyncDeps, started: number): Promise<number> {
+  // Waits rather than leaving the work to the holder: it may have collected
+  // its changes before the write that started this sync.
+  const release = await waitForSyncLock(syncLockPath(ctx.vault.file), BACKGROUND_LOCK_WAIT_MS);
+  if (!release) return 0;
+  try {
+    // Read after the wait: the holder may have replaced the key, or turned sync off.
+    const sync = contextFor(ctx, deps);
+    if (!sync) return 0;
+    // A sync that finished after this one started, and left nothing to push, did its work.
+    const lastTry = Number(ctx.vault.getMeta(SYNC_META.lastTry) ?? "0");
+    const pending = ctx.vault.sync.rows().some((row) => row.dirty && row.conflict === null);
+    if (lastTry >= started && !pending) return 0;
+    await syncOnce(sync);
+    recordResult(ctx.vault, null);
+    return 0;
+  } catch (error) {
+    recordResult(ctx.vault, explain(error));
+    return 1;
+  } finally {
+    release();
   }
 }
 

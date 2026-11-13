@@ -49,10 +49,9 @@ const OFF: SyncGlance = {
   lastSpawn: null,
 };
 
-/** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
-/** Where `run` and `exec` note when they last started a sync. A start, not a finish: a sync that crashes or stalls still counts. */
-export function spawnMarkerPath(): string {
-  return join(kerstelHome(), "sync-spawned");
+/** Where `run` and `exec` note when they last started a sync, beside the vault. A start, not a finish: a sync that crashes or stalls still counts. */
+export function spawnMarkerPath(home: string = kerstelHome()): string {
+  return join(home, "sync-spawned");
 }
 
 /** The ms timestamp in the marker file, or null when it is missing or garbled. Never throws. */
@@ -74,6 +73,7 @@ export function writeSpawnMarker(ms: number, file: string = spawnMarkerPath()): 
   }
 }
 
+/** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
 export function glanceSync(file: string = vaultPath()): SyncGlance {
   if (!existsSync(file)) return OFF;
   let db: Database | null = null;
@@ -103,7 +103,7 @@ export function glanceSync(file: string = vaultPath()): SyncGlance {
       lastTry: time(SYNC_META.lastTry),
       lastError: meta.get(SYNC_META.lastError) ?? null,
       lastTimer: time(SYNC_META.lastTimer),
-      lastSpawn: readSpawnMarker(),
+      lastSpawn: readSpawnMarker(spawnMarkerPath(dirname(file))),
     };
   } catch {
     return OFF;
@@ -266,14 +266,16 @@ export interface BackgroundDeps {
 export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): boolean {
   if (!RUNS.has(command)) return false;
   try {
-    const sync = (deps.glance ?? glanceSync)();
+    // The marker is written beside the vault the glance reads it from.
+    const vault = vaultPath();
+    const sync = (deps.glance ?? (() => glanceSync(vault)))();
     if (!sync.on) return false;
     const now = (deps.now ?? Date.now)();
     const spawned = sync.lastSpawn ?? 0;
     if (sync.lastError !== null) {
       if (now - Math.max(sync.lastTry ?? 0, spawned) < BACKGROUND_RETRY_AFTER_MS) return false;
     } else if (now - Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0, spawned) < BACKGROUND_PULL_AFTER_MS) return false;
-    (deps.markSpawn ?? writeSpawnMarker)(now);
+    (deps.markSpawn ?? ((ms: number) => writeSpawnMarker(ms, spawnMarkerPath(dirname(vault)))))(now);
     (deps.spawn ?? spawnBackgroundSync)();
     return true;
   } catch {

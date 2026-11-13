@@ -306,6 +306,63 @@ describe("syncTimer", () => {
     expect(moved.status()).toMatchObject({ current: true });
   });
 
+  test("a launchd update that will not load puts the old plist back and loads it", () => {
+    const { userHome, deps } = fixture();
+    const file = join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist");
+    expect(syncTimer(deps).ensure({ rewrite: false })).toBe("installed");
+    const before = readFileSync(file, "utf8");
+    const loaded: (string | null)[] = [];
+    let bootstrapFails = 2;
+    const moved = syncTimer({
+      ...deps,
+      argv: ["/opt/kerstel", "sync", "--background", "--timer"],
+      run: (argv) => {
+        if (argv[1] !== "bootstrap") return { code: 0, stdout: "" };
+        loaded.push(existsSync(file) ? readFileSync(file, "utf8") : null);
+        return { code: bootstrapFails-- > 0 ? 5 : 0, stdout: "" };
+      },
+    });
+    expect(moved.ensure({ rewrite: true })).toBe("unavailable");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Two tries of the new plist, then one of the old.
+    expect(loaded).toHaveLength(3);
+    expect(loaded[2]).toBe(before);
+  });
+
+  test("a systemd update that will not load puts the old units back and loads them", () => {
+    const { userHome, deps } = fixture({ platform: "linux" });
+    const dir = join(userHome, ".config", "systemd", "user");
+    expect(syncTimer(deps).ensure({ rewrite: false })).toBe("installed");
+    const service = readFileSync(join(dir, "kerstel-sync.service"), "utf8");
+    const timer = readFileSync(join(dir, "kerstel-sync.timer"), "utf8");
+    const calls: string[][] = [];
+    const enabledWith: string[] = [];
+    let enableFails = 1;
+    const moved = syncTimer({
+      ...deps,
+      argv: ["/opt/kerstel", "sync", "--background", "--timer"],
+      run: (argv) => {
+        calls.push(argv);
+        if (argv[2] !== "enable") return { code: 0, stdout: "" };
+        enabledWith.push(readFileSync(join(dir, "kerstel-sync.service"), "utf8"));
+        return { code: enableFails-- > 0 ? 1 : 0, stdout: "" };
+      },
+    });
+    expect(moved.ensure({ rewrite: true })).toBe("unavailable");
+    expect(readFileSync(join(dir, "kerstel-sync.service"), "utf8")).toBe(service);
+    expect(readFileSync(join(dir, "kerstel-sync.timer"), "utf8")).toBe(timer);
+    // The new units once, then the old ones, each after a daemon-reload.
+    expect(enabledWith).toHaveLength(2);
+    expect(enabledWith[0]).toContain("/opt/kerstel");
+    expect(enabledWith[1]).toBe(service);
+    const lastEnable = calls.findLastIndex((c) => c[2] === "enable");
+    const lastReload = calls.findLastIndex((c) => c[2] === "daemon-reload");
+    expect(lastReload).toBeGreaterThan(-1);
+    expect(lastReload).toBeLessThan(lastEnable);
+    expect(calls[lastEnable]).toEqual(["systemctl", "--user", "enable", "--now", "kerstel-sync.timer"]);
+  });
+
   test("remove leaves another home's timer", () => {
     const { userHome, deps } = fixture();
     const homeB = join(userHome, "other");
