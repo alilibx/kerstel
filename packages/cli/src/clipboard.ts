@@ -1,3 +1,5 @@
+import { resolveHelper } from "./vault/keychain/exec";
+
 export interface ClipboardDeps {
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
@@ -29,6 +31,15 @@ export function clipboardCommand(deps: Pick<ClipboardDeps, "platform" | "env" | 
   return null;
 }
 
+/**
+ * The default lookup: root-owned system directories only, never the caller's
+ * `PATH`. A script run through npm or Bun has `node_modules/.bin` first on
+ * `PATH`, and a dependency could put a `pbcopy` there to read the pairing secret.
+ */
+export function trustedWhich(cmd: string): string | null {
+  return resolveHelper(cmd);
+}
+
 function defaultRun(argv: string[], stdin: string): number {
   const result = Bun.spawnSync(argv, {
     stdin: Buffer.from(stdin),
@@ -50,7 +61,7 @@ export function copyToClipboard(text: string, deps: Partial<ClipboardDeps> = {})
     const argv = clipboardCommand({
       platform: deps.platform ?? process.platform,
       env: deps.env ?? process.env,
-      which: deps.which ?? ((cmd) => Bun.which(cmd)),
+      which: deps.which ?? trustedWhich,
     });
     if (!argv) return false;
     return (deps.run ?? defaultRun)(argv, text) === 0;

@@ -91,7 +91,7 @@ n bytes       the URLs, UTF-8, joined with "\n"; at least one, at most four
 - Produces:
   - `interface ClipboardDeps { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; which: (cmd: string) => string | null; run: (argv: string[], stdin: string) => number }`
   - `clipboardCommand(deps: Pick<ClipboardDeps, "platform" | "env" | "which">): string[] | null`
-  - `copyToClipboard(text: string, deps?: Partial<ClipboardDeps>): boolean`. True only when the tool exits 0. It never throws. The defaults are `process.platform`, `process.env`, `Bun.which`, and `Bun.spawnSync` with the text on stdin, stdout and stderr ignored, and a 2-second timeout. When `process.env.KERSTEL_TEST_NO_CLIPBOARD === "1"` and no `run` dep is given, it returns false without running anything.
+  - `copyToClipboard(text: string, deps?: Partial<ClipboardDeps>): boolean`. True only when the tool exits 0. It never throws. The defaults are `process.platform`, `process.env`, `resolveHelper` from `vault/keychain/exec.ts` (root-owned system directories only, never `PATH`), and `Bun.spawnSync` with the text on stdin, stdout and stderr ignored, and a 2-second timeout. When `process.env.KERSTEL_TEST_NO_CLIPBOARD === "1"` and no `run` dep is given, it returns false without running anything.
 
 `clipboardCommand` picks, in order: on `darwin`, `["pbcopy"]`; on `linux`, `["wl-copy"]` when `WAYLAND_DISPLAY` is set and `wl-copy` is found, then, when `DISPLAY` is set, `["xclip", "-selection", "clipboard"]` or `["xsel", "--clipboard", "--input"]`, whichever is found first. Each command's first word is the path `which` returned. Otherwise null.
 

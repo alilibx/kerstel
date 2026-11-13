@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { clipboardCommand, copyToClipboard } from "../src/clipboard";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { clipboardCommand, copyToClipboard, trustedWhich } from "../src/clipboard";
 
 const whichOf =
   (...names: string[]) =>
@@ -88,5 +91,27 @@ describe("copyToClipboard", () => {
   test("test runs never copy", () => {
     expect(process.env.KERSTEL_TEST_NO_CLIPBOARD).toBe("1");
     expect(copyToClipboard("x")).toBe(false);
+  });
+});
+
+describe("trustedWhich", () => {
+  test("a clipboard tool on PATH outside the system directories is never used", () => {
+    const dir = mkdtempSync(join(tmpdir(), "clip-"));
+    const saved = process.env.PATH;
+    try {
+      for (const name of ["pbcopy", "wl-copy", "xclip", "xsel"]) {
+        const file = join(dir, name);
+        writeFileSync(file, "#!/bin/sh\ncat >/dev/null\n");
+        chmodSync(file, 0o755);
+      }
+      process.env.PATH = `${dir}:${saved ?? ""}`;
+      for (const name of ["pbcopy", "wl-copy", "xclip", "xsel"]) {
+        const found = trustedWhich(name);
+        if (found !== null) expect(found.startsWith(dir)).toBe(false);
+      }
+    } finally {
+      process.env.PATH = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
