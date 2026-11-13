@@ -56,6 +56,7 @@ import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 import { serverKey, startTlsServer, type TlsServer } from "./helpers/tls-server";
 import { formatPin, pinOfCertificate } from "../../server/src/pin";
+import { encodeServerValue, type ServerValue } from "../src/sync/server-value";
 import { selfSignedCertificate } from "../../server/src/x509";
 
 /** Sync spec §12: the client against the real server, in-process. */
@@ -1570,6 +1571,107 @@ describe("pairing, joining and removing devices", () => {
       expect(status.code).toBe(0);
       expect(status.out).toContain(`Server        ${p.listener.url}\nCertificate   pinned (${p.pin})`);
       for (const text of [out, status.out]) expect(text).not.toContain("db-pinned-1");
+    });
+
+    describe("a server value on stdin", () => {
+      const TOKEN = "enroll-token-for-the-test-only";
+
+      /** A pinned server that wants `TOKEN`, and the device that reads `text` from stdin. */
+      async function setUpFromValue(text: (p: Pinned) => string, args: string[] = ["--server-value", "-"]) {
+        const clock = { t: Date.now() };
+        const listener = startTlsServer({ now: () => clock.t, enrollToken: TOKEN });
+        listeners.push(listener);
+        const requests: string[] = [];
+        const fetch: Fetch = (request, init) => {
+          requests.push(request.url);
+          return globalThis.fetch(request, init as RequestInit);
+        };
+        const p: Pinned = { clock, fetch, listener, requests, pin: formatPin(listener.pin) };
+        const a = device();
+        a.with((v) => v.setSecret(ref("app", "DB"), "db-from-value"));
+        const run = await quiet(() =>
+          syncCommand(["setup", ...args, "--yes"], {
+            fetch,
+            context: a.context,
+            interactive: false,
+            now: tick(p),
+            deviceName: "first",
+            timer: fakeTimer().timer,
+            stdin: async () => `${text(p)}\n`,
+          }),
+        );
+        return { ...run, p, a };
+      }
+      const valueOf = (p: Pinned, over: Partial<ServerValue> = {}) =>
+        encodeServerValue({ urls: [p.listener.url], pin: p.listener.pin, token: TOKEN, ...over });
+
+      test("setup reads a server value from stdin", async () => {
+        delete process.env.KERSTEL_SYNC_ENROLL_TOKEN;
+        const { result, out, p, a } = await setUpFromValue((p) => valueOf(p));
+        expect(result).toBe(0);
+        expect(out).toContain(`  Certificate  pinned (${p.pin})`);
+        expect(out).toContain("Synced 1 secret.");
+        const config = a.with((v) => loadSync(v, a.key))!;
+        expect(config.servers).toEqual([p.listener.url]);
+        expect(config.pin).toEqual(p.listener.pin);
+      });
+
+      test("the server value's token is used in place of the environment's", async () => {
+        process.env.KERSTEL_SYNC_ENROLL_TOKEN = "some-other-token";
+        const { result } = await setUpFromValue((p) => valueOf(p));
+        expect(result).toBe(0);
+      });
+
+      test("a bad server value is refused before any request", async () => {
+        const cases: Array<[(p: Pinned) => string, string]> = [
+          [() => "ks-server1-nope", "That is not a server value, or it was cut short."],
+          [() => "", "That is not a server value, or it was cut short."],
+          [() => "ks-server9-AAAA", "That server value is from a newer Kerstel."],
+          [(p) => valueOf(p, { urls: ["http://sync.example.com"], pin: null }), "is not a server Kerstel will send your vault to."],
+          [(p) => valueOf(p, { urls: ["http://127.0.0.1:8787"] }), "A pinned server must use an https:// URL."],
+        ];
+        for (const [text, message] of cases) {
+          const { result, out, p, a } = await setUpFromValue(text);
+          expect(result).toBe(2);
+          expect(out).toContain(message);
+          expect(p.requests).toEqual([]);
+          expect(p.listener.paths).toEqual([]);
+          expect(a.with((v) => loadSync(v, a.key))).toBeNull();
+        }
+      });
+
+      test("the token from a server value is never printed", async () => {
+        const good = await setUpFromValue((p) => valueOf(p));
+        expect(good.out).not.toContain(TOKEN);
+        // A server that wants another token refuses the vault; the refusal does not echo this one.
+        const refused = await setUpFromValue((p) => valueOf(p, { token: "a-wrong-token-for-the-test" }));
+        expect(refused.result).toBe(1);
+        expect(refused.out).not.toContain("a-wrong-token-for-the-test");
+        expect(refused.out).not.toContain(TOKEN);
+      });
+
+      test("a server value is never taken from an argument, or beside a url or a pin", async () => {
+        for (const args of [
+          ["--server-value", "ks-server1-abc"],
+          ["--server-value"],
+          ["--server-value", "-", "https://sync.example.com"],
+          ["--server-value", "-", "--pin", "sha256/x"],
+        ]) {
+          const { result, out, p } = await setUpFromValue((p) => valueOf(p), args);
+          expect(result).toBe(2);
+          expect(out).toContain("Usage:");
+          expect(out).not.toContain("ks-server1-");
+          expect(p.requests).toEqual([]);
+        }
+      });
+    });
+
+    test("setup with no arguments and no terminal prints the usage line", async () => {
+      const a = device();
+      const { result, out } = await quiet(() => syncCommand(["setup"], { context: a.context, interactive: false }));
+      expect(result).toBe(2);
+      expect(out).toContain("Usage: ");
+      expect(out).toContain("sync setup <url> [--pin <pin>] [--yes]");
     });
 
     test("setup refuses a bad pin before any request", async () => {
