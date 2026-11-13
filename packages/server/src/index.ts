@@ -14,7 +14,7 @@ import { createApp } from "./app";
 import { openDatabase } from "./db";
 import { formatPin } from "./pin";
 import { LIMITS } from "./protocol";
-import { AcmeManager, certificateName, keepCertificate, loadSelfSigned, serveChallenges } from "./tls";
+import { AcmeManager, bindAgain, certificateName, keepCertificate, loadSelfSigned, serveChallenges } from "./tls";
 
 declare const KERSTEL_SERVER_VERSION: string | undefined;
 
@@ -102,10 +102,12 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   let enrollToken: string | null = env.KERSTEL_SERVER_ENROLL_TOKEN || null;
   let trustProxy = false;
   let tls = env.KERSTEL_SERVER_TLS || null;
+  let tlsFromFlag = false;
   const splitNames = (text: string) => text.split(",").map((n) => n.trim()).filter(Boolean);
   let tlsNames = splitNames(env.KERSTEL_SERVER_TLS_NAMES ?? "");
   let tlsNamesFromFlags = false;
   let domain = env.KERSTEL_SERVER_DOMAIN || null;
+  let domainFromFlag = false;
   let acmeDirectory = env.KERSTEL_SERVER_ACME_DIRECTORY || LETS_ENCRYPT;
   let acmeEmail = env.KERSTEL_SERVER_ACME_EMAIL || null;
   let acmeHttp = env.KERSTEL_SERVER_ACME_HTTP || "0.0.0.0:80";
@@ -143,6 +145,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
         break;
       case "--tls":
         tls = value();
+        tlsFromFlag = true;
         break;
       case "--tls-name":
         // Flags replace the environment's list rather than add to it.
@@ -152,6 +155,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
         break;
       case "--domain":
         domain = value();
+        domainFromFlag = true;
         break;
       case "--acme-directory":
         acmeDirectory = value();
@@ -167,9 +171,23 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
     }
   }
 
+  // A flag overrides its environment twin, so a container's variables never
+  // fight a command line: --domain drops the variables for --tls self, and
+  // --tls self drops KERSTEL_SERVER_DOMAIN.
+  if (domainFromFlag && !tlsFromFlag) {
+    tls = null;
+    if (!tlsNamesFromFlags) tlsNames = [];
+  }
+  if (tlsFromFlag && !domainFromFlag) domain = null;
+
   if (tls !== null && tls !== "self") throw new Error(`--tls takes only self, got ${tls}.`);
-  if (tls && domain) throw new Error("Use --tls self or --domain, not both.");
-  if (!tls && tlsNames.length > 0) throw new Error("--tls-name needs --tls self.");
+  if (tls && domain) {
+    // Both from flags, or both from the environment: the other kind was dropped above.
+    throw new Error(tlsFromFlag ? "Use --tls self or --domain, not both." : "Set KERSTEL_SERVER_TLS=self or KERSTEL_SERVER_DOMAIN, not both.");
+  }
+  if (!tls && tlsNames.length > 0) {
+    throw new Error(tlsNamesFromFlags ? "--tls-name needs --tls self." : "KERSTEL_SERVER_TLS_NAMES needs --tls self (or KERSTEL_SERVER_TLS=self).");
+  }
   if (domain && !listenGiven) listen = "0.0.0.0:443";
 
   const { hostname, port } = hostPort(listen, "--listen");
@@ -272,12 +290,16 @@ function main(): void {
     }
     console.log(`Answering ACME challenges for ${acme.domain} on http://${challenges.hostname}:${challenges.port}`);
     // Bun.serve's reload keeps the old certificate, so a new one restarts the
-    // listener on the same address. stop() lets requests in flight finish.
-    const serve = (certificate: { certPem: string; keyPem: string; certDer: Buffer }) => {
+    // listener on the same address. stop() lets requests in flight finish, and
+    // the address may stay taken for a moment, so the new listener tries again.
+    const serve = async (certificate: { certPem: string; keyPem: string; certDer: Buffer }) => {
       const previous = server;
+      const tls = { cert: certificate.certPem, key: certificate.keyPem };
       previous?.stop();
       try {
-        server = listen(previous?.port ?? config.port, { cert: certificate.certPem, key: certificate.keyPem });
+        server = previous
+          ? await bindAgain(() => listen(previous.port ?? config.port, tls), { log: (line) => console.error(`kerstel-server: ${line}`) })
+          : listen(config.port, tls);
       } catch (error) {
         console.error(`kerstel-server: ${(error as Error).message}`);
         process.exit(1);

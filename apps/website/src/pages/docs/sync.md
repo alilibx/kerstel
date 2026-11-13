@@ -53,6 +53,8 @@ chmod +x kerstel-server-linux-x64
 | `--acme-http <host:port>` | `KERSTEL_SERVER_ACME_HTTP` | `0.0.0.0:80` |
 | `--acme-directory <url>` | `KERSTEL_SERVER_ACME_DIRECTORY` | Let's Encrypt |
 
+A flag wins over its variable. `--domain` ignores `KERSTEL_SERVER_TLS` and `KERSTEL_SERVER_TLS_NAMES`, and `--tls self` ignores `KERSTEL_SERVER_DOMAIN`.
+
 With an enroll token, only a device that has it can create a vault: set `KERSTEL_SYNC_ENROLL_TOKEN` when you run `sync setup`. Joining an existing vault never needs it.
 
 ### Its own certificate, pinned
@@ -82,6 +84,8 @@ Kerstel checks the server's key on every request. If the key changes, it sends n
 
 The server keeps its key and certificate beside its database, as `<db>.tls-key.pem` and `<db>.tls-cert.pem`. The key stays the same across restarts, so the pin does too. A new database file means a new key and a new pin.
 
+You can give the server a domain later. Start it with `--domain` and the same database file. Its Let's Encrypt certificate is for the same key, so devices that pin it keep working.
+
 With Docker, name the address and set the mode with environment variables, and publish the port:
 
 ```bash
@@ -93,7 +97,7 @@ docker logs <container> | grep 'Certificate pin'
 
 ### Your domain, with Let's Encrypt
 
-Point a DNS record for your domain at the server, and let traffic reach it on TCP 80 and 443. The server answers Let's Encrypt's challenge on port 80 and serves HTTPS on port 443. It gets the certificate when it starts and renews it when fewer than 30 days remain, checking every 12 hours.
+Point a DNS record for your domain at the server, and let traffic reach it on TCP 80 and 443. The server answers Let's Encrypt's challenge on port 80 and serves HTTPS on port 443. It gets the certificate when it starts and renews it when fewer than 30 days remain, checking every 12 hours. A certificate that lasts less than 90 days is renewed when a third of its time remains.
 
 ```bash
 sudo ./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
@@ -104,7 +108,7 @@ Listening on 80 and 443 needs root, as `sudo` gives here, or `CAP_NET_BIND_SERVI
 
 Running with `--domain` means you agree to the ACME CA's terms of service (Let's Encrypt by default). `--acme-email` is optional. If the server can't get a certificate, it says what to fix, prints `No certificate yet. Trying again in an hour.`, and retries. The ACME account key lives beside the database as `<db>.acme-account.pem`.
 
-With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep `--restart unless-stopped`: a renewal restarts the HTTPS listener, and if that fails, the server exits so Docker can start it again.
+With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again within 10 tries, a second apart, the server exits so Docker can start it again.
 
 ```bash
 docker run -d --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \

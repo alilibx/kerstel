@@ -31,8 +31,8 @@ export interface TlsServer {
   app: App;
   /** Every path the listener was asked for, in order. */
   paths: string[];
-  /** Stops the listener and starts it again on the same port, with a new certificate for `names` and `key`. */
-  restart(o: { key?: KeyObject; names: string[] }): void;
+  /** Stops the listener and starts it again on the same port, with a new certificate for `names` and `key`, made by `issue` when given. */
+  restart(o: { key?: KeyObject; names: string[]; issue?: (key: KeyObject, names: string[]) => Buffer }): void;
   stop(): void;
 }
 
@@ -64,7 +64,7 @@ export function startTlsServer(options: TlsServerOptions = {}): TlsServer {
     });
   };
 
-  const issue = options.issue ?? ((key, names) => selfSignedCertificate({ key, names }));
+  let issue = options.issue ?? ((key: KeyObject, names: string[]) => selfSignedCertificate({ key, names }));
   state.certDer = issue(state.key, options.names ?? ["localhost", "127.0.0.1"]);
   let server = listen(0);
   const port = server.port!;
@@ -86,6 +86,7 @@ export function startTlsServer(options: TlsServerOptions = {}): TlsServer {
     restart(o) {
       server.stop(true);
       if (o.key) state.key = o.key;
+      if (o.issue) issue = o.issue;
       state.certDer = issue(state.key, o.names);
       server = listen(port);
     },

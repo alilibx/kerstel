@@ -701,11 +701,28 @@ describe("parseArgs: TLS", () => {
     });
   });
 
+  test("a flag overrides its environment twin", () => {
+    const env = { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_TLS_NAMES: "homebox.local", KERSTEL_SERVER_DOMAIN: "old.example.com" };
+    expect(parseArgs(["--domain", "sync.example.com"], env)).toMatchObject({ tls: { mode: "acme", domain: "sync.example.com" } });
+    expect(parseArgs(["--domain", "sync.example.com"], { KERSTEL_SERVER_TLS: "self" })).toMatchObject({ tls: { mode: "acme" } });
+    expect(parseArgs(["--tls", "self"], { KERSTEL_SERVER_DOMAIN: "sync.example.com" })).toMatchObject({
+      hostname: "127.0.0.1",
+      port: 8787,
+      tls: { mode: "self", names: ["localhost", "127.0.0.1"] },
+    });
+    expect(parseArgs(["--tls", "self"], env)).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1", "homebox.local"] } });
+  });
+
   test("rejects conflicting or malformed TLS options", () => {
     expect(() => parseArgs(["--tls", "self", "--domain", "sync.example.com"], {})).toThrow("--domain");
-    expect(() => parseArgs(["--domain", "sync.example.com"], { KERSTEL_SERVER_TLS: "self" })).toThrow("--domain");
-    expect(() => parseArgs(["--tls-name", "homebox.local"], {})).toThrow("--tls self");
-    expect(() => parseArgs([], { KERSTEL_SERVER_TLS_NAMES: "homebox.local" })).toThrow("--tls self");
+    expect(() => parseArgs(["--tls-name", "homebox.local"], {})).toThrow("--tls-name needs --tls self.");
+    // A conflict that comes only from the environment names the variables.
+    expect(() => parseArgs([], { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_DOMAIN: "sync.example.com" })).toThrow(
+      "Set KERSTEL_SERVER_TLS=self or KERSTEL_SERVER_DOMAIN, not both.",
+    );
+    expect(() => parseArgs([], { KERSTEL_SERVER_TLS_NAMES: "homebox.local" })).toThrow(
+      "KERSTEL_SERVER_TLS_NAMES needs --tls self (or KERSTEL_SERVER_TLS=self).",
+    );
     expect(() => parseArgs(["--tls", "acme"], {})).toThrow("--tls takes only self");
     expect(() => parseArgs([], { KERSTEL_SERVER_TLS: "on" })).toThrow("--tls takes only self");
     for (const name of ["fe80::1%en0", "home_box", "-", "a..b", "foo.*", "*", "bad name", "ünï.example", "a.b.", "192.168.1.256", "127.1", "1.2.3.4.5", "010.0.0.1"]) {

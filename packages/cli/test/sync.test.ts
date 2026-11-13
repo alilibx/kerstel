@@ -5,7 +5,7 @@ import { createApp } from "../../server/src/app";
 import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
 import { openDatabase } from "../../server/src/db";
 import { TIMING, newId, signRequest } from "../../server/src/protocol";
-import { PIN_DOES_NOT_MATCH, syncCommand } from "../src/commands/sync";
+import { JOIN_PIN_DOES_NOT_MATCH, PIN_DOES_NOT_MATCH, syncCommand } from "../src/commands/sync";
 import type { CliContext } from "../src/context";
 import { listBackups } from "../src/init/backup";
 import { ScriptedPrompter } from "../src/init/prompts";
@@ -46,10 +46,10 @@ import {
 } from "../src/sync/background";
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
-import { loadSync, saveSync, SYNC_META } from "../src/sync/state";
+import { loadSync, saveSync, SYNC_META, SyncSettingsError } from "../src/sync/state";
 import { encodeJoinValue, parseJoinValue, type JoinValue } from "../src/sync/join-value";
 import type { Prompter } from "../src/init/prompts";
-import { generateDataKey } from "../src/vault/crypto";
+import { encrypt, generateDataKey } from "../src/vault/crypto";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
 import { captureLog } from "./helpers/capture-log";
@@ -1459,14 +1459,23 @@ describe("pairing, joining and removing devices", () => {
 
     test("sync off works when the sync settings are damaged or incomplete", async () => {
       const p = pinnedServer();
-      const damage: Array<[(v: Vault) => void, string]> = [
+      /** `text` sealed with `key`, as the settings seal a value, so it unseals but is not a key. */
+      const sealedWith = (key: Buffer, text: string) => {
+        const { nonce, ciphertext } = encrypt(text, key);
+        return `${nonce.toString("base64")}.${ciphertext.toString("base64")}`;
+      };
+      const damage: Array<[(v: Vault, key: Buffer) => void, string]> = [
         [(v) => v.setMeta(SYNC_META.pin, "not a pin"), `This vault's sync settings are damaged (${SYNC_META.pin} is not a pin).`],
         [(v) => v.deleteMeta(SYNC_META.server), `This vault's sync settings are incomplete (${SYNC_META.server} is missing).`],
+        [(v) => v.setMeta(SYNC_META.server, "http://127.0.0.1:8787"), `This vault's sync settings are damaged (${SYNC_META.pin} is set for an http:// server).`],
+        [(v) => v.setMeta(SYNC_META.syncKey, "not.sealed"), `This vault's sync settings are damaged (${SYNC_META.syncKey} cannot be read).`],
+        [(v, key) => v.setMeta(SYNC_META.signKey, sealedWith(key, "not a key")), `This vault's sync settings are damaged (${SYNC_META.signKey} cannot be read).`],
       ];
       for (const [breakIt, thrown] of damage) {
         const a = await pinnedDevice(p, { DB: "db-damaged" });
-        a.with(breakIt);
+        a.with((v) => breakIt(v, a.key));
         expect(() => a.with((v) => loadSync(v, a.key))).toThrow(thrown);
+        expect(() => a.with((v) => loadSync(v, a.key))).toThrow(SyncSettingsError);
         const { timer, calls } = fakeTimer();
         const { result, out } = await quiet(() =>
           syncCommand(["off"], { fetch: p.fetch, context: a.context, interactive: false, now: tick(p), timer }),
@@ -1480,6 +1489,35 @@ describe("pairing, joining and removing devices", () => {
         expect(calls.remove).toBe(1);
         expect(a.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-damaged");
       }
+    });
+
+    test("sync off leaves sync on when reading the settings fails for another reason", async () => {
+      const p = pinnedServer();
+      const a = await pinnedDevice(p, { DB: "db-io" });
+      // The vault itself fails, not the settings in it.
+      const failing = async () => {
+        const ctx = await a.context();
+        const getMeta = ctx.vault.getMeta.bind(ctx.vault);
+        ctx.vault.getMeta = (key: string) => {
+          if (key === SYNC_META.server) throw new Error("disk I/O error");
+          return getMeta(key);
+        };
+        return ctx;
+      };
+      const { timer, calls } = fakeTimer();
+      const log = captureLog();
+      let thrown: unknown;
+      try {
+        await syncCommand(["off"], { fetch: p.fetch, context: failing, interactive: false, now: tick(p), timer });
+      } catch (error) {
+        thrown = error;
+      } finally {
+        log.restore();
+      }
+      expect((thrown as Error).message).toBe("disk I/O error");
+      expect(log.text()).not.toContain("could not be read");
+      expect(a.with((v) => loadSync(v, a.key))!.pin).toEqual(p.listener.pin);
+      expect(calls.remove).toBe(0);
     });
 
     test("pairing carries the pin", async () => {
@@ -1503,7 +1541,12 @@ describe("pairing, joining and removing devices", () => {
         syncCommand(["join", value], { fetch: p.fetch, context: b.context, interactive: false, now: tick(p) }),
       );
       expect(result).toBe(1);
-      expect(out).toContain(PIN_DOES_NOT_MATCH(p.listener.url));
+      expect(out).toContain(`Could not join: ${JOIN_PIN_DOES_NOT_MATCH(p.listener.url)}`);
+      expect(JOIN_PIN_DOES_NOT_MATCH(p.listener.url)).toBe(
+        `${p.listener.url} presented a key that does not match the one in this join line. If the server was set up again, ` +
+          "set sync up again on the other device and run sync add-device there for a new line. Otherwise, something between you " +
+          "and the server is answering in its place.",
+      );
       // Sync is not on yet: there is nothing to turn off.
       expect(out).not.toContain("sync off");
       // Only the certificate went out; the pairing answer did not.
@@ -1525,11 +1568,19 @@ describe("pairing, joining and removing devices", () => {
           syncCommand([...args], { fetch: p.fetch, context: d.context, interactive: false, now: tick(p), timer }),
         );
         expect(result).toBe(0);
-        expect(out).toContain(
-          "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
-            "Sync is off here; your secrets stay here. To sync again, run",
-        );
-        expect(out).toContain("sync setup and pair your other devices again.");
+        if ((args as readonly string[]).includes("--delete-vault")) {
+          expect(out).toContain(
+            "The server answered with a key this device does not trust, so the vault on the server was not deleted. " +
+              "Sync is off here; your secrets stay here.",
+          );
+          expect(out).not.toContain("could not remove itself");
+        } else {
+          expect(out).toContain(
+            "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
+              "Sync is off here; your secrets stay here. To sync again, run",
+          );
+          expect(out).toContain("sync setup and pair your other devices again.");
+        }
         expect(d.with((v) => loadSync(v, d.key))).toBeNull();
         expect(d.with((v) => v.getMeta(SYNC_META.pin))).toBeNull();
         expect(calls.remove).toBe(1);

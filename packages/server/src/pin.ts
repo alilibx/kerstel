@@ -7,7 +7,11 @@
 import { X509Certificate, createHash } from "node:crypto";
 
 const PREFIX = "sha256/";
-const PIN_BYTES = 32;
+/** A pin's length: a SHA-256 digest. */
+export const PIN_BYTES = 32;
+
+/** A pin is checked by TLS: over plain http there is nothing to check it against. */
+export const isHttps = (url: string): boolean => /^https:\/\//i.test(url);
 
 export function pinOfSpki(spkiDer: Buffer): Buffer {
   return createHash("sha256").update(spkiDer).digest();

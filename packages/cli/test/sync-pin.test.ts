@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes, type KeyObject } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newId } from "../../server/src/protocol";
 import { generateDeviceKeys, generateSyncKey, publicKeyOf, sealSyncKey } from "../src/sync/crypto";
 import { PIN_MISMATCH, PIN_NEEDS_HTTPS, SyncHttpError, pairingClient, pinnedFetch, syncClient, type Fetch } from "../src/sync/http";
 import { serverKey, startTlsServer, type TlsServer } from "./helpers/tls-server";
 import { pinOfCertificate } from "../../server/src/pin";
-import { issueCertificate, selfSignedCertificate } from "../../server/src/x509";
+import { issueCertificate, selfSignedCertificate, toPem } from "../../server/src/x509";
 import { createPublicKey } from "node:crypto";
 
 /** #112: a pinned client trusts the server's own key and nothing else. */
@@ -59,6 +61,36 @@ function recordingBase(): { base: Fetch; calls: Recorded[] } {
   const base: Fetch = (request, init) => {
     calls.push({ url: request.url, tls: init?.tls });
     return fetch(request, init as RequestInit);
+  };
+  return { base, calls };
+}
+
+const spkiOf = (key: KeyObject) => createPublicKey(key).export({ type: "spki", format: "der" });
+
+/** A certificate authority for tests, standing in for Let's Encrypt: `kerstel-server --domain`. */
+function testAuthority() {
+  const key = serverKey();
+  const certDer = issueCertificate({ subjectSpki: spkiOf(key), issuerKey: key, issuerName: "Test CA", subjectName: "Test CA", names: [], ca: true });
+  return {
+    pem: toPem(certDer, "CERTIFICATE"),
+    /** A leaf for `subject`'s key, as the CA issues it for a domain. */
+    issue: (subject: KeyObject, names: string[]) =>
+      issueCertificate({ subjectSpki: spkiOf(subject), issuerKey: key, issuerName: "Test CA", subjectName: "leaf", names }),
+  };
+}
+
+/**
+ * `recordingBase`, on a machine that trusts `authority`: a request sent
+ * without `ca` (the normal roots) trusts the test CA too. It records what the
+ * client asked for, before the CA is added.
+ */
+function trustingBase(authority: { pem: string }): { base: Fetch; calls: Recorded[] } {
+  const calls: Recorded[] = [];
+  const base: Fetch = (request, init) => {
+    calls.push({ url: request.url, tls: init?.tls });
+    const tls = init?.tls;
+    const roots = tls && tls.ca === undefined && tls.rejectUnauthorized !== false ? { ...tls, ca: authority.pem } : tls;
+    return fetch(request, { ...init, tls: roots } as RequestInit);
   };
   return { base, calls };
 }
@@ -130,6 +162,100 @@ describe("a pinned client", () => {
     expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/v1/certificate", "/v1/vaults", "/v1/certificate", "/v1/vaults"]);
     for (const call of calls.filter((c) => !c.url.endsWith("/v1/certificate"))) expect(call.tls?.ca).toBeDefined();
     expect(server.paths).not.toContain("/v1/vaults");
+  });
+
+  test("a certificate a CA issued for the pinned key connects, checked against the normal roots", async () => {
+    // A server that moved from --tls self to --domain keeps its key, and so its pin.
+    const authority = testAuthority();
+    const server = start({ issue: authority.issue });
+    const { base, calls } = trustingBase(authority);
+    const device = newDevice(server.url, { pin: server.pin, fetch: base });
+    await device.createVault();
+    expect((await device.client.devices()).devices).toHaveLength(1);
+    expect(calls.map((c) => new URL(c.url).pathname.split("/").pop())).toEqual(["certificate", "vaults", "devices"]);
+    for (const call of calls.filter((c) => !c.url.endsWith("/v1/certificate"))) {
+      // No `ca`: the normal roots decide, then the key is checked.
+      expect(call.tls?.ca).toBeUndefined();
+      expect(typeof call.tls?.checkServerIdentity).toBe("function");
+    }
+  });
+
+  test("a CA-issued certificate for another key is a key mismatch", async () => {
+    const authority = testAuthority();
+    const pinnedKey = serverKey();
+    const pin = pinOfCertificate(authority.issue(pinnedKey, ["localhost"]));
+
+    // The server advertises a certificate for another key.
+    const moved = start({ issue: authority.issue });
+    const first = await failure(newDevice(moved.url, { pin, fetch: trustingBase(authority).base }).createVault());
+    expect(first.code).toBe("pin_mismatch");
+    expect(moved.paths).toEqual(["/v1/certificate"]);
+
+    // Someone in the middle with a valid certificate of its own copies the pinned one.
+    const copied = authority.issue(pinnedKey, ["localhost", "127.0.0.1"]);
+    const server = start({ issue: authority.issue, advertise: () => copied });
+    const { base, calls } = trustingBase(authority);
+    const error = await failure(newDevice(server.url, { pin, fetch: base }).createVault());
+    expect(error.code).toBe("pin_mismatch");
+    expect(error.message).toBe(PIN_MISMATCH(server.url));
+    // The key check threw: never retried.
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/v1/certificate", "/v1/vaults"]);
+    expect(calls[1]!.tls?.ca).toBeUndefined();
+    expect(server.paths).toEqual(["/v1/certificate"]);
+  });
+
+  test("a server that moves from its own certificate to a CA's, with the same key, still connects", async () => {
+    const authority = testAuthority();
+    const server = start();
+    const { base, calls } = trustingBase(authority);
+    const device = newDevice(server.url, { pin: server.pin, fetch: base });
+    await device.createVault();
+    server.restart({ names: ["localhost", "127.0.0.1"], issue: authority.issue });
+    expect((await device.client.devices()).devices).toHaveLength(1);
+    // The held certificate failed, the new one was fetched, and the retry used the normal roots.
+    const after = calls.slice(2);
+    expect(after.map((c) => new URL(c.url).pathname.split("/").pop())).toEqual(["devices", "certificate", "devices"]);
+    expect(after[0]!.tls?.ca).toBeDefined();
+    expect(after[2]!.tls?.ca).toBeUndefined();
+  });
+
+  test("without ca, Bun checks the normal roots and then the pin", async () => {
+    // A child process, so the test CA is among the normal roots
+    // (NODE_EXTRA_CA_CERTS) and nothing in the request carries a `ca`.
+    const authority = testAuthority();
+    const dir = mkdtempSync(join(tmpdir(), "kerstel-pin-ca-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "ca.pem"), authority.pem);
+    const pinnedKey = serverKey();
+    const good = start({ key: pinnedKey, issue: authority.issue });
+    const copied = authority.issue(pinnedKey, ["localhost"]);
+    const middle = start({ issue: authority.issue, advertise: () => copied });
+
+    const http = join(import.meta.dir, "../src/sync/http.ts");
+    const script = `
+      import { pinnedFetch } from ${JSON.stringify(http)};
+      const [server, pin] = process.argv.slice(1);
+      try {
+        await pinnedFetch(server, Buffer.from(pin, "base64url"))(new Request(server + "/v1/health"));
+        console.log("connected");
+      } catch (error) {
+        console.log(error.message === "pin mismatch" ? "pin_mismatch" : error.code ?? error.message);
+      }`;
+    const run = async (url: string) => {
+      const child = Bun.spawn([process.execPath, "-e", script, url, good.pin.toString("base64url")], {
+        env: { ...process.env, NODE_EXTRA_CA_CERTS: join(dir, "ca.pem") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      cleanups.push(() => child.kill());
+      const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      if (out.trim() === "") throw new Error(`the client printed nothing; its stderr:\n${err}`);
+      return out.trim();
+    };
+    expect(await run(good.url)).toBe("connected");
+    expect(good.paths).toEqual(["/v1/certificate", "/v1/health"]);
+    expect(await run(middle.url)).toBe("pin_mismatch");
+    expect(middle.paths).toEqual(["/v1/certificate"]);
   });
 
   test("a pinned server must use https", () => {
@@ -270,6 +396,13 @@ describe("an unpinned client", () => {
     await device.client.devices();
     expect(inits).toHaveLength(2);
     expect(inits.every((init) => init === undefined)).toBe(true);
+  });
+
+  test("keeps the code a self-signed certificate failed with", async () => {
+    const server = start();
+    const error = await failure(newDevice(server.url).createVault());
+    expect(error.code).toBe("unreachable");
+    expect(error.tlsCode).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   });
 });
 

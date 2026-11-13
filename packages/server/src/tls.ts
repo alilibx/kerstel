@@ -57,11 +57,12 @@ function readKey(path: string): string {
 const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS", "EXDEV"]);
 
 /**
- * Writes and syncs `text` to a new file at `path`, mode `0600`. Throws EEXIST
- * when `path` exists. A failed write removes the file, so no half key is left.
+ * Writes and syncs `text` to a new file at `path`, mode `0600` unless `mode`
+ * says otherwise. Throws EEXIST when `path` exists. A failed write removes the
+ * file, so no half key is left.
  */
-function writeNewFile(path: string, text: string): void {
-  const fd = openSync(path, "wx", 0o600);
+function writeNewFile(path: string, text: string, mode = 0o600): void {
+  const fd = openSync(path, "wx", mode);
   try {
     writeSync(fd, text);
     fsyncSync(fd);
@@ -169,7 +170,7 @@ export function loadSelfSigned(
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
-/** Renew when fewer than this many milliseconds remain. */
+/** Renew when fewer than this many milliseconds remain, or a third of the certificate's lifetime if that is less. */
 const RENEW_BEFORE_MS = 30 * DAY_MS;
 /** After a failed order, ask again no sooner than this. */
 const RETRY_MS = HOUR_MS;
@@ -183,7 +184,13 @@ export interface AcmeCertificate {
   certDer: Buffer;
 }
 
-type Held = AcmeCertificate & { notAfter: number };
+type Held = AcmeCertificate & { notBefore: number; notAfter: number };
+
+/** Whether `held` should be renewed at `now`: under 30 days left, or under a third of its lifetime for a short-lived one. */
+function needsRenewal(held: Held, now: number): boolean {
+  const renewBefore = Math.min(RENEW_BEFORE_MS, (held.notAfter - held.notBefore) / 3);
+  return held.notAfter - now < renewBefore;
+}
 
 export type AcmeManagerDeps = AcmeDeps & { now: () => number; log: (line: string) => void };
 
@@ -200,22 +207,18 @@ function acmeCertificate(certPem: string, keyPem: string, domain: string): Held 
   }
   if (!certificateNames(leaf.raw).includes(domain)) throw new Error(`The certificate does not name ${domain}.`);
   if (leaf.verify(leaf.publicKey)) throw new Error("The certificate is self-signed.");
+  const notBefore = Date.parse(leaf.validFrom);
   const notAfter = Date.parse(leaf.validTo);
   if (!Number.isFinite(notAfter)) throw new Error(`The certificate's expiry, ${leaf.validTo}, does not parse.`);
-  return { certPem, keyPem, certDer: leaf.raw, notAfter };
+  if (!Number.isFinite(notBefore)) throw new Error(`The certificate's start, ${leaf.validFrom}, does not parse.`);
+  return { certPem, keyPem, certDer: leaf.raw, notBefore, notAfter };
 }
 
 /** Writes `text` to `path` through a synced temporary file, so a reader sees the old file or the new one. */
 function replaceFile(path: string, text: string): void {
   const temp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
   try {
-    const fd = openSync(temp, "wx", 0o644);
-    try {
-      writeSync(fd, text);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
+    writeNewFile(temp, text, 0o644);
     renameSync(temp, path);
     syncDirectory(dirname(path));
   } finally {
@@ -226,7 +229,8 @@ function replaceFile(path: string, text: string): void {
 /**
  * The certificate for `--domain`. It keeps the ACME account key and the
  * certificate key beside the database (`0600`) and reuses both, and gets a new
- * certificate when there is none or fewer than 30 days remain. After a failed
+ * certificate when there is none or fewer than 30 days remain (a third of its
+ * lifetime, for a certificate that lasts less than 90 days). After a failed
  * order it asks the CA again no sooner than an hour later.
  */
 export class AcmeManager {
@@ -280,7 +284,7 @@ export class AcmeManager {
   private async attempt(): Promise<"issued" | "renewed" | "current" | "failed"> {
     const now = this.now();
     const previous = this.held;
-    if (previous && previous.notAfter - now >= RENEW_BEFORE_MS) return "current";
+    if (previous && !needsRenewal(previous, now)) return "current";
     if (this.failedAt !== null && now - this.failedAt < RETRY_MS) return "failed";
     try {
       const files = tlsFiles(this.o.db);
@@ -334,6 +338,35 @@ export function serveChallenges(o: {
       return answer === undefined ? new Response("not found\n", { status: 404 }) : new Response(answer);
     },
   });
+}
+
+/** How many times, and how far apart, `bindAgain` tries to listen. */
+const BIND_ATTEMPTS = 10;
+const BIND_DELAY_MS = 1_000;
+
+/**
+ * Listens again after a renewal stopped the old listener, which may hold its
+ * address for a moment: `bind` is tried up to 10 times, a second apart, and
+ * the first failure is logged once. Throws the last error if every try fails.
+ */
+export async function bindAgain<T>(
+  bind: () => T,
+  o: { log: (line: string) => void; sleep?: (ms: number) => Promise<void> },
+): Promise<T> {
+  const sleep = o.sleep ?? ((ms: number) => Bun.sleep(ms));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return bind();
+    } catch (error) {
+      if (attempt >= BIND_ATTEMPTS) throw error;
+      if (attempt === 1) {
+        o.log(
+          `Could not listen again with the new certificate (${(error as Error).message}). Trying again every second, up to ${BIND_ATTEMPTS} times.`,
+        );
+      }
+      await sleep(BIND_DELAY_MS);
+    }
+  }
 }
 
 /**

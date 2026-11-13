@@ -47,6 +47,7 @@ import {
   saveSync,
   setFullPull,
   SYNC_META,
+  SyncSettingsError,
   writeSync,
   type SyncConfig,
 } from "../sync/state";
@@ -56,7 +57,7 @@ import { vaultPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import type { Vault } from "../vault/store";
 import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
-import { formatPin, parsePin } from "../../../server/src/pin";
+import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
@@ -101,9 +102,6 @@ function thisDevice(deps: SyncDeps): { name: string; platform: string } {
   return { name: deps.deviceName ?? (hostname() || "this device"), platform };
 }
 
-/** A pin is checked by TLS: over plain http there is nothing to check it against. */
-const isHttps = (url: string) => /^https:\/\//i.test(url);
-
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -137,19 +135,28 @@ export const PIN_DOES_NOT_MATCH = (server: string): string =>
   `${server} presented a key that does not match the pin. Check the pin kerstel-server printed when it started (sha256/…). ` +
   "Otherwise, something between you and the server is answering in its place.";
 
-/** `explain`, for `setup` and `join` before they turn sync on. */
-function explainBeforeSync(error: unknown, server: string): string {
-  if (error instanceof SyncHttpError && error.code === "pin_mismatch") return PIN_DOES_NOT_MATCH(server);
+/**
+ * A pin mismatch while joining: the pin came in the join line, so the person
+ * never saw it. The server may have been set up again since the line was made.
+ */
+export const JOIN_PIN_DOES_NOT_MATCH = (server: string): string =>
+  `${server} presented a key that does not match the one in this join line. If the server was set up again, ` +
+  "set sync up again on the other device and run sync add-device there for a new line. " +
+  "Otherwise, something between you and the server is answering in its place.";
+
+/** `explain`, for `setup` and `join` before they turn sync on; `mismatch` words a pin mismatch. */
+function explainBeforeSync(error: unknown, server: string, mismatch: (server: string) => string = PIN_DOES_NOT_MATCH): string {
+  if (error instanceof SyncHttpError && error.code === "pin_mismatch") return mismatch(server);
   return explain(error);
 }
 
+/** The codes Bun gives for a self-signed certificate that nothing trusts. */
+const SELF_SIGNED_CODES = new Set(["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN"]);
+
 /** The server's certificate is self-signed and nothing pinned it: likely `kerstel-server --tls self`. */
 function isUnpinnedSelfSigned(error: unknown): boolean {
-  return (
-    error instanceof SyncHttpError &&
-    error.code === "unreachable" &&
-    /self signed certificate|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN/.test(error.message)
-  );
+  if (!(error instanceof SyncHttpError) || error.code !== "unreachable") return false;
+  return SELF_SIGNED_CODES.has(error.tlsCode ?? "") || /self[- ]signed/i.test(error.message);
 }
 
 const emptyReport = (): SyncReport => ({ applied: [], pushed: [], conflicts: [], backups: [] });
@@ -797,7 +804,9 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
     let sync: SyncContext | null;
     try {
       sync = contextFor(ctx, deps);
-    } catch {
+    } catch (error) {
+      // Any other failure, reading the vault say, leaves sync as it is.
+      if (!(error instanceof SyncSettingsError)) throw error;
       // Damaged settings name no server or key to leave with. Every other
       // sync command says to run this one, so it must still turn sync off.
       forgetSync(ctx.vault);
@@ -830,8 +839,11 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
         forgetSync(ctx.vault);
         removeTimer(deps);
         info(
-          "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
-            `Sync is off here; your secrets stay here. To sync again, run ${cliName()} sync setup and pair your other devices again.`,
+          deleteVault
+            ? "The server answered with a key this device does not trust, so the vault on the server was not deleted. " +
+                "Sync is off here; your secrets stay here."
+            : "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
+                `Sync is off here; your secrets stay here. To sync again, run ${cliName()} sync setup and pair your other devices again.`,
         );
         return 0;
       }
@@ -1081,7 +1093,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
           fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
         } else {
-          fail(`Could not join: ${explainBeforeSync(error, url)}`);
+          fail(`Could not join: ${explainBeforeSync(error, url, JOIN_PIN_DOES_NOT_MATCH)}`);
           if (codeForm && isUnpinnedSelfSigned(error)) {
             info(`If this server pins its own certificate, pair with the ks1- line from ${cliName()} sync add-device instead.`);
           }
@@ -1103,7 +1115,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         deps,
       );
     } catch (error) {
-      fail(`Could not join: ${explainBeforeSync(error, server)}`);
+      fail(`Could not join: ${explainBeforeSync(error, server, JOIN_PIN_DOES_NOT_MATCH)}`);
       return 1;
     }
     if (!accepted) {
@@ -1116,7 +1128,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     try {
       sealed = await client.keys();
     } catch (error) {
-      fail(`Could not join: ${explainBeforeSync(error, server)}`);
+      fail(`Could not join: ${explainBeforeSync(error, server, JOIN_PIN_DOES_NOT_MATCH)}`);
       return 1;
     }
     // The other device made this HMAC with the pairing's secret over the key it

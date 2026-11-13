@@ -8,6 +8,7 @@ import { pinnedFetch } from "../../cli/src/sync/http";
 import { parsePin, pinOfCertificate } from "../src/pin";
 import {
   AcmeManager,
+  bindAgain,
   certificateName,
   keepCertificate,
   loadOrCreateKey,
@@ -254,6 +255,22 @@ describe("AcmeManager", () => {
     expect(ca.accounts.length).toBe(1); // and so is the account
   });
 
+  test("renews a short-lived certificate when under a third of its lifetime remains", async () => {
+    start({ validityMs: DAY });
+    expect(await manager.ensure()).toBe("issued");
+    const leaf = leafOf(manager.current()!);
+    const notAfter = Date.parse(leaf.validTo);
+    expect(notAfter - Date.parse(leaf.validFrom)).toBe(DAY);
+
+    clock = notAfter - 20 * HOUR;
+    expect(await manager.ensure()).toBe("current");
+    expect(ca.counts.newOrder).toBe(1);
+
+    clock = notAfter - 7 * HOUR;
+    expect(await manager.ensure()).toBe("renewed");
+    expect(ca.counts.newOrder).toBe(2);
+  });
+
   test("a failed order is retried no sooner than an hour", async () => {
     start();
     ca.failValidation("urn:ietf:params:acme:error:connection");
@@ -381,6 +398,75 @@ describe("keepCertificate", () => {
     expect(t.logs).toEqual([]); // a failed renewal keeps the certificate it has
     expect(t.timers.map((x) => x.ms)).toEqual([HOUR]);
     t.keeper.stop();
+  });
+});
+
+describe("bindAgain", () => {
+  /** A bind that fails `failures` times, then returns "listening". */
+  function flaky(failures: number) {
+    const state = { calls: 0, slept: [] as number[], logs: [] as string[] };
+    const bind = () => {
+      state.calls += 1;
+      if (state.calls <= failures) throw new Error(`Failed to start server. Is port 8443 in use? (${state.calls})`);
+      return "listening";
+    };
+    const options = {
+      log: (line: string) => state.logs.push(line),
+      sleep: async (ms: number) => {
+        state.slept.push(ms);
+      },
+    };
+    return { state, bind, options };
+  }
+
+  test("binds at once when it can", async () => {
+    const f = flaky(0);
+    expect(await bindAgain(f.bind, f.options)).toBe("listening");
+    expect(f.state).toEqual({ calls: 1, slept: [], logs: [] });
+  });
+
+  test("tries again a second apart, logging once", async () => {
+    const f = flaky(3);
+    expect(await bindAgain(f.bind, f.options)).toBe("listening");
+    expect(f.state.calls).toBe(4);
+    expect(f.state.slept).toEqual([1000, 1000, 1000]);
+    expect(f.state.logs).toEqual([
+      "Could not listen again with the new certificate (Failed to start server. Is port 8443 in use? (1)). Trying again every second, up to 10 times.",
+    ]);
+  });
+
+  test("throws the last error after 10 failures", async () => {
+    const f = flaky(10);
+    let thrown: unknown;
+    try {
+      await bindAgain(f.bind, f.options);
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as Error).message).toBe("Failed to start server. Is port 8443 in use? (10)");
+    expect(f.state.calls).toBe(10);
+    expect(f.state.slept).toHaveLength(9);
+    expect(f.state.logs).toHaveLength(1);
+  });
+
+  test("rebinds a real listener's address once it is free", async () => {
+    const first = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("first") });
+    const port = first.port!;
+    let freed = false;
+    const second = await bindAgain(() => Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("second") }), {
+      log: () => {},
+      sleep: async () => {
+        if (!freed) first.stop(true);
+        freed = true;
+      },
+    });
+    try {
+      expect(freed).toBe(true); // the first try failed: the address was taken
+      expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("second");
+    } finally {
+      first.stop(true);
+      second.stop(true);
+    }
   });
 });
 

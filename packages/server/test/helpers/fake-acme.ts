@@ -75,6 +75,8 @@ class Problem extends Error {
   }
 }
 
+const DAY_MS = 24 * 3_600_000;
+
 /** `validityMs`: how long each issued certificate lasts from when it is issued (default: no expiry). */
 export function startFakeAcme(o: { challengePort: number; validityMs?: number }): FakeAcme {
   const caKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
@@ -296,13 +298,15 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
         if (csr.spki.equals(createPublicKey({ key: jwk, format: "jwk" }).export({ type: "spki", format: "der" }))) {
           throw new Problem(`${ERROR}badCSR`, "The CSR's key is the account key.");
         }
+        const issuedAt = Date.now();
         const leaf = issueCertificate({
           subjectSpki: csr.spki,
           issuerKey: caKey,
           issuerName: CA_NAME,
           subjectName: order.domain,
           names: [order.domain],
-          ...(o.validityMs === undefined ? {} : { notAfter: Date.now() + o.validityMs }),
+          // `issueCertificate` starts a certificate a day before `now`: this one starts when it is issued.
+          ...(o.validityMs === undefined ? {} : { now: issuedAt + DAY_MS, notAfter: issuedAt + o.validityMs }),
         });
         order.finalized = true;
         const response = json(orderJson(order), 200, { location: fake.url(`/order/${order.id}`), "retry-after": "3" });

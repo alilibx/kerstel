@@ -36,6 +36,8 @@ bun run --cwd packages/server build        # dist/kerstel-server
 | `--acme-http <host:port>` | `KERSTEL_SERVER_ACME_HTTP` | `0.0.0.0:80` |
 | `--acme-directory <url>` | `KERSTEL_SERVER_ACME_DIRECTORY` | Let's Encrypt |
 
+A flag wins over its variable. `--domain` ignores `KERSTEL_SERVER_TLS` and `KERSTEL_SERVER_TLS_NAMES`, and `--tls self` ignores `KERSTEL_SERVER_DOMAIN`.
+
 ## HTTPS
 
 Kerstel sends a vault only to an `https://` URL, or `http://` to the same machine. The server serves HTTPS in two ways, and works behind a proxy or Tailscale too.
@@ -47,9 +49,9 @@ kerstel-server --listen 0.0.0.0:8787 --tls self --tls-name 203.0.113.7
 kerstel sync setup https://203.0.113.7:8787 --pin sha256/…
 ```
 
-The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs`.
+The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs`. To move to a domain later, start the server with `--domain` and the same database. The new certificate is for the same key, so pinned devices keep working.
 
-**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. Ports 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener, and if that fails the server exits, so something must start it again.
+**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. Ports 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, or a third of the certificate's lifetime if that is shorter, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again after 10 tries, a second apart, the server exits, so something must start it again.
 
 **Files.** The key, certificate and ACME account key sit beside the database: `<db>.tls-key.pem` (mode `0600`), `<db>.tls-cert.pem` and `<db>.acme-account.pem` (mode `0600`). The key survives restarts, so the pin does too.
 

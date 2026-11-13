@@ -1,5 +1,5 @@
 import { X509Certificate, type KeyObject } from "node:crypto";
-import { pinOfCertificate } from "../../../server/src/pin";
+import { isHttps, pinOfCertificate } from "../../../server/src/pin";
 import {
   HEADERS,
   PROTOCOL_PREFIX,
@@ -44,6 +44,8 @@ export class SyncHttpError extends Error {
     /** The server's error code, `unreachable` when no answer came, or `pin_mismatch` when a pinned server's key is not the pinned one. */
     readonly code: string,
     message: string,
+    /** The code `fetch` failed with when no answer came, such as a TLS one (`DEPTH_ZERO_SELF_SIGNED_CERT`). */
+    readonly tlsCode?: string,
   ) {
     super(message);
     this.name = "SyncHttpError";
@@ -104,6 +106,25 @@ const TLS_VERIFY_CODES = new Set([
 const isTlsVerifyError = (error: unknown): boolean =>
   !isPinMismatch(error) && TLS_VERIFY_CODES.has(String((error as { code?: unknown } | null)?.code));
 
+/** The certificate a pinned client holds for its server. */
+interface HeldCertificate {
+  der: Buffer;
+  /** The certificate as PEM when it signed itself, for `ca`; null when a CA issued it. */
+  ca: string | null;
+}
+
+/**
+ * Signed by its own key, as `kerstel-server --tls self` makes it. BoringSSL
+ * anchors only on such a certificate, so a CA-issued one is never used as `ca`.
+ */
+function isSelfSigned(cert: X509Certificate): boolean {
+  try {
+    return cert.subject === cert.issuer && cert.verify(cert.publicKey);
+  } catch {
+    return false;
+  }
+}
+
 /** Reads at most `limit` bytes of a body, or null when it is longer. */
 async function readCapped(response: Response, limit: number): Promise<string | null> {
   const reader = response.body?.getReader();
@@ -125,20 +146,23 @@ async function readCapped(response: Response, limit: number): Promise<string | n
 
 /**
  * A fetch that trusts `server`'s pinned key and nothing else (easy-sync spec
- * §6). It fetches the server's certificate once, checks its key against the
- * pin, then sends every request with that certificate as its only `ca`, and
- * checks the key again in `checkServerIdentity`. The hostname is not checked:
- * the key is what is pinned. The certificate request is an ordinary fetch, so
- * HTTPS_PROXY and NO_PROXY apply to it as to every other request; it carries
- * no secret, and no redirect is followed.
+ * §6). It fetches the server's certificate once and checks its key against the
+ * pin. A self-signed certificate (`--tls self`) is then every request's only
+ * `ca`. A CA-issued one for the pinned key (a server that moved to `--domain`
+ * with the same key) is checked against the normal roots instead. Either way,
+ * `checkServerIdentity` checks the key again on every connection, and throws
+ * when it is not the pinned one, which fails the request. The hostname is not
+ * checked: the key is what is pinned. The certificate request is an ordinary
+ * fetch, so HTTPS_PROXY and NO_PROXY apply to it as to every other request; it
+ * carries no secret, and no redirect is followed.
  */
 export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase = bunFetch): Fetch {
   // The pin is checked by TLS; over plain http there is nothing to check it against.
-  if (!/^https:\/\//i.test(server)) throw new SyncHttpError(0, "bad_request", PIN_NEEDS_HTTPS);
-  let held: Promise<Buffer> | null = null;
+  if (!isHttps(server)) throw new SyncHttpError(0, "bad_request", PIN_NEEDS_HTTPS);
+  let held: Promise<HeldCertificate> | null = null;
   const mismatch = () => new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
 
-  async function fetchCertificate(): Promise<Buffer> {
+  async function fetchCertificate(): Promise<HeldCertificate> {
     const unreachable = (why: string) => new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${why}`);
     let response: Response;
     try {
@@ -158,22 +182,22 @@ export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase =
       await response.body?.cancel();
       throw unreachable(`it answered ${response.status} instead of sending its certificate.`);
     }
-    let der: Buffer;
     try {
       const text = await readCapped(response, CERTIFICATE_BODY_LIMIT);
       const parsed = text === null ? null : (JSON.parse(text) as { certificate?: unknown } | null);
       if (typeof parsed?.certificate !== "string") throw new Error("no certificate");
-      der = Buffer.from(parsed.certificate, "base64");
+      const der = Buffer.from(parsed.certificate, "base64");
       if (!pinOfCertificate(der).equals(pin)) throw mismatch();
+      const cert = new X509Certificate(der);
+      return { der, ca: isSelfSigned(cert) ? cert.toString() : null };
     } catch (error) {
       if (error instanceof SyncHttpError) throw error;
       throw unreachable("it sent a certificate Kerstel could not read.");
     }
-    return der;
   }
 
   /** The held certificate, fetched on first use. A failed fetch is tried again next time. */
-  function certificate(): Promise<Buffer> {
+  function certificate(): Promise<HeldCertificate> {
     if (!held) {
       held = fetchCertificate();
       held.catch(() => {
@@ -183,27 +207,25 @@ export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase =
     return held;
   }
 
-  const send = (request: Request, der: Buffer): Promise<Response> =>
-    base(request, {
-      tls: {
-        ca: new X509Certificate(der).toString(),
-        checkServerIdentity: (_host: string, cert: { raw: Buffer }) => {
-          // Thrown: the request fails, and `send` reports it as pin_mismatch.
-          if (!pinOfCertificate(cert.raw).equals(pin)) throw new PinMismatch();
-        },
-      },
-    });
+  // Runs after the certificate verified, against `ca` or the normal roots.
+  // Thrown, it fails the request, and `send` reports it as pin_mismatch.
+  const checkServerIdentity = (_host: string, cert: { raw: Buffer }) => {
+    if (!pinOfCertificate(cert.raw).equals(pin)) throw new PinMismatch();
+  };
+  const send = (request: Request, cert: HeldCertificate): Promise<Response> =>
+    base(request, { tls: cert.ca === null ? { checkServerIdentity } : { ca: cert.ca, checkServerIdentity } });
 
   return async (request) => {
-    const der = await certificate();
+    const cert = await certificate();
     try {
       // A body can be read once; the retry below sends the original.
-      return await send(request.clone() as Request, der);
+      return await send(request.clone() as Request, cert);
     } catch (error) {
       if (!isTlsVerifyError(error)) throw error;
       // The server may have reissued its certificate with the same key since
-      // this process fetched it. Fetch it once more and retry once.
-      let fresh: Buffer;
+      // this process fetched it, or moved between its own and a CA's. Fetch
+      // it once more and retry once.
+      let fresh: HeldCertificate;
       try {
         fresh = await fetchCertificate();
       } catch (refetch) {
@@ -211,9 +233,9 @@ export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase =
         throw error;
       }
       // The server says its certificate is the one held, yet its TLS layer
-      // presents another: something in between copied the certificate but
-      // cannot show its key.
-      if (fresh.equals(der)) throw mismatch();
+      // presents one that does not verify: something in between copied the
+      // certificate but cannot show its key.
+      if (fresh.der.equals(cert.der)) throw mismatch();
       held = Promise.resolve(fresh);
       try {
         return await send(request, fresh);
@@ -253,7 +275,8 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
     if (error instanceof SyncHttpError) throw error;
     // Never retried: nothing goes out to a key this device does not trust.
     if (isPinMismatch(error)) throw new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
-    throw new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${(error as Error).message}`);
+    const code = (error as { code?: unknown } | null)?.code;
+    throw new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${(error as Error).message}`, typeof code === "string" ? code : undefined);
   }
   if (response.status >= 300 && response.status < 400) {
     throw new SyncHttpError(

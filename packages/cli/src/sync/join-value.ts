@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { PIN_BYTES } from "../../../server/src/pin";
 import { PAIRING_SECRET_BYTES, parsePairingCode } from "./crypto";
 
 /**
@@ -14,7 +15,6 @@ export interface JoinValue {
 
 export const JOIN_PREFIX = "ks1-";
 
-const PIN_BYTES = 32;
 const CHECKSUM_BYTES = 4;
 const MAX_URLS = 4;
 const FLAG_PIN = 0x01;

@@ -229,7 +229,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync off [--delete-vault]</code></td>
-<td>Stop syncing this device and remove its scheduled pull: it leaves the vault on the server, and its secrets stay here. On the vault&#39;s last device it refuses unless <code>--delete-vault</code>, which deletes the vault from the server too. A device that another one already removed just turns sync off, and so does a device whose pinned server now answers with a different key, or whose sync settings can&#39;t be read, since it can no longer leave the vault there.</td>
+<td>Stop syncing this device and remove its scheduled pull: it leaves the vault on the server, and its secrets stay here. On the vault&#39;s last device it refuses unless <code>--delete-vault</code>, which deletes the vault from the server too. A device that another one already removed just turns sync off, and so does a device whose pinned server now answers with a different key, or whose sync settings can&#39;t be read, since it can no longer leave the vault there. A pinned server that answers with a different key keeps the vault, even with <code>--delete-vault</code>.</td>
 </tr>
 </tbody></table>
 </div><h2>Daemon and diagnostics</h2>
