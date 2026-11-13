@@ -1,3 +1,4 @@
+import { currentDir } from "../current-dir";
 import { processChain, systemProcessLookup } from "./chain";
 
 /** Who is writing to the vault: stamped on every audit row the vault records itself. */
@@ -19,7 +20,7 @@ export function cliActor(): AuditActor {
   return {
     pid: process.pid,
     processName: "kerstel",
-    cwd: process.cwd(),
+    cwd: currentDir(),
     chain() {
       chain ??= processChain(process.pid, systemProcessLookup());
       return chain;

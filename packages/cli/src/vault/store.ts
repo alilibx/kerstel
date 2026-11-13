@@ -493,9 +493,9 @@ export function openVault(dataKey: Buffer, file?: string, options: { actor?: Aud
              SUM(a.event = 'reveal') AS reveals,
              SUM(a.event IN ('resolve', 'run')) AS app_reads,
              COUNT(DISTINCT CASE WHEN a.event IN ('resolve', 'run') THEN a.pid END) AS processes,
-             COUNT(DISTINCT CASE WHEN a.event IN ('resolve', 'run') THEN a.project_id END) AS projects,
+             COUNT(DISTINCT CASE WHEN a.event IN ('resolve', 'run') THEN p.name END) AS projects,
              SUM(a.event IN ('set', 'remove', 'sync', 'device')) AS changes
-           FROM audit_log a ${where}`,
+           FROM audit_log a LEFT JOIN projects p ON p.id = a.project_id ${where}`,
         )
         .get(params)!;
       return {

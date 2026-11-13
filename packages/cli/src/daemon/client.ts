@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { basename } from "node:path";
+import { currentDir } from "../current-dir";
 import { socketPath as defaultSocketPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import {
@@ -14,15 +15,6 @@ import {
 import { daemonCwd, daemonEnv } from "./env";
 import { daemonServeCommand } from "./spawn";
 import { readToken } from "./token";
-
-/** The working directory, or null when it was deleted or is unreadable; it is audit-only. */
-function currentDir(): string | null {
-  try {
-    return process.cwd();
-  } catch {
-    return null;
-  }
-}
 
 export class DaemonError extends Error {
   constructor(

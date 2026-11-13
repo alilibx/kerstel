@@ -37,8 +37,13 @@ export function shouldRotate(vault: Vault, row: AuditRow): boolean {
   if (row.event !== "reveal") return false;
   const stored = vault.listSecrets(row.scope).find((s) => s.scope === row.scope && s.key === row.key);
   if (!stored || stored.updatedAt > row.ts) return false;
-  const value = vault.getSecret({ scope: row.scope, key: row.key });
-  return value !== null && judge(row.key, value) === "secret";
+  try {
+    const value = vault.getSecret({ scope: row.scope, key: row.key });
+    return value !== null && judge(row.key, value) === "secret";
+  } catch {
+    // A record that will not decrypt must not take the whole audit view down.
+    return false;
+  }
 }
 
 export function auditReport(vault: Vault, query: AuditQuery): AuditReport {

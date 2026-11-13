@@ -171,6 +171,7 @@ test("bad flags exit 2", async () => {
   expect((await run(["--action", "bogus"])).code).toBe(2);
   expect((await run(["--action", "bogus"])).text).toContain("resolve, run, reveal, set, remove, sync, device");
   expect((await run(["--limit", "0"])).code).toBe(2);
+  expect((await run(["--limit", "100000000000000000000"])).code).toBe(2);
   expect((await run(["--since", "soon"])).code).toBe(2);
   expect((await run(["--nope"])).code).toBe(2);
 });
@@ -202,4 +203,25 @@ test("an empty log with a date says since, and with hours says last", async () =
   await seedHome(() => {});
   expect((await run(["--since", "2026-11-01"])).text).toBe("Nothing recorded since 2026-11-01.");
   expect((await run(["--since", "24h"])).text).toBe("Nothing recorded in the last 24 hours.");
+});
+
+test("shouldRotate is false when the secret cannot be read", () => {
+  const v = memVault();
+  v.setSecret({ scope: "global", key: "OPENAI_API_KEY" }, CREDENTIAL);
+  v.getSecret = () => {
+    throw new Error("corrupt record");
+  };
+  const r = { id: 1, ts: Date.now() + 10, event: "reveal" as const, scope: "global", key: "OPENAI_API_KEY", pid: 1, processName: "kerstel", chain: null, project: null };
+  expect(shouldRotate(v, r)).toBe(false);
+});
+
+test("a section cut short by --limit says how many there are", async () => {
+  await seedHome((v) => {
+    for (let i = 0; i < 5; i++) v.appendAudit(row({ ts: NOW - i, key: `KEY_${i}` }));
+    for (let i = 0; i < 4; i++) v.appendAudit(row({ ts: NOW - i, event: "set", key: `CH_${i}` }));
+  });
+  const cut = await run(["--limit", "2"]);
+  expect(cut.text).toContain("Showing 2 of 5. Use --limit to see more.");
+  expect(cut.text).toContain("Showing 2 of 4. Use --limit to see more.");
+  expect((await run(["--limit", "10"])).text).not.toContain("Showing");
 });
