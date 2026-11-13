@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
@@ -41,6 +41,8 @@ import {
   takeSyncNotice,
   tryLockSync,
   type SyncGlance,
+  readSpawnMarker,
+  spawnMarkerPath,
 } from "../src/sync/background";
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
@@ -1302,7 +1304,7 @@ describe("sync in the background", () => {
   });
 
   test("which commands start a background sync, and when", () => {
-    const on: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null };
+    const on: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null, lastSpawn: null };
     const now = 10 * 60_000 + 1;
     const run = (command: string, state: Partial<typeof on>, when: "before" | "after") => {
       let spawned = 0;
@@ -1333,7 +1335,7 @@ describe("sync in the background", () => {
 
   test("run syncs a minute after the last success", () => {
     const now = 10 * 60_000;
-    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null };
+    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null, lastSpawn: null };
     const at = (ago: number) => syncBeforeCommand("run", { glance: () => ({ ...base, lastOk: now - ago, lastTry: now - ago }), spawn: () => {}, now: () => now });
     expect(at(59_000)).toBe(false);
     expect(at(60_000)).toBe(true);
@@ -1341,29 +1343,50 @@ describe("sync in the background", () => {
 
   test("run backs off five minutes after a failure", () => {
     const now = 20 * 60_000;
-    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: now - 10 * 60_000, lastTry: null, lastError: "x", lastTimer: null };
+    const base: SyncGlance = { on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: now - 10 * 60_000, lastTry: null, lastError: "x", lastTimer: null, lastSpawn: null };
     const at = (ago: number) => syncBeforeCommand("run", { glance: () => ({ ...base, lastTry: now - ago }), spawn: () => {}, now: () => now });
     expect(at(4 * 60_000)).toBe(false);
     expect(at(5 * 60_000)).toBe(true);
   });
 
-  test("a watch loop spawns at most one sync a minute", () => {
-    let now = 10 * 60_000;
-    let lastTry: number | null = null;
-    let spawned = 0;
-    const deps = {
-      glance: (): SyncGlance => ({ on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry, lastError: null, lastTimer: null }),
-      spawn: () => {
-        spawned += 1;
-        lastTry = now;
-      },
-      now: () => now,
+  describe("the spawn marker throttles a watch loop", () => {
+    // The fake spawn writes nothing: only the marker syncBeforeCommand writes itself can throttle.
+    const loop = (calls: number, stepMs: number, state: Partial<SyncGlance>) => {
+      const home = isolateEnv({ prefix: "sync-spawn-marker" });
+      dirs.push(home);
+      let now = 10 * 60_000;
+      let spawned = 0;
+      const deps = {
+        glance: (): SyncGlance => ({ on: true, pending: 0, conflicts: 0, server: SERVER, lastOk: null, lastTry: null, lastError: null, lastTimer: null, ...state, lastSpawn: readSpawnMarker() }),
+        spawn: () => void (spawned += 1),
+        now: () => now,
+      };
+      for (let i = 0; i < calls; i += 1) {
+        syncBeforeCommand("run", deps);
+        now += stepMs;
+      }
+      return spawned;
     };
-    for (let i = 0; i < 30; i += 1) {
-      syncBeforeCommand("run", deps);
-      now += 2_000;
-    }
-    expect(spawned).toBe(1);
+
+    test("a watch loop spawns at most one sync a minute", () => {
+      expect(loop(30, 2_000, {})).toBe(1);
+    });
+
+    test("a child that crashes and writes no lastTry is not respawned for a minute", () => {
+      expect(loop(30, 2_000, { lastOk: 1_000, lastTry: 1_000 })).toBe(1);
+    });
+
+    test("after a failure, six minutes of calls spawn at most twice", () => {
+      expect(loop(180, 2_000, { lastOk: 1_000, lastTry: 10 * 60_000 - 1_000, lastError: "x" })).toBeLessThanOrEqual(2);
+    });
+
+    test("a garbled or missing marker reads as null", () => {
+      const home = isolateEnv({ prefix: "sync-spawn-marker" });
+      dirs.push(home);
+      expect(readSpawnMarker()).toBeNull();
+      writeFileSync(spawnMarkerPath(), "not a number");
+      expect(readSpawnMarker()).toBeNull();
+    });
   });
 
   test("the background environment carries no caller variables or runtime options", () => {

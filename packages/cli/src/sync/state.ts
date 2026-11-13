@@ -19,7 +19,7 @@ export const SYNC_META = {
   head: "sync_head",
   lastOk: "sync_last_ok",
   lastError: "sync_last_error",
-  /** When a sync last finished, either way: `run` and `exec` wait a minute after it, five after a failed one. */
+  /** When a sync last finished, either way: `run` and `exec` also count when one started (the `sync-spawned` file), since a child that crashes never writes this. */
   lastTry: "sync_last_try",
   /** Set with a new key until the full pull that follows it finishes. */
   fullPull: "sync_full_pull",

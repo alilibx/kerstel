@@ -14,9 +14,9 @@ import { SYNC_META } from "./state";
  * command that started it.
  */
 
-/** `run` and `exec` sync in the background when no sync finished in this long. */
+/** `run` and `exec` start a background sync when none started or finished in this long. */
 export const BACKGROUND_PULL_AFTER_MS = 60_000;
-/** After a failed sync they wait this long, so an unreachable server isn't tried on every command. */
+/** After a failed sync they wait this long since one started or finished, so an unreachable server isn't tried on every command. */
 export const BACKGROUND_RETRY_AFTER_MS = 5 * 60_000;
 /** `doctor` warns when the last successful sync is older than this. */
 export const STALE_SYNC_MS = 7 * 24 * 60 * 60_000;
@@ -33,6 +33,8 @@ export interface SyncGlance {
   lastError: string | null;
   /** When the pull timer last started a sync. */
   lastTimer: number | null;
+  /** When `run` or `exec` last started a background sync, from the `sync-spawned` file. */
+  lastSpawn: number | null;
 }
 
 const OFF: SyncGlance = {
@@ -44,9 +46,34 @@ const OFF: SyncGlance = {
   lastTry: null,
   lastError: null,
   lastTimer: null,
+  lastSpawn: null,
 };
 
 /** Read-only, so it never creates, migrates or locks the vault. Off whenever the file can't be read. */
+/** Where `run` and `exec` note when they last started a sync. A start, not a finish: a sync that crashes or stalls still counts. */
+export function spawnMarkerPath(): string {
+  return join(kerstelHome(), "sync-spawned");
+}
+
+/** The ms timestamp in the marker file, or null when it is missing or garbled. Never throws. */
+export function readSpawnMarker(file: string = spawnMarkerPath()): number | null {
+  try {
+    const value = Number(readFileSync(file, "utf8").trim());
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best effort and never throws: a missing marker only means one extra sync later. */
+export function writeSpawnMarker(ms: number, file: string = spawnMarkerPath()): void {
+  try {
+    writeFileSync(file, String(ms), { mode: 0o600 });
+  } catch {
+    // Ignored.
+  }
+}
+
 export function glanceSync(file: string = vaultPath()): SyncGlance {
   if (!existsSync(file)) return OFF;
   let db: Database | null = null;
@@ -76,6 +103,7 @@ export function glanceSync(file: string = vaultPath()): SyncGlance {
       lastTry: time(SYNC_META.lastTry),
       lastError: meta.get(SYNC_META.lastError) ?? null,
       lastTimer: time(SYNC_META.lastTimer),
+      lastSpawn: readSpawnMarker(),
     };
   } catch {
     return OFF;
@@ -224,11 +252,15 @@ export interface BackgroundDeps {
   glance?: () => SyncGlance;
   spawn?: () => void;
   now?: () => number;
+  /** Records a start for the throttle. Defaults to the `sync-spawned` file. */
+  markSpawn?: (ms: number) => void;
 }
 
 /**
  * Before a command runs: `run` and `exec` start a sync when none finished in
- * the last minute, or the last five after a failed one. Before, and not after, because the app they start
+ * the last minute, or the last five after a failed one. "Started" counts: the
+ * `sync-spawned` file records each start here, because the child writes its
+ * own finish time only if it gets that far. Before, and not after, because the app they start
  * may run for hours. Never throws.
  */
 export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): boolean {
@@ -237,9 +269,11 @@ export function syncBeforeCommand(command: string, deps: BackgroundDeps = {}): b
     const sync = (deps.glance ?? glanceSync)();
     if (!sync.on) return false;
     const now = (deps.now ?? Date.now)();
+    const spawned = sync.lastSpawn ?? 0;
     if (sync.lastError !== null) {
-      if (now - (sync.lastTry ?? 0) < BACKGROUND_RETRY_AFTER_MS) return false;
-    } else if (now - Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0) < BACKGROUND_PULL_AFTER_MS) return false;
+      if (now - Math.max(sync.lastTry ?? 0, spawned) < BACKGROUND_RETRY_AFTER_MS) return false;
+    } else if (now - Math.max(sync.lastOk ?? 0, sync.lastTry ?? 0, spawned) < BACKGROUND_PULL_AFTER_MS) return false;
+    (deps.markSpawn ?? writeSpawnMarker)(now);
     (deps.spawn ?? spawnBackgroundSync)();
     return true;
   } catch {
