@@ -158,8 +158,13 @@ export interface SyncTimer {
 }
 
 function spawnRun(argv: string[]): { code: number; stdout: string } {
-  const r = Bun.spawnSync(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  return { code: r.exitCode ?? 1, stdout: r.stdout.toString() };
+  try {
+    const r = Bun.spawnSync(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    return { code: r.exitCode ?? 1, stdout: r.stdout.toString() };
+  } catch {
+    // The binary isn't installed (ENOENT): report it as "command not found".
+    return { code: 127, stdout: "" };
+  }
 }
 
 const DISABLED: SyncTimer = {
@@ -220,7 +225,15 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
       if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
       writeUnit(file, wanted());
       bootout();
-      if (deps.run(["launchctl", "bootstrap", domain, file]).code !== 0) return "unavailable";
+      const bootstrap = () => deps.run(["launchctl", "bootstrap", domain, file]).code === 0;
+      // Bootstrap right after bootout can lose a race ("5: Input/output error"): retry once.
+      if (!bootstrap()) {
+        Bun.sleepSync(200);
+        if (!bootstrap()) {
+          rmSync(file, { force: true });
+          return "unavailable";
+        }
+      }
       return s.state === "installed" ? "updated" : "installed";
     } catch {
       return "unavailable";
@@ -250,7 +263,13 @@ function systemdTimer(deps: TimerDeps): SyncTimer {
   const hasSession = () => ctl("show-environment").code === 0;
 
   const status = (): TimerStatus => {
-    if (!hasSession()) return { state: "unavailable", reason: "no systemd user session" };
+    let session = false;
+    try {
+      session = hasSession();
+    } catch {
+      // A run that throws means no usable systemctl.
+    }
+    if (!session) return { state: "unavailable", reason: "no systemd user session" };
     const service = readOrNull(serviceFile);
     const timer = readOrNull(timerFile);
     if (service === null || timer === null) return { state: "missing", kind: "systemd" };
@@ -265,8 +284,12 @@ function systemdTimer(deps: TimerDeps): SyncTimer {
       const w = wanted();
       writeUnit(serviceFile, w.service);
       writeUnit(timerFile, w.timer);
-      if (ctl("daemon-reload").code !== 0) return "unavailable";
-      if (ctl("enable", "--now", `${name}.timer`).code !== 0) return "unavailable";
+      if (ctl("daemon-reload").code !== 0 || ctl("enable", "--now", `${name}.timer`).code !== 0) {
+        rmSync(serviceFile, { force: true });
+        rmSync(timerFile, { force: true });
+        ctl("daemon-reload");
+        return "unavailable";
+      }
       return s.state === "installed" ? "updated" : "installed";
     } catch {
       return "unavailable";

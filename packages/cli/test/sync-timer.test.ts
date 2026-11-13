@@ -111,10 +111,11 @@ afterEach(() => {
   for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunchctl?: boolean } = {}) {
+function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunchctl?: boolean; failBootstrapTimes?: number; failEnable?: boolean } = {}) {
   const userHome = over.userHome ?? mkdtempSync(join(tmpdir(), "kt-timer-"));
   if (!over.userHome) made.push(userHome);
   const calls: string[][] = [];
+  let bootstrapFails = o.failBootstrapTimes ?? 0;
   const deps: Partial<TimerDeps> = {
     platform: "darwin",
     userHome,
@@ -127,6 +128,8 @@ function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunc
       calls.push(argv);
       if (argv[0] === "systemctl" && argv[2] === "show-environment") return { code: o.showEnv ?? 0, stdout: "" };
       if (o.failLaunchctl && argv[0] === "launchctl" && argv[1] === "bootstrap") return { code: 5, stdout: "" };
+      if (argv[0] === "launchctl" && argv[1] === "bootstrap" && bootstrapFails-- > 0) return { code: 5, stdout: "" };
+      if (o.failEnable && argv[0] === "systemctl" && argv[2] === "enable") return { code: 1, stdout: "" };
       return { code: 0, stdout: "" };
     },
     ...over,
@@ -148,7 +151,37 @@ describe("syncTimer", () => {
 
   test("a failed launchctl bootstrap is unavailable, not a throw", () => {
     const { deps } = fixture({}, { failLaunchctl: true });
-    expect(syncTimer(deps).ensure({ rewrite: false })).toBe("unavailable");
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("unavailable");
+    expect(t.status().state).toBe("missing");
+  });
+
+  test("a bootstrap that fails once is retried", () => {
+    const { calls, deps } = fixture({}, { failBootstrapTimes: 1 });
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    expect(calls.filter((c) => c[1] === "bootstrap")).toHaveLength(2);
+    expect(t.status()).toEqual({ state: "installed", kind: "launchd", current: true });
+  });
+
+  test("a failed systemd enable removes the units", () => {
+    const { userHome, deps } = fixture({ platform: "linux" }, { failEnable: true });
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("unavailable");
+    expect(t.status()).toEqual({ state: "missing", kind: "systemd" });
+    expect(existsSync(join(userHome, ".config", "systemd", "user", "kerstel-sync.timer"))).toBe(false);
+  });
+
+  test("a run that throws (no systemctl) is unavailable", () => {
+    const { deps } = fixture({
+      platform: "linux",
+      run: () => {
+        throw new Error("ENOENT");
+      },
+    });
+    const t = syncTimer(deps);
+    expect(t.status()).toEqual({ state: "unavailable", reason: "no systemd user session" });
+    expect(t.ensure({ rewrite: false })).toBe("unavailable");
   });
 
   test("installs a systemd user timer", () => {
