@@ -3,6 +3,7 @@ import { doctorCommand } from "./commands/doctor";
 import { execCommand } from "./commands/exec";
 import { initCommand } from "./commands/init";
 import { moveCommand } from "./commands/move";
+import { auditCommand } from "./commands/audit";
 import { refsCommand } from "./commands/refs";
 import { runCommand } from "./commands/run";
 import { uiCommand } from "./commands/ui";
@@ -47,6 +48,8 @@ const COMMANDS = `Usage:
   ${cliName()} doctor [--verbose]                    Diagnose this machine's setup
   ${cliName()} scan [path] [--keys] [--all] [--json]
                                                 Find env files that still hold secrets
+  ${cliName()} audit [--scope <s>] [--key <KEY>] [--action <a>] [--since <7d|24h|date>] [--limit <n>]
+                                                Show what Kerstel did with your secrets on this device
   ${cliName()} update [--check]                      Install the latest release
   ${cliName()} uninstall [--dry-run] [--yes] [--force]
                                                 Restore every project and remove Kerstel
@@ -134,6 +137,8 @@ async function dispatch(command: string, args: string[]): Promise<number> {
       return await lsCommand(args);
     case "ui":
       return await uiCommand(args);
+    case "audit":
+      return await auditCommand(args);
     case "refs":
       return await refsCommand(args);
     case "rm":
