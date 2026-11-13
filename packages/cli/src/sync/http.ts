@@ -1,4 +1,5 @@
-import type { KeyObject } from "node:crypto";
+import { X509Certificate, type KeyObject } from "node:crypto";
+import { pinOfCertificate } from "../../../server/src/pin";
 import {
   HEADERS,
   PROTOCOL_PREFIX,
@@ -14,6 +15,7 @@ import {
   type PushResponse,
   type RotateBody,
 } from "../../../server/src/protocol";
+import { cliName } from "../ui/cli-name";
 
 /**
  * A signed client for `kerstel-server`. Sync spec §9.2. Every request to a
@@ -30,7 +32,7 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 export class SyncHttpError extends Error {
   constructor(
     readonly status: number,
-    /** The server's error code, or `unreachable` when no answer came. */
+    /** The server's error code, `unreachable` when no answer came, or `pin_mismatch` when a pinned server's key is not the pinned one. */
     readonly code: string,
     message: string,
   ) {
@@ -46,6 +48,167 @@ export interface ClientOptions {
   sign: KeyObject;
   fetch?: Fetch;
   now?: () => number;
+  /** The server's key pin (#112). With one, every request trusts that key and nothing else. */
+  pin?: Buffer | null;
+}
+
+export const PIN_MISMATCH = (server: string): string =>
+  `${server} presented a key this device does not trust, so nothing was sent. If the server lost its data and started again, run ${cliName()} sync off, then set sync up again. Otherwise, something between you and the server is answering in its place.`;
+
+/** Thrown from `checkServerIdentity`: the server's certificate chains to the held one but carries another key. */
+class PinMismatch extends Error {
+  constructor() {
+    super("pin mismatch");
+    this.name = "PinMismatch";
+  }
+}
+
+const isPinMismatch = (error: unknown): boolean =>
+  error instanceof PinMismatch || (error instanceof Error && error.cause instanceof PinMismatch);
+
+/** What `fetch` takes besides the request: Bun's `tls` options, for a pinned server. */
+export type PinnedFetchBase = (request: Request, init: { tls: Record<string, unknown> }) => Promise<Response>;
+
+const bunFetch: PinnedFetchBase = (request, init) => fetch(request, init as RequestInit);
+
+/** The certificate's JSON is a few hundred bytes; anything this large is not it. */
+const CERTIFICATE_BODY_LIMIT = 16 * 1024;
+
+/**
+ * Codes Bun gives when the server's certificate does not verify against the
+ * held one: the server reissued it since this process fetched it, or another
+ * key answered.
+ */
+const TLS_VERIFY_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_SIGNATURE_FAILURE",
+  "CERT_UNTRUSTED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+const isTlsVerifyError = (error: unknown): boolean =>
+  !isPinMismatch(error) && TLS_VERIFY_CODES.has(String((error as { code?: unknown } | null)?.code));
+
+/** Reads at most `limit` bytes of a body, or null when it is longer. */
+async function readCapped(response: Response, limit: number): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * A fetch that trusts `server`'s pinned key and nothing else (easy-sync spec
+ * §6). It fetches the server's certificate once, checks its key against the
+ * pin, then sends every request with that certificate as its only `ca`, and
+ * checks the key again in `checkServerIdentity`. The hostname is not checked:
+ * the key is what is pinned. The certificate request is an ordinary fetch, so
+ * HTTPS_PROXY and NO_PROXY apply to it as to every other request; it carries
+ * no secret, and no redirect is followed.
+ */
+export function pinnedFetch(server: string, pin: Buffer, base: PinnedFetchBase = bunFetch): Fetch {
+  let held: Promise<Buffer> | null = null;
+
+  async function fetchCertificate(): Promise<Buffer> {
+    const unreachable = (why: string) => new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${why}`);
+    let response: Response;
+    try {
+      response = await base(
+        new Request(`${server}${PROTOCOL_PREFIX}/certificate`, { redirect: "manual", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }),
+        // Unverified on purpose: the pin, not a certificate authority, decides.
+        { tls: { rejectUnauthorized: false } },
+      );
+    } catch (error) {
+      throw unreachable((error as Error).message);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw unreachable("it answered the certificate request with a redirect, which Kerstel does not follow for sync. Use the server's final URL.");
+    }
+    if (response.status !== 200) {
+      await response.body?.cancel();
+      throw unreachable(`it answered ${response.status} instead of sending its certificate.`);
+    }
+    let der: Buffer;
+    try {
+      const text = await readCapped(response, CERTIFICATE_BODY_LIMIT);
+      const parsed = text === null ? null : (JSON.parse(text) as { certificate?: unknown } | null);
+      if (typeof parsed?.certificate !== "string") throw new Error("no certificate");
+      der = Buffer.from(parsed.certificate, "base64");
+      if (!pinOfCertificate(der).equals(pin)) throw new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
+    } catch (error) {
+      if (error instanceof SyncHttpError) throw error;
+      throw unreachable("it sent a certificate Kerstel could not read.");
+    }
+    return der;
+  }
+
+  /** The held certificate, fetched on first use. A failed fetch is tried again next time. */
+  function certificate(): Promise<Buffer> {
+    if (!held) {
+      held = fetchCertificate();
+      held.catch(() => {
+        held = null;
+      });
+    }
+    return held;
+  }
+
+  const send = (request: Request, der: Buffer): Promise<Response> =>
+    base(request, {
+      tls: {
+        ca: new X509Certificate(der).toString(),
+        checkServerIdentity: (_host: string, cert: { raw: Buffer }) => {
+          // Thrown: the request fails, and `send` reports it as pin_mismatch.
+          if (!pinOfCertificate(cert.raw).equals(pin)) throw new PinMismatch();
+        },
+      },
+    });
+
+  return async (request) => {
+    const der = await certificate();
+    try {
+      // A body can be read once; the retry below sends the original.
+      return await send(request.clone() as Request, der);
+    } catch (error) {
+      if (!isTlsVerifyError(error)) throw error;
+      // The server may have reissued its certificate with the same key since
+      // this process fetched it. Fetch it once more and retry once.
+      let fresh: Buffer;
+      try {
+        fresh = await fetchCertificate();
+      } catch (refetch) {
+        if (refetch instanceof SyncHttpError && refetch.code === "pin_mismatch") throw refetch;
+        throw error;
+      }
+      if (fresh.equals(der)) throw error;
+      held = Promise.resolve(fresh);
+      return send(request, fresh);
+    }
+  };
+}
+
+const plainFetch: Fetch = (request) => fetch(request);
+
+/** The fetch a client sends with: pinned when there is a pin, `base` (Bun's fetch by default) otherwise. */
+function clientFetch(server: string, base: Fetch | undefined, pin: Buffer | null | undefined): Fetch {
+  if (pin) return pinnedFetch(server, pin, base);
+  return base ?? plainFetch;
 }
 
 /** One request, without following redirects; a non-2xx answer becomes a SyncHttpError. */
@@ -64,6 +227,10 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
       }),
     );
   } catch (error) {
+    // Already worded: the pinned fetch's certificate request, or its pin check.
+    if (error instanceof SyncHttpError) throw error;
+    // Never retried: nothing goes out to a key this device does not trust.
+    if (isPinMismatch(error)) throw new SyncHttpError(0, "pin_mismatch", PIN_MISMATCH(server));
     throw new SyncHttpError(0, "unreachable", `Could not reach ${server}: ${(error as Error).message}`);
   }
   if (response.status >= 300 && response.status < 400) {
@@ -94,7 +261,7 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
 const encode = (body: unknown): Uint8Array | null => (body === undefined ? null : new TextEncoder().encode(JSON.stringify(body)));
 
 export function syncClient(options: ClientOptions) {
-  const doFetch: Fetch = options.fetch ?? ((request) => fetch(request));
+  const doFetch = clientFetch(options.server, options.fetch, options.pin);
   const clock = options.now ?? Date.now;
   // Never the same millisecond twice: Ed25519 signatures are deterministic, so
   // two identical requests stamped alike would carry the same signature, and
@@ -158,8 +325,8 @@ export type SyncClient = ReturnType<typeof syncClient>;
  * The new device's half of pairing, before it has a key the server knows:
  * unsigned. The answer is sealed with the pairing secret instead.
  */
-export function pairingClient(server: string, fetchImpl?: Fetch) {
-  const doFetch: Fetch = fetchImpl ?? ((request) => fetch(request));
+export function pairingClient(server: string, fetchImpl?: Fetch, pin?: Buffer | null) {
+  const doFetch = clientFetch(server, fetchImpl, pin);
   return {
     answer(pairingId: string, payload: string) {
       return send<void>(doFetch, server, "PUT", `/pairings/${pairingId}`, encode({ payload }), {});
