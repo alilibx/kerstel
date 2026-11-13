@@ -708,7 +708,7 @@ describe("parseArgs: TLS", () => {
     expect(() => parseArgs([], { KERSTEL_SERVER_TLS_NAMES: "homebox.local" })).toThrow("--tls self");
     expect(() => parseArgs(["--tls", "acme"], {})).toThrow("--tls takes only self");
     expect(() => parseArgs([], { KERSTEL_SERVER_TLS: "on" })).toThrow("--tls takes only self");
-    for (const name of ["fe80::1%en0", "home_box", "-", "a..b", "foo.*", "*", "bad name", "ünï.example", "a.b."]) {
+    for (const name of ["fe80::1%en0", "home_box", "-", "a..b", "foo.*", "*", "bad name", "ünï.example", "a.b.", "192.168.1.256", "127.1", "1.2.3.4.5", "010.0.0.1"]) {
       expect(() => parseArgs(["--tls", "self", "--tls-name", name], {})).toThrow("--tls-name");
     }
     expect(() => parseArgs(["--domain", "*.example.com"], {})).toThrow("--domain");

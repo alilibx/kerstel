@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { X509Certificate, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pinOfCertificate } from "../src/pin";
-import { loadSelfSigned, tlsFiles } from "../src/tls";
+import { certificateName, loadSelfSigned, tlsFiles } from "../src/tls";
 import { certificateNames } from "../src/x509";
 
 let dir: string;
@@ -27,6 +27,18 @@ describe("tlsFiles", () => {
   });
 });
 
+describe("certificateName", () => {
+  test("a malformed IPv4 address is not a DNS name", () => {
+    for (const text of ["192.168.1.256", "127.1", "1.2.3.4.5", "010.0.0.1", "8080", "*.10"]) {
+      expect(certificateName(text)).toBeNull();
+    }
+    expect(certificateName("192.168.1.20")).toBe("192.168.1.20");
+    expect(certificateName("host1.example")).toBe("host1.example");
+    expect(certificateName("10.example")).toBe("10.example");
+    expect(certificateName("1.2.3.4.nip.io")).toBe("1.2.3.4.nip.io");
+  });
+});
+
 describe("loadSelfSigned", () => {
   test("creates a key once, mode 0600", () => {
     const first = loadSelfSigned(db, NAMES);
@@ -37,7 +49,8 @@ describe("loadSelfSigned", () => {
     expect(pinOfCertificate(first.certDer).equals(first.pin)).toBe(true);
     expect(first.certPem).toBe(readFileSync(tlsFiles(db).cert, "utf8"));
     expect(new X509Certificate(first.certPem).raw.equals(first.certDer)).toBe(true);
-    expect(first.keyPem).toBe(readFileSync(tlsFiles(db).key, "utf8"));
+    // Compared without toBe, so a failure never prints a private key.
+    expect(first.keyPem === readFileSync(tlsFiles(db).key, "utf8")).toBe(true);
   });
 
   test("new names reissue with the same key", () => {
@@ -59,10 +72,23 @@ describe("loadSelfSigned", () => {
     const keyPem = key.export({ type: "pkcs8", format: "pem" }) as string;
     writeFileSync(tlsFiles(db).key, keyPem, { mode: 0o600 });
     const loaded = loadSelfSigned(db, NAMES);
-    expect(readFileSync(tlsFiles(db).key, "utf8")).toBe(keyPem);
-    expect(loaded.keyPem).toBe(keyPem);
+    expect(readFileSync(tlsFiles(db).key, "utf8") === keyPem).toBe(true);
+    expect(loaded.keyPem === keyPem).toBe(true);
     const spki = createPublicKey(key).export({ type: "spki", format: "der" });
     expect(new X509Certificate(loaded.certDer).publicKey.export({ type: "spki", format: "der" }).equals(spki)).toBe(true);
+  });
+
+  test("an empty key file is an error that says so, and is left alone", () => {
+    writeFileSync(tlsFiles(db).key, "", { mode: 0o600 });
+    expect(() => loadSelfSigned(db, NAMES)).toThrow(
+      `${tlsFiles(db).key} is empty. If no device has pinned this server yet, delete it and start again.`,
+    );
+    expect(statSync(tlsFiles(db).key).size).toBe(0);
+  });
+
+  test("leaves no temporary file behind", () => {
+    loadSelfSigned(db, NAMES);
+    expect(readdirSync(dir).sort()).toEqual(["s.db.tls-cert.pem", "s.db.tls-key.pem"]);
   });
 
   test("a certificate for another key, or one that does not parse, is reissued", () => {

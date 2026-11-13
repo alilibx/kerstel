@@ -4,9 +4,10 @@
  * certificate reissued for new names keeps working, and a new key only comes
  * with a new database file.
  */
-import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
+import { closeSync, fsyncSync, linkSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { isIP } from "node:net";
+import { dirname } from "node:path";
 import { pinOfCertificate, pinOfSpki } from "./pin";
 import { certificateNames, selfSignedCertificate, toPem } from "./x509";
 
@@ -30,7 +31,9 @@ export function certificateName(text: string): string | null {
   if (family === 4) return text;
   if (family === 6) return text.includes("%") ? null : new URL(`http://[${text}]`).hostname.slice(1, -1);
   const name = text.toLowerCase();
-  return name.length <= 253 && DNS_NAME.test(name) ? name : null;
+  if (name.length > 253 || !DNS_NAME.test(name)) return null;
+  // An all-digit last label is a malformed IPv4 address (192.168.1.256, 127.1), not a name.
+  return /^\d+$/.test(name.slice(name.lastIndexOf(".") + 1)) ? null : name;
 }
 
 function sameNames(a: string[], b: string[]): boolean {
@@ -40,22 +43,61 @@ function sameNames(a: string[], b: string[]): boolean {
   return left.size === right.size && [...left].every((n) => right.has(n));
 }
 
-/** The key in `path`, created when there is none. `wx` means an existing key is never replaced. */
+function readKey(path: string): string {
+  const pem = readFileSync(path, "utf8");
+  if (!pem.trim()) {
+    throw new Error(`${path} is empty. If no device has pinned this server yet, delete it and start again.`);
+  }
+  return pem;
+}
+
+/**
+ * The key in `path`, created when there is none. The new key is written and
+ * synced to a temporary file first, then linked into place: the link fails
+ * when a key exists, so an existing key is never replaced, and no reader ever
+ * sees a partly written one.
+ */
 function loadOrCreateKey(path: string): string {
   try {
-    return readFileSync(path, "utf8");
+    return readKey(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  const temp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
   try {
-    writeFileSync(path, pem, { mode: 0o600, flag: "wx" });
+    const fd = openSync(temp, "wx", 0o600);
+    try {
+      writeSync(fd, pem);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    try {
+      linkSync(temp, path);
+    } catch (error) {
+      // Another process put its key in place first: use that one.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return readKey(path);
+      throw error;
+    }
+    syncDirectory(dirname(path));
     return pem;
-  } catch (error) {
-    // Another process wrote one first: use it.
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return readFileSync(path, "utf8");
-    throw error;
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
+/** Makes a new directory entry durable. Not every platform can open a directory, so this is best effort. */
+function syncDirectory(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(dir, "r");
+    fsyncSync(fd);
+  } catch {
+    // The key is synced; only its name could be lost in a crash, and then a new one is made.
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
