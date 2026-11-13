@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
+import { timerEnv } from "../src/sync/timer";
 import { openDatabase } from "../../server/src/db";
 import { TIMING, newId, signRequest } from "../../server/src/protocol";
 import { syncCommand } from "../src/commands/sync";
@@ -1312,6 +1313,13 @@ describe("sync in the background", () => {
     expect(env.BUN_OPTIONS).toBeUndefined();
     expect(env.NODE_OPTIONS).toBeUndefined();
     expect(env.STRIPE_KEY).toBeUndefined();
+  });
+
+  test("the background environment passes the test-only no-timer flag, and only when set", () => {
+    expect(backgroundSyncEnv({ PATH: "/usr/bin", KERSTEL_TEST_NO_SYNC_TIMER: "1" }).KERSTEL_TEST_NO_SYNC_TIMER).toBe("1");
+    expect(backgroundSyncEnv({ PATH: "/usr/bin" }).KERSTEL_TEST_NO_SYNC_TIMER).toBeUndefined();
+    // The flag reaches a child process, but never a unit file.
+    expect(timerEnv({ KERSTEL_TEST_NO_SYNC_TIMER: "1" }).KERSTEL_TEST_NO_SYNC_TIMER).toBeUndefined();
   });
 
   test("end to end: `set` in its own process starts a detached sync that reaches a real server", async () => {

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { SCRUBBED_MARKER } from "../daemon/env";
+import { cliCommand } from "../daemon/spawn";
+import { kerstelHome } from "../paths";
 import { NETWORK_SETTINGS } from "./background";
 
 /** How often a synced device pulls: five minutes. */
@@ -120,4 +124,165 @@ export function renderSystemdUnits(o: {
     "",
   ].join("\n");
   return { service, timer };
+}
+
+// ---- Install, check, remove -------------------------------------------------
+
+type TimerKind = "launchd" | "systemd";
+
+export type TimerStatus =
+  | { state: "installed"; kind: TimerKind; current: boolean }
+  | { state: "missing"; kind: TimerKind }
+  | { state: "unavailable"; reason: string };
+
+export type EnsureResult = "installed" | "updated" | "unchanged" | "unavailable";
+
+export interface TimerDeps {
+  platform: NodeJS.Platform;
+  userHome: string;
+  /** The Kerstel home this timer pulls for. */
+  home: string;
+  /** The home that keeps the plain timer name. */
+  defaultHome: string;
+  env: NodeJS.ProcessEnv;
+  /** What the timer runs. */
+  argv: string[];
+  uid: number;
+  run: (argv: string[]) => { code: number; stdout: string };
+}
+
+export interface SyncTimer {
+  status(): TimerStatus;
+  ensure(o: { rewrite: boolean }): EnsureResult;
+  remove(): boolean;
+}
+
+function spawnRun(argv: string[]): { code: number; stdout: string } {
+  const r = Bun.spawnSync(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  return { code: r.exitCode ?? 1, stdout: r.stdout.toString() };
+}
+
+const DISABLED: SyncTimer = {
+  status: () => ({ state: "unavailable", reason: "disabled in tests" }),
+  ensure: () => "unavailable",
+  remove: () => false,
+};
+
+function readOrNull(file: string): string | null {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function writeUnit(file: string, text: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, text, { mode: 0o644 });
+  chmodSync(file, 0o644);
+}
+
+/** The pull timer for this Kerstel home. `ensure` and `remove` never throw. */
+export function syncTimer(given: Partial<TimerDeps> = {}): SyncTimer {
+  if (process.env.KERSTEL_TEST_NO_SYNC_TIMER === "1" && !given.run) return DISABLED;
+  const deps: TimerDeps = {
+    platform: process.platform,
+    userHome: homedir(),
+    home: kerstelHome(),
+    defaultHome: join(homedir(), ".kerstel"),
+    env: process.env,
+    argv: cliCommand(["sync", "--background", "--timer"]),
+    uid: process.getuid?.() ?? 0,
+    run: spawnRun,
+    ...given,
+  };
+  if (deps.platform === "darwin") return launchdTimer(deps);
+  if (deps.platform === "linux") return systemdTimer(deps);
+  const reason = `not supported on ${deps.platform}`;
+  return { status: () => ({ state: "unavailable", reason }), ensure: () => "unavailable", remove: () => false };
+}
+
+function launchdTimer(deps: TimerDeps): SyncTimer {
+  const label = timerName(deps.home, deps.defaultHome, "launchd");
+  const file = join(deps.userHome, "Library", "LaunchAgents", `${label}.plist`);
+  const domain = `gui/${deps.uid}`;
+  const wanted = () => renderLaunchdPlist({ label, argv: deps.argv, env: timerEnv(deps.env) });
+  const bootout = () => deps.run(["launchctl", "bootout", `${domain}/${label}`]);
+
+  const status = (): TimerStatus => {
+    const text = readOrNull(file);
+    if (text === null) return { state: "missing", kind: "launchd" };
+    return { state: "installed", kind: "launchd", current: text === wanted() };
+  };
+  const ensure = ({ rewrite }: { rewrite: boolean }): EnsureResult => {
+    try {
+      const s = status();
+      if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
+      writeUnit(file, wanted());
+      bootout();
+      if (deps.run(["launchctl", "bootstrap", domain, file]).code !== 0) return "unavailable";
+      return s.state === "installed" ? "updated" : "installed";
+    } catch {
+      return "unavailable";
+    }
+  };
+  const remove = (): boolean => {
+    try {
+      const existed = existsSync(file);
+      bootout();
+      rmSync(file, { force: true });
+      return existed;
+    } catch {
+      return false;
+    }
+  };
+  return { status, ensure, remove };
+}
+
+function systemdTimer(deps: TimerDeps): SyncTimer {
+  const name = timerName(deps.home, deps.defaultHome, "systemd");
+  const config = deps.env.XDG_CONFIG_HOME || join(deps.userHome, ".config");
+  const dir = join(config, "systemd", "user");
+  const serviceFile = join(dir, `${name}.service`);
+  const timerFile = join(dir, `${name}.timer`);
+  const wanted = () => renderSystemdUnits({ name, argv: deps.argv, env: timerEnv(deps.env) });
+  const ctl = (...args: string[]) => deps.run(["systemctl", "--user", ...args]);
+  const hasSession = () => ctl("show-environment").code === 0;
+
+  const status = (): TimerStatus => {
+    if (!hasSession()) return { state: "unavailable", reason: "no systemd user session" };
+    const service = readOrNull(serviceFile);
+    const timer = readOrNull(timerFile);
+    if (service === null || timer === null) return { state: "missing", kind: "systemd" };
+    const w = wanted();
+    return { state: "installed", kind: "systemd", current: service === w.service && timer === w.timer };
+  };
+  const ensure = ({ rewrite }: { rewrite: boolean }): EnsureResult => {
+    try {
+      const s = status();
+      if (s.state === "unavailable") return "unavailable";
+      if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
+      const w = wanted();
+      writeUnit(serviceFile, w.service);
+      writeUnit(timerFile, w.timer);
+      if (ctl("daemon-reload").code !== 0) return "unavailable";
+      if (ctl("enable", "--now", `${name}.timer`).code !== 0) return "unavailable";
+      return s.state === "installed" ? "updated" : "installed";
+    } catch {
+      return "unavailable";
+    }
+  };
+  const remove = (): boolean => {
+    try {
+      const existed = existsSync(serviceFile) || existsSync(timerFile);
+      ctl("disable", "--now", `${name}.timer`);
+      rmSync(serviceFile, { force: true });
+      rmSync(timerFile, { force: true });
+      if (existed) ctl("daemon-reload");
+      return existed;
+    } catch {
+      return false;
+    }
+  };
+  return { status, ensure, remove };
 }

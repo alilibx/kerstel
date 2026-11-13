@@ -21,6 +21,10 @@ const base = process.platform === "win32" ? tmpdir() : "/tmp";
 const runDir = mkdtempSync(join(base, "kt-"));
 process.env.TMPDIR = runDir;
 
+// Tests must never install a real launch agent or systemd timer on the
+// developer's machine; syncTimer() is inert unless a test hands it a fake `run`.
+process.env.KERSTEL_TEST_NO_SYNC_TIMER = "1";
+
 // Registered from a preload, afterAll runs once after every test file has
 // finished. `process.on("exit")` does not fire under `bun test`.
 afterAll(() => {

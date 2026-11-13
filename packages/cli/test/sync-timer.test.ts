@@ -1,11 +1,13 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   renderLaunchdPlist,
   renderSystemdUnits,
   SYNC_INTERVAL_SEC,
+  syncTimer,
+  type TimerDeps,
   timerEnv,
   timerName,
 } from "../src/sync/timer";
@@ -100,4 +102,118 @@ test.skipIf(process.platform !== "darwin")("the plist passes plutil -lint", () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- syncTimer -------------------------------------------------------------
+
+const made: string[] = [];
+afterEach(() => {
+  for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunchctl?: boolean } = {}) {
+  const userHome = over.userHome ?? mkdtempSync(join(tmpdir(), "kt-timer-"));
+  if (!over.userHome) made.push(userHome);
+  const calls: string[][] = [];
+  const deps: Partial<TimerDeps> = {
+    platform: "darwin",
+    userHome,
+    home: join(userHome, ".kerstel"),
+    defaultHome: join(userHome, ".kerstel"),
+    env: { KERSTEL_HOME: join(userHome, ".kerstel") },
+    argv: ["/usr/local/bin/kerstel", "sync", "--background", "--timer"],
+    uid: 501,
+    run: (argv) => {
+      calls.push(argv);
+      if (argv[0] === "systemctl" && argv[2] === "show-environment") return { code: o.showEnv ?? 0, stdout: "" };
+      if (o.failLaunchctl && argv[0] === "launchctl" && argv[1] === "bootstrap") return { code: 5, stdout: "" };
+      return { code: 0, stdout: "" };
+    },
+    ...over,
+  };
+  return { userHome, calls, deps };
+}
+
+describe("syncTimer", () => {
+  test("installs a launch agent", () => {
+    const { userHome, calls, deps } = fixture();
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    const file = join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist");
+    expect(statSync(file).mode & 0o777).toBe(0o644);
+    expect(calls).toContainEqual(["launchctl", "bootstrap", "gui/501", file]);
+    expect(t.status()).toEqual({ state: "installed", kind: "launchd", current: true });
+    expect(t.ensure({ rewrite: false })).toBe("unchanged");
+  });
+
+  test("a failed launchctl bootstrap is unavailable, not a throw", () => {
+    const { deps } = fixture({}, { failLaunchctl: true });
+    expect(syncTimer(deps).ensure({ rewrite: false })).toBe("unavailable");
+  });
+
+  test("installs a systemd user timer", () => {
+    const { userHome, calls, deps } = fixture({ platform: "linux", env: { XDG_CONFIG_HOME: "" } });
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
+    expect(calls).toContainEqual(["systemctl", "--user", "enable", "--now", "kerstel-sync.timer"]);
+    const dir = join(userHome, ".config", "systemd", "user");
+    expect(existsSync(join(dir, "kerstel-sync.service"))).toBe(true);
+    expect(existsSync(join(dir, "kerstel-sync.timer"))).toBe(true);
+    expect(t.status()).toEqual({ state: "installed", kind: "systemd", current: true });
+    expect(t.remove()).toBe(true);
+    expect(existsSync(join(dir, "kerstel-sync.timer"))).toBe(false);
+    expect(calls).toContainEqual(["systemctl", "--user", "disable", "--now", "kerstel-sync.timer"]);
+  });
+
+  test("no systemd user session", () => {
+    const { userHome, deps } = fixture({ platform: "linux" }, { showEnv: 1 });
+    const t = syncTimer(deps);
+    expect(t.status()).toEqual({ state: "unavailable", reason: "no systemd user session" });
+    expect(t.ensure({ rewrite: true })).toBe("unavailable");
+    expect(existsSync(join(userHome, ".config"))).toBe(false);
+  });
+
+  test("another platform is unavailable", () => {
+    const { deps } = fixture({ platform: "win32" });
+    expect(syncTimer(deps).status()).toEqual({ state: "unavailable", reason: "not supported on win32" });
+  });
+
+  test("status is not current when argv differs", () => {
+    const { userHome, deps } = fixture();
+    syncTimer(deps).ensure({ rewrite: false });
+    const file = join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist");
+    const moved = syncTimer({ ...deps, argv: ["/opt/kerstel", "sync", "--background", "--timer"] });
+    expect(moved.status()).toEqual({ state: "installed", kind: "launchd", current: false });
+    const before = readFileSync(file, "utf8");
+    expect(moved.ensure({ rewrite: false })).toBe("unchanged");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(moved.ensure({ rewrite: true })).toBe("updated");
+    expect(readFileSync(file, "utf8")).toContain("/opt/kerstel");
+    expect(moved.status()).toMatchObject({ current: true });
+  });
+
+  test("remove leaves another home's timer", () => {
+    const { userHome, deps } = fixture();
+    const homeB = join(userHome, "other");
+    const a = syncTimer(deps);
+    const b = syncTimer({ ...deps, home: homeB, env: { KERSTEL_HOME: homeB } });
+    a.ensure({ rewrite: false });
+    b.ensure({ rewrite: false });
+    const dir = join(userHome, "Library", "LaunchAgents");
+    const bFile = join(dir, `${timerName(homeB, deps.defaultHome!, "launchd")}.plist`);
+    expect(existsSync(bFile)).toBe(true);
+    expect(a.remove()).toBe(true);
+    expect(existsSync(join(dir, "dev.kerstel.sync.plist"))).toBe(false);
+    expect(existsSync(bFile)).toBe(true);
+    expect(a.remove()).toBe(false);
+  });
+
+  test("test runs never install", () => {
+    expect(process.env.KERSTEL_TEST_NO_SYNC_TIMER).toBe("1");
+    const t = syncTimer();
+    expect(t.status()).toEqual({ state: "unavailable", reason: "disabled in tests" });
+    expect(t.ensure({ rewrite: true })).toBe("unavailable");
+    expect(t.remove()).toBe(false);
+  });
 });

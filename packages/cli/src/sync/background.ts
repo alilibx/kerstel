@@ -149,6 +149,8 @@ export function backgroundSyncEnv(base: NodeJS.ProcessEnv = process.env): Record
     const value = base[name];
     if (typeof value === "string") env[name] = value;
   }
+  // Test-only: keeps a test's background sync from installing a real timer.
+  if (base.KERSTEL_TEST_NO_SYNC_TIMER === "1") env.KERSTEL_TEST_NO_SYNC_TIMER = "1";
   return env;
 }
 
