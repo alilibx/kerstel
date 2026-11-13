@@ -61,6 +61,22 @@ test("plist has the schedule", () => {
   expect(plist).toContain("<key>StandardOutPath</key>");
 });
 
+test("the plist runs from /, so no .env in a home directory loads", () => {
+  const plist = renderLaunchdPlist({ label: "dev.kerstel.sync", argv, env: { KERSTEL_HOME: "/h" } });
+  expect(plist).toMatch(/<key>WorkingDirectory<\/key>\s*<string>\/<\/string>/);
+});
+
+test("the systemd service runs from /, discards output, and unsets the runtime options", () => {
+  const { service } = renderSystemdUnits({ name: "kerstel-sync", argv, env: { KERSTEL_HOME: "/h" } });
+  const lines = service.split("\n");
+  // Not $HOME (the user-service default), where Bun would load a ~/.env into a scrubbed process.
+  expect(lines).toContain("WorkingDirectory=/");
+  expect(lines).toContain("StandardOutput=null");
+  expect(lines).toContain("StandardError=null");
+  // Variables imported into the user manager must not reach a process marked scrubbed.
+  expect(lines).toContain("UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS");
+});
+
 test("systemd units have the schedule", () => {
   const { service, timer } = renderSystemdUnits({
     name: "kerstel-sync",
@@ -111,7 +127,10 @@ afterEach(() => {
   for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunchctl?: boolean; failBootstrapTimes?: number; failEnable?: boolean } = {}) {
+function fixture(
+  over: Partial<TimerDeps> = {},
+  o: { showEnv?: number; showEnvOut?: string; noGui?: boolean; failLaunchctl?: boolean; failBootstrapTimes?: number; failEnable?: boolean } = {},
+) {
   const userHome = over.userHome ?? mkdtempSync(join(tmpdir(), "kt-timer-"));
   if (!over.userHome) made.push(userHome);
   const calls: string[][] = [];
@@ -126,7 +145,8 @@ function fixture(over: Partial<TimerDeps> = {}, o: { showEnv?: number; failLaunc
     uid: 501,
     run: (argv) => {
       calls.push(argv);
-      if (argv[0] === "systemctl" && argv[2] === "show-environment") return { code: o.showEnv ?? 0, stdout: "" };
+      if (argv[0] === "systemctl" && argv[2] === "show-environment") return { code: o.showEnv ?? 0, stdout: o.showEnvOut ?? "" };
+      if (argv[0] === "launchctl" && argv[1] === "print") return { code: o.noGui ? 113 : 0, stdout: "" };
       if (o.failLaunchctl && argv[0] === "launchctl" && argv[1] === "bootstrap") return { code: 5, stdout: "" };
       if (argv[0] === "launchctl" && argv[1] === "bootstrap" && bootstrapFails-- > 0) return { code: 5, stdout: "" };
       if (o.failEnable && argv[0] === "systemctl" && argv[2] === "enable") return { code: 1, stdout: "" };
@@ -143,7 +163,9 @@ describe("syncTimer", () => {
     const t = syncTimer(deps);
     expect(t.ensure({ rewrite: false })).toBe("installed");
     const file = join(userHome, "Library", "LaunchAgents", "dev.kerstel.sync.plist");
-    expect(statSync(file).mode & 0o777).toBe(0o644);
+    // Private: a proxy setting may carry a user name and password.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(calls).toContainEqual(["launchctl", "print", "gui/501"]);
     expect(calls).toContainEqual(["launchctl", "bootstrap", "gui/501", file]);
     expect(t.status()).toEqual({ state: "installed", kind: "launchd", current: true });
     expect(t.ensure({ rewrite: false })).toBe("unchanged");
@@ -191,8 +213,8 @@ describe("syncTimer", () => {
     expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
     expect(calls).toContainEqual(["systemctl", "--user", "enable", "--now", "kerstel-sync.timer"]);
     const dir = join(userHome, ".config", "systemd", "user");
-    expect(existsSync(join(dir, "kerstel-sync.service"))).toBe(true);
-    expect(existsSync(join(dir, "kerstel-sync.timer"))).toBe(true);
+    expect(statSync(join(dir, "kerstel-sync.service")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(dir, "kerstel-sync.timer")).mode & 0o777).toBe(0o600);
     expect(t.status()).toEqual({ state: "installed", kind: "systemd", current: true });
     expect(t.remove()).toBe(true);
     expect(existsSync(join(dir, "kerstel-sync.timer"))).toBe(false);
@@ -205,6 +227,64 @@ describe("syncTimer", () => {
     expect(t.status()).toEqual({ state: "unavailable", reason: "no systemd user session" });
     expect(t.ensure({ rewrite: true })).toBe("unavailable");
     expect(existsSync(join(userHome, ".config"))).toBe(false);
+  });
+
+  test("no GUI login session", () => {
+    // Over SSH, or a Mac nobody is logged in to: there is no gui/<uid> domain to bootstrap into.
+    const { userHome, calls, deps } = fixture({}, { noGui: true });
+    const t = syncTimer(deps);
+    expect(t.status()).toEqual({ state: "unavailable", reason: "no GUI login session" });
+    expect(t.ensure({ rewrite: true })).toBe("unavailable");
+    expect(existsSync(join(userHome, "Library"))).toBe(false);
+    expect(calls.filter((c) => c[1] === "bootstrap")).toEqual([]);
+  });
+
+  test("a launchctl that throws is no GUI login session", () => {
+    const { deps } = fixture({
+      run: () => {
+        throw new Error("ENOENT");
+      },
+    });
+    const t = syncTimer(deps);
+    expect(t.status()).toEqual({ state: "unavailable", reason: "no GUI login session" });
+    expect(t.ensure({ rewrite: false })).toBe("unavailable");
+  });
+
+  test("the systemd units go where the user manager's XDG_CONFIG_HOME says, not the shell's", () => {
+    const userHome = mkdtempSync(join(tmpdir(), "kt-timer-"));
+    made.push(userHome);
+    const shellOnly = join(userHome, "shell-only");
+    const custom = join(userHome, "conf");
+    const { deps } = fixture(
+      { userHome, platform: "linux", env: { XDG_CONFIG_HOME: shellOnly } },
+      { showEnvOut: `PATH=/usr/bin\nXDG_CONFIG_HOME=${custom}\nLANG=C.UTF-8\n` },
+    );
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    expect(existsSync(join(custom, "systemd", "user", "kerstel-sync.timer"))).toBe(true);
+    expect(existsSync(shellOnly)).toBe(false);
+    expect(t.status()).toEqual({ state: "installed", kind: "systemd", current: true });
+    expect(t.remove()).toBe(true);
+    expect(existsSync(join(custom, "systemd", "user", "kerstel-sync.timer"))).toBe(false);
+
+    // systemctl quotes a value with a space in it.
+    const spaced = join(userHome, "my conf");
+    const quoted = fixture({ userHome, platform: "linux", env: {} }, { showEnvOut: `XDG_CONFIG_HOME="${spaced}"\n` });
+    expect(syncTimer(quoted.deps).ensure({ rewrite: false })).toBe("installed");
+    expect(existsSync(join(spaced, "systemd", "user", "kerstel-sync.timer"))).toBe(true);
+  });
+
+  test("without XDG_CONFIG_HOME in the user manager, the units go in ~/.config", () => {
+    const userHome = mkdtempSync(join(tmpdir(), "kt-timer-"));
+    made.push(userHome);
+    const shellOnly = join(userHome, "shell-only");
+    const { deps } = fixture({ userHome, platform: "linux", env: { XDG_CONFIG_HOME: shellOnly } }, { showEnvOut: "HOME=/home/a\n" });
+    const t = syncTimer(deps);
+    expect(t.ensure({ rewrite: false })).toBe("installed");
+    expect(existsSync(join(userHome, ".config", "systemd", "user", "kerstel-sync.service"))).toBe(true);
+    expect(existsSync(shellOnly)).toBe(false);
+    expect(t.remove()).toBe(true);
+    expect(existsSync(join(userHome, ".config", "systemd", "user", "kerstel-sync.service"))).toBe(false);
   });
 
   test("another platform is unavailable", () => {

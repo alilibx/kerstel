@@ -71,6 +71,8 @@ ${env}
   <integer>${SYNC_INTERVAL_SEC}</integer>
   <key>RunAtLoad</key>
   <true/>
+  <key>WorkingDirectory</key>
+  <string>/</string>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>
@@ -106,8 +108,17 @@ export function renderSystemdUnits(o: {
     "",
     "[Service]",
     "Type=oneshot",
+    // Not $HOME, the default for a user service: Bun would load a ~/.env into
+    // a process marked scrubbed. Not the Kerstel home either, which may be gone
+    // when the timer runs to remove itself.
+    "WorkingDirectory=/",
+    // Imported into the user manager by a login script, these would reach a
+    // process that trusts its environment.
+    "UnsetEnvironment=BUN_OPTIONS NODE_OPTIONS",
     ...envLines,
     `ExecStart=${o.argv.map(sdWord).join(" ")}`,
+    "StandardOutput=null",
+    "StandardError=null",
     "",
   ].join("\n");
   const timer = [
@@ -181,10 +192,11 @@ function readOrNull(file: string): string | null {
   }
 }
 
+/** Owner-only: a proxy setting in the unit's environment may carry a user name and password. */
 function writeUnit(file: string, text: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, text, { mode: 0o644 });
-  chmodSync(file, 0o644);
+  writeFileSync(file, text, { mode: 0o600 });
+  chmodSync(file, 0o600);
 }
 
 /** The pull timer for this Kerstel home. `ensure` and `remove` never throw. */
@@ -213,8 +225,18 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
   const domain = `gui/${deps.uid}`;
   const wanted = () => renderLaunchdPlist({ label, argv: deps.argv, env: timerEnv(deps.env) });
   const bootout = () => deps.run(["launchctl", "bootout", `${domain}/${label}`]);
+  // Over SSH, or with nobody logged in to the desktop, there is no GUI domain
+  // to bootstrap into, and none will appear for a background sync either.
+  const hasSession = () => {
+    try {
+      return deps.run(["launchctl", "print", domain]).code === 0;
+    } catch {
+      return false;
+    }
+  };
 
   const status = (): TimerStatus => {
+    if (!hasSession()) return { state: "unavailable", reason: "no GUI login session" };
     const text = readOrNull(file);
     if (text === null) return { state: "missing", kind: "launchd" };
     return { state: "installed", kind: "launchd", current: text === wanted() };
@@ -222,6 +244,7 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
   const ensure = ({ rewrite }: { rewrite: boolean }): EnsureResult => {
     try {
       const s = status();
+      if (s.state === "unavailable") return "unavailable";
       if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
       writeUnit(file, wanted());
       bootout();
@@ -254,41 +277,64 @@ function launchdTimer(deps: TimerDeps): SyncTimer {
   return { status, ensure, remove };
 }
 
+/**
+ * `XDG_CONFIG_HOME` from `systemctl --user show-environment`: the user
+ * manager reads its units from there, whatever this shell says. systemctl
+ * double-quotes a value with a space in it. Null when unset or not absolute.
+ */
+export function managerConfigHome(showEnvironment: string): string | null {
+  for (const line of showEnvironment.split("\n")) {
+    if (!line.startsWith("XDG_CONFIG_HOME=")) continue;
+    let value = line.slice("XDG_CONFIG_HOME=".length).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1).replace(/\\(.)/g, "$1");
+    }
+    return value.startsWith("/") ? value : null;
+  }
+  return null;
+}
+
 function systemdTimer(deps: TimerDeps): SyncTimer {
   const name = timerName(deps.home, deps.defaultHome, "systemd");
-  const config = deps.env.XDG_CONFIG_HOME || join(deps.userHome, ".config");
-  const dir = join(config, "systemd", "user");
-  const serviceFile = join(dir, `${name}.service`);
-  const timerFile = join(dir, `${name}.timer`);
   const wanted = () => renderSystemdUnits({ name, argv: deps.argv, env: timerEnv(deps.env) });
   const ctl = (...args: string[]) => deps.run(["systemctl", "--user", ...args]);
-  const hasSession = () => ctl("show-environment").code === 0;
 
-  const status = (): TimerStatus => {
+  /** Whether a user manager answers, and the folder it reads units from. */
+  const locate = (): { session: boolean; serviceFile: string; timerFile: string } => {
     let session = false;
+    let config: string | null = null;
     try {
-      session = hasSession();
+      const shown = ctl("show-environment");
+      session = shown.code === 0;
+      if (session) config = managerConfigHome(shown.stdout);
     } catch {
       // A run that throws means no usable systemctl.
     }
-    if (!session) return { state: "unavailable", reason: "no systemd user session" };
-    const service = readOrNull(serviceFile);
-    const timer = readOrNull(timerFile);
+    const dir = join(config ?? join(deps.userHome, ".config"), "systemd", "user");
+    return { session, serviceFile: join(dir, `${name}.service`), timerFile: join(dir, `${name}.timer`) };
+  };
+
+  const statusAt = (at: ReturnType<typeof locate>): TimerStatus => {
+    if (!at.session) return { state: "unavailable", reason: "no systemd user session" };
+    const service = readOrNull(at.serviceFile);
+    const timer = readOrNull(at.timerFile);
     if (service === null || timer === null) return { state: "missing", kind: "systemd" };
     const w = wanted();
     return { state: "installed", kind: "systemd", current: service === w.service && timer === w.timer };
   };
+  const status = (): TimerStatus => statusAt(locate());
   const ensure = ({ rewrite }: { rewrite: boolean }): EnsureResult => {
     try {
-      const s = status();
+      const at = locate();
+      const s = statusAt(at);
       if (s.state === "unavailable") return "unavailable";
       if (s.state === "installed" && (s.current || !rewrite)) return "unchanged";
       const w = wanted();
-      writeUnit(serviceFile, w.service);
-      writeUnit(timerFile, w.timer);
+      writeUnit(at.serviceFile, w.service);
+      writeUnit(at.timerFile, w.timer);
       if (ctl("daemon-reload").code !== 0 || ctl("enable", "--now", `${name}.timer`).code !== 0) {
-        rmSync(serviceFile, { force: true });
-        rmSync(timerFile, { force: true });
+        rmSync(at.serviceFile, { force: true });
+        rmSync(at.timerFile, { force: true });
         ctl("daemon-reload");
         return "unavailable";
       }
@@ -299,6 +345,7 @@ function systemdTimer(deps: TimerDeps): SyncTimer {
   };
   const remove = (): boolean => {
     try {
+      const { serviceFile, timerFile } = locate();
       const existed = existsSync(serviceFile) || existsSync(timerFile);
       ctl("disable", "--now", `${name}.timer`);
       rmSync(serviceFile, { force: true });

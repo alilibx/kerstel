@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
@@ -1475,11 +1475,12 @@ describe("the pull timer", () => {
     expect(result).toBe(0);
     expect(out).toContain("Can't schedule pulls here (no systemd user session). Kerstel still pulls when you run, exec, or change a secret.");
     expect(out).not.toContain("Pulls changes every five minutes");
-    // Told once: neither a sync you run nor a background one says it again.
-    expect((await run(a, s, [], fake.timer)).out).not.toContain("Can't schedule");
+    // A background sync leaves no notice for what setup already said.
     a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
     expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
     expect(takeSyncNotice(a.home)).toBeNull();
+    // A sync you run says it again: a "not scheduled" you were told once is easy to forget.
+    expect((await run(a, s, [], fake.timer)).out).toContain("Can't schedule pulls here (no systemd user session).");
   });
 
   test("a failed setup schedules nothing", async () => {
@@ -1524,7 +1525,7 @@ describe("the pull timer", () => {
     expect(out).toMatch(/Run `\S+ sync off` to stop syncing this device\./);
   });
 
-  test("a foreground sync says it can't schedule once, then stays quiet", async () => {
+  test("a foreground sync says it can't schedule every time it runs", async () => {
     const s = server();
     const a = device();
     await setUp(a, s);
@@ -1537,7 +1538,11 @@ describe("the pull timer", () => {
     expect(first.out).toContain(line);
     const second = await run(a, s, [], fake.timer);
     expect(second.result).toBe(0);
-    expect(second.out).not.toContain("Can't schedule");
+    expect(second.out).toContain(line);
+    const noGui = fakeTimer({ ensure: "unavailable", status: { state: "unavailable", reason: "no GUI login session" } });
+    expect((await run(a, s, [], noGui.timer)).out).toContain(
+      "Can't schedule pulls here (no GUI login session). Kerstel still pulls when you run, exec, or change a secret.",
+    );
   });
 
   test("a 0.3.0 device gets the timer on its next background sync", async () => {
@@ -1572,6 +1577,36 @@ describe("the pull timer", () => {
     expect((await run(a, s, ["--background"], fake.timer)).result).toBe(0);
     expect(fake.calls.ensure).toHaveLength(2);
     expect(takeSyncNotice(a.home)).toBeNull();
+  });
+
+  test("a background sync whose vault was removed or turned off meanwhile installs no timer", async () => {
+    // `uninstall` or `sync off` can remove the timer after a background sync
+    // released the lock and before it installs a missing timer; installing it
+    // then would bring the timer back.
+    for (const gone of ["vault file", "sync"] as const) {
+      const s = server();
+      const a = device();
+      await setUp(a, s);
+      a.with((v) => v.setSecret(ref("app", "NEW"), "new-1"));
+      const fake = fakeTimer({ ensure: "installed" });
+      // The sync's last write is recordResult clearing lastError: the race opens right after it.
+      const context = async () => {
+        const vault = a.open();
+        const deleteMeta = vault.deleteMeta.bind(vault);
+        vault.deleteMeta = (key: string) => {
+          deleteMeta(key);
+          if (key !== SYNC_META.lastError) return;
+          if (gone === "vault file") renameSync(vault.file, `${vault.file}.gone`);
+          else deleteMeta(SYNC_META.vaultId);
+        };
+        return { vault, dataKey: a.key } as unknown as CliContext;
+      };
+      const { result } = await quiet(() =>
+        syncCommand(["--background"], { fetch: s.fetch, context, interactive: false, now: tick(s), timer: fake.timer }),
+      );
+      expect({ gone, result, ensured: fake.calls.ensure }).toEqual({ gone, result: 0, ensured: [] });
+      expect(takeSyncNotice(a.home)).toBeNull();
+    }
   });
 
   test("a failed background sync leaves the timer alone", async () => {

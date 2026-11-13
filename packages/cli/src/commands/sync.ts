@@ -377,19 +377,41 @@ function schedule(vault: Vault, deps: SyncDeps): void {
   info(cantSchedule(unavailableReason(deps)));
 }
 
-/** After a sync you ran: bring the timer up to date with this shell's settings. */
+/**
+ * After a sync you ran: bring the timer up to date with this shell's settings.
+ * One that can't be scheduled says so every time: you asked for this sync, and
+ * it is the one place the reason shows.
+ */
 function refreshTimer(vault: Vault, deps: SyncDeps): void {
   const result = ensureTimer(deps, true);
   if (result === "updated") console.log(dim("Updated the scheduled pull to match this shell's settings."));
   else if (result === "installed") {
     ok("Pulls changes every five minutes on its own.");
     console.log(dim(`Run \`${cliName()} sync off\` to stop syncing this device.`));
-  } else if (result === "unavailable" && noteOnce(vault)) info(cantSchedule(unavailableReason(deps)));
+  } else if (result === "unavailable") {
+    // Marked, so a background sync does not leave the same line for the next command.
+    noteOnce(vault);
+    info(cantSchedule(unavailableReason(deps)));
+  }
+}
+
+/**
+ * Whether this vault still syncs. A background sync asks after it released the
+ * lock: `uninstall` or `sync off` may have removed the vault or turned sync off
+ * meanwhile, and installing the timer then would bring it back.
+ */
+function stillSynced(vault: Vault): boolean {
+  try {
+    return existsSync(vault.file) && vault.getMeta(SYNC_META.vaultId) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** After a background sync: install a missing timer, and leave a line for the next command. Never throws. */
 function backgroundTimer(vault: Vault, deps: SyncDeps): void {
   const home = dirname(vault.file);
+  if (!stillSynced(vault)) return;
   const result = ensureTimer(deps, false);
   if (result === "installed") {
     leaveSyncNotice(
