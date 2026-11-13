@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { X509Certificate, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acmeAdvice, AcmeError } from "../src/acme";
 import { pinOfCertificate } from "../src/pin";
-import { certificateName, loadSelfSigned, tlsFiles } from "../src/tls";
+import {
+  AcmeManager,
+  certificateName,
+  keepCertificate,
+  loadSelfSigned,
+  serveChallenges,
+  tlsFiles,
+  type AcmeCertificate,
+} from "../src/tls";
 import { certificateNames } from "../src/x509";
+import { startFakeAcme, type FakeAcme } from "./helpers/fake-acme";
 
 let dir: string;
 let db: string;
@@ -103,4 +113,289 @@ describe("loadSelfSigned", () => {
     expect(third.pin.equals(second.pin)).toBe(true);
     expect(pinOfCertificate(third.certDer).equals(third.pin)).toBe(true);
   });
+});
+
+const DOMAIN = "sync.test";
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const spki = (key: { export(o: { type: "spki"; format: "der" }): Buffer }) => key.export({ type: "spki", format: "der" });
+const leafOf = (certificate: AcmeCertificate) => new X509Certificate(certificate.certDer);
+
+describe("AcmeManager", () => {
+  let ca: FakeAcme;
+  let cleanup: (() => void)[];
+  let manager: AcmeManager;
+  let clock: number;
+  let logs: string[];
+  let requests: string[];
+
+  /** A manager on `db` against the fake CA, with a fake clock, a log and a count of requests. */
+  const newManager = () =>
+    new AcmeManager({
+      db,
+      domain: DOMAIN,
+      directory: ca.directory,
+      email: null,
+      httpPort: 80,
+      deps: {
+        now: () => clock,
+        log: (line) => logs.push(line),
+        sleep: async () => {},
+        fetch: (request) => {
+          requests.push(new URL(request.url).pathname);
+          return fetch(request);
+        },
+      },
+    });
+
+  const start = (o: { validityMs?: number } = {}) => {
+    // The listener reads whichever manager the test made last.
+    const listener = serveChallenges({ challenges: { get: (token) => manager.challenges.get(token) }, hostname: "127.0.0.1", port: 0 });
+    ca = startFakeAcme({ challengePort: listener.port!, ...o });
+    cleanup.push(() => listener.stop(true), () => ca.stop());
+    manager = newManager();
+  };
+
+  beforeEach(() => {
+    clock = Date.now();
+    logs = [];
+    requests = [];
+    cleanup = [];
+  });
+  afterEach(() => {
+    for (const stop of cleanup) stop();
+  });
+
+  test("issues, then keeps a current certificate", async () => {
+    start();
+    expect(manager.current()).toBeNull();
+    expect(await manager.ensure()).toBe("issued");
+    const certificate = manager.current()!;
+    expect(leafOf(certificate).subjectAltName).toBe(`DNS:${DOMAIN}`);
+    expect(leafOf(certificate).verify(new X509Certificate(ca.caPem).publicKey)).toBe(true);
+    expect(ca.validated).toBe(1); // the fake CA fetched the key authorization from the listener
+    const files = tlsFiles(db);
+    expect(statSync(files.key).mode & 0o777).toBe(0o600);
+    expect(statSync(files.account).mode & 0o777).toBe(0o600);
+    expect(readFileSync(files.cert, "utf8")).toBe(certificate.certPem);
+    // Compared without toBe, so a failure never prints a private key.
+    expect(certificate.keyPem === readFileSync(files.key, "utf8")).toBe(true);
+    expect(spki(leafOf(certificate).publicKey).equals(spki(createPublicKey(certificate.keyPem)))).toBe(true);
+
+    const sent = requests.length;
+    expect(await manager.ensure()).toBe("current");
+    expect(requests.length).toBe(sent);
+
+    // A restart finds the certificate beside the database and asks for nothing.
+    manager = newManager();
+    expect(manager.current()!.certDer.equals(certificate.certDer)).toBe(true);
+    expect(await manager.ensure()).toBe("current");
+    expect(requests.length).toBe(sent);
+    expect(ca.counts.newOrder).toBe(1);
+    expect(readdirSync(dir).sort()).toEqual(["s.db.acme-account.pem", "s.db.tls-cert.pem", "s.db.tls-key.pem"]);
+  });
+
+  test("renews under 30 days", async () => {
+    start({ validityMs: 90 * DAY });
+    expect(await manager.ensure()).toBe("issued");
+    const first = manager.current()!;
+    const notAfter = Date.parse(leafOf(first).validTo);
+    const keyPem = readFileSync(tlsFiles(db).key, "utf8");
+
+    clock = notAfter - 31 * DAY;
+    expect(await manager.ensure()).toBe("current");
+    expect(ca.counts.newOrder).toBe(1);
+
+    clock = notAfter - 29 * DAY;
+    expect(await manager.ensure()).toBe("renewed");
+    const second = manager.current()!;
+    expect(second.certDer.equals(first.certDer)).toBe(false);
+    expect(spki(leafOf(second).publicKey).equals(spki(leafOf(first).publicKey))).toBe(true); // the key is reused
+    expect(readFileSync(tlsFiles(db).key, "utf8") === keyPem).toBe(true);
+    expect(readFileSync(tlsFiles(db).cert, "utf8")).toBe(second.certPem);
+    expect(ca.accounts.length).toBe(1); // and so is the account
+  });
+
+  test("a failed order is retried no sooner than an hour", async () => {
+    start();
+    ca.failValidation("urn:ietf:params:acme:error:connection");
+    expect(await manager.ensure()).toBe("failed");
+    expect(manager.current()).toBeNull();
+    const advice = acmeAdvice(new AcmeError("", { type: "urn:ietf:params:acme:error:connection" }), DOMAIN, 80);
+    expect(logs).toEqual([advice]);
+    expect(existsSync(tlsFiles(db).cert)).toBe(false);
+
+    const sent = requests.length;
+    clock += HOUR - 1;
+    expect(await manager.ensure()).toBe("failed");
+    expect(requests.length).toBe(sent);
+    expect(logs.length).toBe(1);
+
+    ca.failValidation(null);
+    clock += 1;
+    expect(await manager.ensure()).toBe("issued");
+    expect(requests.length).toBeGreaterThan(sent);
+  });
+
+  test("any failure is logged and reported, never thrown", async () => {
+    start();
+    manager = new AcmeManager({
+      db,
+      domain: DOMAIN,
+      directory: ca.directory,
+      email: null,
+      deps: { now: () => clock, log: (line) => logs.push(line), fetch: async () => new Response("<html>not a directory</html>") },
+    });
+    expect(await manager.ensure()).toBe("failed");
+    expect(logs.length).toBe(1);
+    expect(logs[0]).toContain("JSON");
+  });
+
+  test("a certificate for another domain, or a self-signed one, is not used", async () => {
+    start();
+    loadSelfSigned(db, ["localhost", DOMAIN]); // what --tls self left beside the database
+    manager = newManager();
+    expect(manager.current()).toBeNull();
+    expect(await manager.ensure()).toBe("issued");
+
+    const other = new AcmeManager({ db, domain: "other.test", directory: ca.directory, email: null, deps: { log: () => {} } });
+    expect(other.current()).toBeNull();
+  });
+
+  test("the challenge listener answers by path, whatever the Host", async () => {
+    const challenges = new Map([["tok-1", "tok-1.thumb"]]);
+    const server = serveChallenges({ challenges, hostname: "127.0.0.1", port: 0 });
+    try {
+      const get = (path: string) => fetch(`http://127.0.0.1:${server.port}${path}`, { headers: { host: DOMAIN } });
+      const answer = await get("/.well-known/acme-challenge/tok-1");
+      expect(answer.status).toBe(200);
+      expect(await answer.text()).toBe("tok-1.thumb");
+      expect((await get("/.well-known/acme-challenge/tok-2")).status).toBe(404);
+      expect((await get("/.well-known/acme-challenge/tok-1/x")).status).toBe(404);
+      expect((await get("/")).status).toBe(404);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("keepCertificate", () => {
+  const certificate = (n: number): AcmeCertificate => ({ certPem: `cert ${n}`, keyPem: "key", certDer: Buffer.from([n]) });
+
+  /** A manager that answers `ensure` from `results`, holding `held`, and timers run by hand. */
+  function setup(results: ("issued" | "renewed" | "current" | "failed")[], held: AcmeCertificate | null) {
+    const state = { held, ensured: 0 };
+    const manager = {
+      current: () => state.held,
+      ensure: async () => {
+        const result = results[state.ensured++]!;
+        if (result === "issued" || result === "renewed") state.held = certificate(state.ensured + 1);
+        return result;
+      },
+    };
+    const served: string[] = [];
+    const logs: string[] = [];
+    const timers: { ms: number; run: () => void; cancelled: boolean }[] = [];
+    const keeper = keepCertificate({
+      manager,
+      serve: (c) => served.push(c.certPem),
+      log: (line) => logs.push(line),
+      schedule: (run, ms) => {
+        const timer = { ms, run, cancelled: false };
+        timers.push(timer);
+        return () => {
+          timer.cancelled = true;
+        };
+      },
+    });
+    /** Fires the last timer and waits for its check. */
+    const tick = async () => {
+      timers[timers.length - 1]!.run();
+      await Bun.sleep(0);
+    };
+    return { state, served, logs, timers, keeper, tick };
+  }
+
+  test("retries hourly until there is a certificate, then serves it and checks every 12 hours", async () => {
+    const t = setup(["failed", "failed", "issued", "current", "renewed"], null);
+    await Bun.sleep(0);
+    expect(t.served).toEqual([]);
+    expect(t.logs).toEqual(["No certificate yet. Trying again in an hour."]);
+    expect(t.timers.map((x) => x.ms)).toEqual([HOUR]);
+    await t.tick();
+    await t.tick();
+    expect(t.served).toEqual(["cert 4"]);
+    expect(t.timers.map((x) => x.ms)).toEqual([HOUR, HOUR, 12 * HOUR]);
+    await t.tick();
+    expect(t.served).toEqual(["cert 4"]); // current: the listener keeps running
+    await t.tick();
+    expect(t.served).toEqual(["cert 4", "cert 6"]); // renewed: the listener restarts
+    expect(t.logs.length).toBe(2);
+    t.keeper.stop();
+    expect(t.timers[t.timers.length - 1]!.cancelled).toBe(true);
+  });
+
+  test("serves a certificate it already has before checking it", async () => {
+    const t = setup(["failed"], certificate(1));
+    expect(t.served).toEqual(["cert 1"]);
+    await Bun.sleep(0);
+    expect(t.served).toEqual(["cert 1"]);
+    expect(t.logs).toEqual([]); // a failed renewal keeps the certificate it has
+    expect(t.timers.map((x) => x.ms)).toEqual([HOUR]);
+    t.keeper.stop();
+  });
+});
+
+describe("kerstel-server --domain", () => {
+  /** A port nothing listens on just now. */
+  const freePort = () => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const port = server.port!;
+    server.stop(true);
+    return port;
+  };
+
+  test("answers the challenge, then serves HTTPS with the certificate it got", async () => {
+    const httpPort = freePort();
+    const httpsPort = freePort();
+    const ca = startFakeAcme({ challengePort: httpPort });
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        join(import.meta.dir, "../src/index.ts"),
+        ...["--db", db, "--domain", DOMAIN, "--acme-directory", ca.directory],
+        ...["--acme-http", `127.0.0.1:${httpPort}`, "--listen", `127.0.0.1:${httpsPort}`],
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    try {
+      // Trust only the fake CA, and require the certificate to name the domain.
+      const tls = {
+        ca: ca.caPem,
+        checkServerIdentity: (_host: string, cert: { raw: Buffer }) => {
+          if (!certificateNames(cert.raw).includes(DOMAIN)) throw new Error(`the certificate does not name ${DOMAIN}`);
+          return undefined;
+        },
+      };
+      let response: Response | null = null;
+      for (let i = 0; i < 150 && !response; i++) {
+        response = await fetch(`https://127.0.0.1:${httpsPort}/v1/certificate`, { tls }).catch(() => null);
+        if (!response) await Bun.sleep(100);
+      }
+      expect(response?.status).toBe(200);
+      const served = Buffer.from(((await response!.json()) as { certificate: string }).certificate, "base64");
+      expect(served.equals(new X509Certificate(readFileSync(tlsFiles(db).cert)).raw)).toBe(true);
+      expect(ca.validated).toBe(1);
+
+      proc.kill("SIGTERM");
+      expect(await proc.exited).toBe(0);
+      const stdout = await new Response(proc.stdout).text();
+      expect(stdout).toContain(`Answering ACME challenges for ${DOMAIN} on http://127.0.0.1:${httpPort}`);
+      expect(stdout).toContain(`Got a certificate for ${DOMAIN}, valid until 9999-12-31.`);
+      expect(stdout).toContain(`listening on https://127.0.0.1:${httpsPort}`);
+    } finally {
+      proc.kill();
+      ca.stop();
+    }
+  }, 20_000);
 });

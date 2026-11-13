@@ -28,6 +28,7 @@ export class AcmeError extends Error {
 const ERROR = "urn:ietf:params:acme:error:";
 const POLL_MS = 2_000;
 const POLL_LIMIT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 interface Directory {
   newNonce: string;
@@ -71,7 +72,12 @@ export async function obtainCertificate(o: {
   challenges: Map<string, string>;
   deps?: Partial<AcmeDeps>;
 }): Promise<string> {
-  const deps: AcmeDeps = { fetch: (request) => fetch(request), sleep: (ms) => Bun.sleep(ms), ...o.deps };
+  const deps: AcmeDeps = {
+    // A stalled CA fails the request rather than holding the order forever.
+    fetch: (request) => fetch(request, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }),
+    sleep: (ms) => Bun.sleep(ms),
+    ...o.deps,
+  };
   const { kty, crv, x, y } = createPublicKey(o.accountKey).export({ format: "jwk" });
   if (kty !== "EC" || crv !== "P-256") throw new Error("the ACME account key must be ECDSA P-256");
   // RFC 7638: the required members, in lexicographic order, with no spaces.

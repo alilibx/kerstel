@@ -97,7 +97,10 @@ function signed(toBeSigned: Buffer, key: KeyObject): Buffer {
 
 const spkiOf = (key: KeyObject): Buffer => createPublicKey(key).export({ type: "spki", format: "der" });
 
-/** A DER certificate for `subjectSpki`, signed by `issuerKey`, valid from a day before `now` with no expiry. */
+/**
+ * A DER certificate for `subjectSpki`, signed by `issuerKey`, valid from a day
+ * before `now` until `notAfter` (ms), or with no expiry.
+ */
 export function issueCertificate(o: {
   subjectSpki: Buffer;
   issuerKey: KeyObject;
@@ -106,6 +109,7 @@ export function issueCertificate(o: {
   names: string[];
   ca?: boolean;
   now?: number;
+  notAfter?: number;
 }): Buffer {
   const now = o.now ?? Date.now();
   const serial = randomBytes(16);
@@ -129,7 +133,7 @@ export function issueCertificate(o: {
     integer(serial),
     ecdsaWithSha256(),
     name(o.issuerName ?? DEFAULT_NAME),
-    sequence(time(now - DAY_MS), time(NO_EXPIRY)),
+    sequence(time(now - DAY_MS), time(o.notAfter ?? NO_EXPIRY)),
     name(o.subjectName ?? DEFAULT_NAME),
     o.subjectSpki,
     explicit(3, sequence(...extensions)),

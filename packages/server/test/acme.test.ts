@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { X509Certificate, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { AcmeError, acmeAdvice, obtainCertificate, type AcmeDeps } from "../src/acme";
+import { certificateRequest } from "../src/x509";
 import { startFakeAcme, type FakeAcme } from "./helpers/fake-acme";
 
 const DOMAIN = "sync.test";
@@ -141,6 +142,40 @@ describe("obtainCertificate", () => {
     const dns = await run().catch((e: unknown) => e);
     expect(dns).toBeInstanceOf(AcmeError);
     expect(acmeAdvice(dns as AcmeError, DOMAIN, 80)).toBe(`${DOMAIN} does not resolve. Point an A or AAAA record at this host.`);
+  });
+
+  test("the fake CA refuses a CSR that names another domain", async () => {
+    // Swap the CSR in the finalize request for one naming other.test, re-signed with the account key.
+    const accountKey = freshKey();
+    const certKey = freshKey();
+    const error = await run({
+      accountKey,
+      certKey,
+      fetch: async (request) => {
+        if (!new URL(request.url).pathname.startsWith("/finalize/")) return fetch(request);
+        const jws = (await request.json()) as { protected: string; payload: string };
+        const payload = Buffer.from(
+          JSON.stringify({ csr: certificateRequest({ key: certKey, domain: "other.test" }).toString("base64url") }),
+        ).toString("base64url");
+        const signature = sign("sha256", Buffer.from(`${jws.protected}.${payload}`), { key: accountKey, dsaEncoding: "ieee-p1363" });
+        return fetch(request.url, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify({ protected: jws.protected, payload, signature: signature.toString("base64url") }),
+        });
+      },
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AcmeError);
+    expect((error as AcmeError).problem?.type).toBe("urn:ietf:params:acme:error:badCSR");
+    expect((error as AcmeError).message).toContain("other.test");
+  });
+
+  test("the fake CA refuses a CSR for the account key", async () => {
+    const key = freshKey();
+    const error = await run({ accountKey: key, certKey: key }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AcmeError);
+    expect((error as AcmeError).problem?.type).toBe("urn:ietf:params:acme:error:badCSR");
+    expect((error as AcmeError).message).toContain("account key");
   });
 
   test("a challenge the listener cannot answer fails validation", async () => {

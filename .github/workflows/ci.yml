@@ -27,6 +27,31 @@ jobs:
       - run: bun run --cwd packages/cli build
       - run: bun test
 
+  # kerstel-server --domain against Pebble, Let's Encrypt's test CA. Pebble
+  # treats every challenge as valid, so nothing needs to reach port 80.
+  acme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile
+      - name: Start Pebble
+        run: |
+          docker run -d --name pebble -p 14000:14000 \
+            -e PEBBLE_VA_ALWAYS_VALID=1 -e PEBBLE_VA_NOSLEEP=1 -e PEBBLE_WFE_NONCEREJECT=0 \
+            ghcr.io/letsencrypt/pebble:2.10.1
+          for _ in $(seq 1 30); do
+            curl -sfk https://localhost:14000/dir > /dev/null && exit 0
+            sleep 1
+          done
+          docker logs pebble
+          exit 1
+      - run: bun test packages/server/test/acme-pebble.test.ts
+        env:
+          KERSTEL_TEST_PEBBLE_DIRECTORY: https://localhost:14000/dir
+
   build:
     strategy:
       fail-fast: false

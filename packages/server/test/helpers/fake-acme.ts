@@ -2,7 +2,9 @@
  * A test ACME CA: the subset of RFC 8555 that `obtainCertificate` uses, served
  * in-process. It verifies every JWS for real (ES256 signature, nonce, url,
  * jwk or kid), fetches each http-01 key authorization from the challenge
- * listener itself, and issues a certificate for the CSR's key under its own CA.
+ * listener itself, as Let's Encrypt does (`Host: <domain>`), and issues a
+ * certificate for the CSR's key under its own CA once the CSR names exactly the
+ * order's domain and its key is not the account's.
  */
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { issueCertificate, toPem } from "../../src/x509";
@@ -45,6 +47,8 @@ interface Order {
 export interface FakeAcme {
   /** The directory URL to hand `obtainCertificate`. */
   directory: string;
+  /** The CA certificate that signs every issued certificate. */
+  caPem: string;
   url(path: string): string;
   accounts: Account[];
   /** Verified requests per endpoint. */
@@ -71,7 +75,8 @@ class Problem extends Error {
   }
 }
 
-export function startFakeAcme(o: { challengePort: number }): FakeAcme {
+/** `validityMs`: how long each issued certificate lasts from when it is issued (default: no expiry). */
+export function startFakeAcme(o: { challengePort: number; validityMs?: number }): FakeAcme {
   const caKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
   const caSpki = createPublicKey(caKey).export({ type: "spki", format: "der" });
   const caPem = toPem(
@@ -87,6 +92,7 @@ export function startFakeAcme(o: { challengePort: number }): FakeAcme {
 
   const fake: FakeAcme = {
     directory: "",
+    caPem,
     url: (path) => `${base}${path}`,
     accounts: [],
     counts: { newAccount: 0, newOrder: 0, authorization: 0, challenge: 0, finalize: 0, order: 0, certificate: 0 },
@@ -148,7 +154,9 @@ export function startFakeAcme(o: { challengePort: number }): FakeAcme {
     }
     let body: string;
     try {
-      const response = await fetch(`http://127.0.0.1:${o.challengePort}/.well-known/acme-challenge/${a.token}`);
+      const response = await fetch(`http://127.0.0.1:${o.challengePort}/.well-known/acme-challenge/${a.token}`, {
+        headers: { host: a.domain },
+      });
       body = response.ok ? await response.text() : "";
     } catch {
       a.status = "invalid";
@@ -281,8 +289,21 @@ export function startFakeAcme(o: { challengePort: number }): FakeAcme {
       case "finalize": {
         const order = owned(orders, id, account);
         if (orderStatus(order) !== "ready") throw new Problem(`${ERROR}orderNotReady`, "The order is not ready.", 403);
-        const spki = csrPublicKey(Buffer.from(payload?.csr ?? "", "base64url"));
-        const leaf = issueCertificate({ subjectSpki: spki, issuerKey: caKey, issuerName: CA_NAME, subjectName: order.domain, names: [order.domain] });
+        const csr = readCsr(Buffer.from(payload?.csr ?? "", "base64url"));
+        if (csr.names.length !== 1 || csr.names[0] !== order.domain) {
+          throw new Problem(`${ERROR}badCSR`, `The CSR names ${csr.names.join(", ") || "nothing"}, not ${order.domain}.`);
+        }
+        if (csr.spki.equals(createPublicKey({ key: jwk, format: "jwk" }).export({ type: "spki", format: "der" }))) {
+          throw new Problem(`${ERROR}badCSR`, "The CSR's key is the account key.");
+        }
+        const leaf = issueCertificate({
+          subjectSpki: csr.spki,
+          issuerKey: caKey,
+          issuerName: CA_NAME,
+          subjectName: order.domain,
+          names: [order.domain],
+          ...(o.validityMs === undefined ? {} : { notAfter: Date.now() + o.validityMs }),
+        });
         order.finalized = true;
         const response = json(orderJson(order), 200, { location: fake.url(`/order/${order.id}`), "retry-after": "3" });
         order.certificate = toPem(leaf, "CERTIFICATE") + caPem; // ready from the next poll
@@ -339,8 +360,18 @@ function tlv(der: Buffer, at: number): { tag: number; start: number; end: number
   return { tag, start, end: start + length, next: start + length };
 }
 
-/** The SPKI of a PKCS#10 request, after checking its self-signature. */
-function csrPublicKey(der: Buffer): Buffer {
+/** DER of id-ce-subjectAltName (2.5.29.17), as it appears inside its OBJECT IDENTIFIER. */
+const SAN_OID = Buffer.from([0x55, 0x1d, 0x11]);
+
+/** The TLVs directly inside `parent`. */
+function children(der: Buffer, parent: { start: number; end: number }) {
+  const out: ReturnType<typeof tlv>[] = [];
+  for (let at = parent.start; at < parent.end; at = out[out.length - 1]!.next) out.push(tlv(der, at));
+  return out;
+}
+
+/** The SPKI and subjectAltName dNSNames of a PKCS#10 request, after checking its self-signature. */
+function readCsr(der: Buffer): { spki: Buffer; names: string[] } {
   if (der.length < 2) throw new Problem(`${ERROR}badCSR`, "The CSR is empty.");
   const request = tlv(der, 0);
   const info = tlv(der, request.start); // CertificationRequestInfo
@@ -354,5 +385,22 @@ function csrPublicKey(der: Buffer): Buffer {
   if (!verify("sha256", der.subarray(request.start, info.end), key, der.subarray(signature.start + 1, signature.end))) {
     throw new Problem(`${ERROR}badCSR`, "The CSR's signature does not verify.");
   }
-  return Buffer.from(spkiDer);
+  // [0] attributes: each a SEQUENCE { type, SET { value } }; extensionRequest's value is Extensions.
+  const names: string[] = [];
+  const attributes = spki.next < info.end ? tlv(der, spki.next) : null;
+  for (const attribute of attributes ? children(der, attributes) : []) {
+    const [, values] = children(der, attribute);
+    for (const extensions of values ? children(der, values) : []) {
+      for (const extension of children(der, extensions)) {
+        const parts = children(der, extension);
+        const id = parts[0]!;
+        if (!der.subarray(id.start, id.end).equals(SAN_OID)) continue;
+        const value = parts[parts.length - 1]!; // the OCTET STRING, after an optional critical flag
+        for (const name of children(der, tlv(der, value.start))) {
+          if (name.tag === 0x82) names.push(der.subarray(name.start, name.end).toString("ascii"));
+        }
+      }
+    }
+  }
+  return { spki: Buffer.from(spkiDer), names };
 }

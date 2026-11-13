@@ -4,8 +4,8 @@
  *
  * Plain HTTP by default, for a reverse proxy that terminates TLS. With
  * `--tls self` it serves HTTPS with a certificate of its own, whose key devices
- * pin. The client refuses a non-https server URL other than 127.0.0.1 and
- * localhost.
+ * pin; with `--domain`, with a Let's Encrypt certificate it gets and renews.
+ * The client refuses a non-https server URL other than 127.0.0.1 and localhost.
  */
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
@@ -14,7 +14,7 @@ import { createApp } from "./app";
 import { openDatabase } from "./db";
 import { formatPin } from "./pin";
 import { LIMITS } from "./protocol";
-import { certificateName, loadSelfSigned } from "./tls";
+import { AcmeManager, certificateName, keepCertificate, loadSelfSigned, serveChallenges } from "./tls";
 
 declare const KERSTEL_SERVER_VERSION: string | undefined;
 
@@ -217,10 +217,6 @@ function main(): void {
     return;
   }
 
-  if (config.tls.mode === "acme") {
-    console.error("kerstel-server: --domain is not available yet.");
-    process.exit(2);
-  }
   let self: ReturnType<typeof loadSelfSigned> | null = null;
   if (config.tls.mode === "self") {
     try {
@@ -232,39 +228,84 @@ function main(): void {
   }
 
   const db = openDatabase(config.db);
-  const certDer = self?.certDer ?? null;
+  let certDer = self?.certDer ?? null;
   const app = createApp({ db, version: VERSION, enrollToken: config.enrollToken, certificate: () => certDer });
   const { trustProxy } = config;
 
-  const server = Bun.serve({
-    hostname: config.hostname,
-    port: config.port,
-    maxRequestBodySize: LIMITS.bodyBytes,
-    ...(self ? { tls: { cert: self.certPem, key: self.keyPem } } : {}),
-    async fetch(request, srv) {
-      const started = performance.now();
-      const ip = clientAddress(request, srv.requestIP(request)?.address ?? "unknown", trustProxy);
-      const response = await app.fetch(request, ip);
-      // A fixed label per route, IDs as :id, and "(unknown)" for anything else,
-      // so no text a caller puts in a path reaches the log.
-      const route = app.routeLabel(request.method, new URL(request.url).pathname);
-      console.log(`${request.method} ${route} ${response.status} ${Math.round(performance.now() - started)}ms`);
-      return response;
-    },
-  });
+  const listen = (port: number, tls?: { cert: string; key: string }) =>
+    Bun.serve({
+      hostname: config.hostname,
+      port,
+      maxRequestBodySize: LIMITS.bodyBytes,
+      ...(tls ? { tls } : {}),
+      async fetch(request, srv) {
+        const started = performance.now();
+        const ip = clientAddress(request, srv.requestIP(request)?.address ?? "unknown", trustProxy);
+        const response = await app.fetch(request, ip);
+        // A fixed label per route, IDs as :id, and "(unknown)" for anything else,
+        // so no text a caller puts in a path reaches the log.
+        const route = app.routeLabel(request.method, new URL(request.url).pathname);
+        console.log(`${request.method} ${route} ${response.status} ${Math.round(performance.now() - started)}ms`);
+        return response;
+      },
+    });
+  const listening = (server: ReturnType<typeof listen>, scheme: string) =>
+    console.log(`kerstel-server ${VERSION} listening on ${scheme}://${server.hostname}:${server.port} (database ${config.db})`);
+
+  let server: ReturnType<typeof listen> | null = null;
+  let stopAcme = () => {};
+  if (config.tls.mode === "acme") {
+    const acme = config.tls;
+    const manager = new AcmeManager({
+      db: config.db,
+      domain: acme.domain,
+      directory: acme.directory,
+      email: acme.email,
+      httpPort: acme.httpPort,
+    });
+    let challenges: ReturnType<typeof serveChallenges>;
+    try {
+      challenges = serveChallenges({ challenges: manager.challenges, hostname: acme.httpHostname, port: acme.httpPort });
+    } catch (error) {
+      console.error(`kerstel-server: cannot answer ACME challenges on ${acme.httpHostname}:${acme.httpPort}: ${(error as Error).message}`);
+      process.exit(1);
+    }
+    console.log(`Answering ACME challenges for ${acme.domain} on http://${challenges.hostname}:${challenges.port}`);
+    // Bun.serve's reload keeps the old certificate, so a new one restarts the
+    // listener on the same address. stop() lets requests in flight finish.
+    const serve = (certificate: { certPem: string; keyPem: string; certDer: Buffer }) => {
+      const previous = server;
+      previous?.stop();
+      try {
+        server = listen(previous?.port ?? config.port, { cert: certificate.certPem, key: certificate.keyPem });
+      } catch (error) {
+        console.error(`kerstel-server: ${(error as Error).message}`);
+        process.exit(1);
+      }
+      certDer = certificate.certDer;
+      if (!previous) listening(server, "https");
+    };
+    const keeper = keepCertificate({ manager, serve, log: (line) => console.log(line) });
+    stopAcme = () => {
+      keeper.stop();
+      challenges.stop();
+    };
+  } else {
+    server = listen(config.port, self ? { cert: self.certPem, key: self.keyPem } : undefined);
+    listening(server, self ? "https" : "http");
+    if (self) console.log(`Certificate pin: ${formatPin(self.pin)}`);
+  }
 
   app.maintain();
   const timer = setInterval(() => app.maintain(), 10 * 60_000);
-  const scheme = self ? "https" : "http";
-  console.log(`kerstel-server ${VERSION} listening on ${scheme}://${server.hostname}:${server.port} (database ${config.db})`);
-  if (self) console.log(`Certificate pin: ${formatPin(self.pin)}`);
   if (!config.enrollToken) {
     console.log("No enroll token: anyone who can reach this server can create a vault.");
   }
 
   const stop = () => {
     clearInterval(timer);
-    server.stop();
+    stopAcme();
+    server?.stop();
     db.close();
     process.exit(0);
   };
