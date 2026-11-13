@@ -30,6 +30,8 @@ export interface AppOptions {
   version: string;
   /** When set, creating a vault requires this value in the `Kerstel-Enroll-Token` header. */
   enrollToken?: string | null;
+  /** The DER certificate the server serves HTTPS with, for `GET /v1/certificate`; null without one. */
+  certificate?: () => Buffer | null;
   now?: () => number;
 }
 
@@ -49,6 +51,7 @@ export interface App {
 /** Every route the server answers, as `METHOD shape`. */
 const ROUTES = new Set([
   "GET health",
+  "GET certificate",
   "POST vaults",
   "PUT pairings/:id",
   "GET pairings/:id",
@@ -613,6 +616,14 @@ export function createApp(options: AppOptions): App {
 
     if (method === "GET" && a === "health" && parts.length === 1) {
       return json(200, { ok: true, version, protocol: 1 });
+    }
+
+    // Public data: a device fetches it to check the key against its pin, then
+    // trusts exactly this certificate for every other request.
+    if (method === "GET" && a === "certificate" && parts.length === 1) {
+      const certificate = options.certificate?.();
+      if (!certificate) return fail(404, "not_found", "This server has no certificate of its own.");
+      return json(200, { certificate: certificate.toString("base64") });
     }
 
     if (a === "vaults" && parts.length === 1 && method === "POST") {
