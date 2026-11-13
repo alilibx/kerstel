@@ -37,7 +37,8 @@ export function auditRows(view: AuditView, action: AuditAction | null, keep: (ro
     };
     if (!keep(line)) continue;
     rows.push(line);
-    if (rotate) rows.push({ cells: ["", "", ROTATE_HINT, ""], tone: "dim", reference });
+    // Across the row: in the reference column it was cut off at 60 columns.
+    if (rotate) rows.push({ cells: [ROTATE_HINT], tone: "dim", reference, span: true });
   }
   const tail: Row = { cells: [`n for ${AUDIT_PAGE} more`], tone: "dim" };
   if (view.more && keep(tail)) rows.push(tail);

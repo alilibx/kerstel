@@ -248,3 +248,14 @@ test("the rotation check decrypts each secret once, however often it was reveale
   for (let i = 0; i < 20; i++) expect(check(mk(i))).toBe(true);
   expect(reads).toBe(1);
 });
+
+test("a process name holding an escape sequence cannot steer the terminal", async () => {
+  await seedHome((v) => {
+    v.appendAudit(row({ event: "resolve", processName: "evil\x1b[2J\x1b[Hname.js", chain: ["node\x1b]0;x\x07", "zsh"] }));
+    v.appendAudit(row({ event: "set", chain: ["kerstel\u202e", "zsh"] }));
+  });
+  const grouped = (await run([])).text;
+  const rows = (await run(["--action", "resolve"])).text;
+  for (const text of [grouped, rows]) expect(text).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f\u202e]/);
+  expect(rows).toContain("evil[2J[Hname.js");
+});

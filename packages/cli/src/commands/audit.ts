@@ -5,6 +5,7 @@ import { openContext } from "../context";
 import { fail } from "../output";
 import { formatReference } from "../reference";
 import { cliName } from "../ui/cli-name";
+import { UNSAFE_CHARACTERS } from "../init/overview";
 import { renderTable } from "../ui/table";
 import { theme } from "../ui/theme";
 
@@ -50,6 +51,14 @@ function parseArgs(args: string[]): AuditOptions | { error: string } {
   return options;
 }
 
+/**
+ * A table with every cell cleaned. Process names come from the requesting
+ * app (a script's file name), so a name holding an escape sequence must not
+ * rewrite the log on screen.
+ */
+const table = (rows: string[][], options: { indent?: number; gap?: number }) =>
+  renderTable(rows.map((cells) => cells.map((cell) => cell.replace(UNSAFE_CHARACTERS, ""))), options);
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const more = (shown: number, total: number) =>
   shown < total ? [`  ${theme.dim(`Showing ${shown} of ${total}. Use --limit to see more.`)}`] : [];
@@ -89,7 +98,7 @@ export async function auditCommand(args: string[]): Promise<number> {
 
     const out: string[] = [since.label];
     out.push(
-      ...renderTable(
+      ...table(
         [
           ["Reveals", String(counts.reveals)],
           [
@@ -104,7 +113,7 @@ export async function auditCommand(args: string[]): Promise<number> {
 
     if (report.reveals.length > 0) {
       const rows = report.reveals.map(({ row }) => [formatAuditTime(row.ts), reference(row), formatChain(row.chain)]);
-      const lines = renderTable(rows, { indent: 2 });
+      const lines = table(rows, { indent: 2 });
       const hintIndent = " ".repeat(2 + formatAuditTime(0).length + 2);
       out.push("", "Reveals");
       report.reveals.forEach(({ rotate }, i) => {
@@ -117,7 +126,7 @@ export async function auditCommand(args: string[]): Promise<number> {
     if (report.appReadRows.length > 0) {
       out.push("", "App reads");
       out.push(
-        ...renderTable(
+        ...table(
           report.appReadRows.map((row) => [
             formatAuditTime(row.ts),
             row.event,
@@ -132,7 +141,7 @@ export async function auditCommand(args: string[]): Promise<number> {
     } else if (report.appReads.length > 0) {
       out.push("", "App reads");
       out.push(
-        ...renderTable(
+        ...table(
           report.appReads.map((g) => [
             g.project ?? "outside a project",
             g.process,
@@ -150,7 +159,7 @@ export async function auditCommand(args: string[]): Promise<number> {
     if (report.changes.length > 0) {
       out.push("", "Changes");
       out.push(
-        ...renderTable(
+        ...table(
           report.changes.map((row) => [formatAuditTime(row.ts), row.event, reference(row), formatChain(row.chain)]),
           { indent: 2 },
         ),
