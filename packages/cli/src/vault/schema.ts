@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Ordered migrations. Index 0 takes the database from version 0 to version 1.
@@ -123,6 +123,17 @@ const MIGRATIONS: string[] = [
     conflict   BLOB,
     PRIMARY KEY (scope, key)
   );
+  `,
+
+  // v5: the audit log learns who asked (audit log spec). WARNING: the daemon
+  // and `kerstel run` now write `audit_log.project_id`. Any future rebuild of
+  // `projects` (as v3 did) must keep every id, or DROP TABLE's ON DELETE SET
+  // NULL clears that column and old rows lose their project. `chain` is the
+  // caller's parent process names as JSON text, never a value or a path;
+  // the index serves the per-action reads and counts.
+  `
+  ALTER TABLE audit_log ADD COLUMN chain TEXT;
+  CREATE INDEX audit_log_event_ts_idx ON audit_log(event, ts DESC);
   `,
 ];
 

@@ -5,7 +5,7 @@ import { detectProject } from "../init/detect";
 import { entries } from "../init/dotenv-file";
 import { deriveScope } from "../init/project-name";
 import { CancelledError, ClackPrompter, type Choice, type Prompter } from "../init/prompts";
-import { MoveApplyError, MoveStaleFileError, applyMove, removeStaleTemps } from "../move/apply";
+import { MoveApplyError, MoveAuditError, MoveStaleFileError, applyMove, removeStaleTemps } from "../move/apply";
 import { referencesInCheckouts } from "../move/checkouts";
 import { gitFileStatus } from "../move/git";
 import { planMove, refId, type ConflictChoice, type MovePlan, type MoveRequest } from "../move/plan";
@@ -357,7 +357,7 @@ export async function runMove(options: MoveOptions, prompter: Prompter | null): 
         packageName: detected.packageName,
       });
     } catch (error) {
-      if (error instanceof MoveApplyError || error instanceof MoveStaleFileError) {
+      if (error instanceof MoveApplyError || error instanceof MoveAuditError || error instanceof MoveStaleFileError) {
         fail(error.message);
         return 1;
       }

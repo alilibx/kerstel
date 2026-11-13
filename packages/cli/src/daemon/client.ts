@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { basename } from "node:path";
+import { currentDir } from "../current-dir";
 import { socketPath as defaultSocketPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import {
@@ -26,7 +27,7 @@ export class DaemonError extends Error {
 }
 
 export interface DaemonClient {
-  resolve(scope: string, key: string, meta?: { pid?: number; processName?: string }): Promise<string>;
+  resolve(scope: string, key: string, meta?: { pid?: number; processName?: string; cwd?: string | null; purpose?: "reveal" }): Promise<string>;
   status(): Promise<StatusOk>;
   lock(): Promise<void>;
   shutdown(): Promise<void>;
@@ -154,6 +155,8 @@ export async function connectDaemon(options: ConnectOptions = {}): Promise<Daemo
           key,
           pid: meta?.pid ?? process.pid,
           processName: meta?.processName ?? basename(process.argv[0] ?? "unknown"),
+          cwd: meta?.cwd === undefined ? currentDir() : meta.cwd,
+          ...(meta?.purpose ? { purpose: meta.purpose } : {}),
         }),
       );
       if (!("value" in response)) throw new DaemonError("internal", "Malformed resolve response");

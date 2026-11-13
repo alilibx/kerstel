@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LineDecoder, PROTOCOL_VERSION, encodeMessage, type Response } from "../src/daemon/protocol";
-import { startDaemon, type DaemonHandle } from "../src/daemon/server";
+import { AUDIT_RETENTION_MS, startDaemon, type DaemonHandle } from "../src/daemon/server";
 import { generateDataKey } from "../src/vault/crypto";
 import { openVault, type Vault } from "../src/vault/store";
 import { bootDaemon, cleanupDaemons, releaseDaemon } from "./helpers/boot-daemon";
@@ -56,6 +56,24 @@ test("resolve returns the stored secret", async () => {
   expect(res).toMatchObject({ ok: true, op: "resolve", value: "sk-live-xyz" });
 });
 
+test("an empty chain is not cached: the next read from that pid looks again", async () => {
+  const answers: string[][] = [[], ["zsh"]];
+  const { sock, vault } = await bootDaemon({
+    prefix: "daemon",
+    token: TOKEN,
+    chainSource: { chainFor: () => answers.shift() ?? ["never"] },
+  });
+  vault.setSecret({ scope: "global", key: "A" }, "a");
+  vault.setSecret({ scope: "global", key: "B" }, "b");
+  vault.setSecret({ scope: "global", key: "C" }, "c");
+  for (const key of ["A", "B", "C"]) {
+    await request(sock, { v: PROTOCOL_VERSION, id: key, token: TOKEN, op: "resolve", scope: "global", key, pid: 777, processName: "node" });
+  }
+  const chains = vault.listAudit(10).filter((e) => e.event === "resolve").reverse().map((e) => [e.key, e.chain]);
+  // A's lookup came back empty and was not kept; B's found the chain, and C reuses it.
+  expect(chains).toEqual([["A", []], ["B", ["zsh"]], ["C", ["zsh"]]]);
+});
+
 test("resolve records an audit entry without the value", async () => {
   const { sock, token, vault } = await boot();
   vault.setSecret({ scope: "global", key: "K" }, "the-value");
@@ -64,10 +82,58 @@ test("resolve records an audit entry without the value", async () => {
     scope: "global", key: "K", pid: 42, processName: "bun",
   });
 
-  const entries = vault.listAudit(5);
+  const entries = vault.listAudit(5).filter((e) => e.event === "resolve");
   expect(entries.length).toBe(1);
   expect(entries[0]).toMatchObject({ event: "resolve", scope: "global", key: "K", pid: 42 });
   expect(JSON.stringify(entries)).not.toContain("the-value");
+});
+
+test("a resolve row carries the requester's chain and project", async () => {
+  const { sock, token, vault } = await boot();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-daemon-proj-")));
+  const inside = join(root, "src");
+  mkdirSync(inside);
+  vault.registerProject("demo", root);
+  vault.setSecret({ scope: "global", key: "K" }, "the-value");
+  await request(sock, {
+    v: PROTOCOL_VERSION, id: "1", token, op: "resolve",
+    scope: "global", key: "K", pid: process.pid, processName: "bun", cwd: inside,
+  });
+
+  const [row] = vault.listAudit(5).filter((e) => e.event === "resolve");
+  expect(row?.project?.name).toBe("demo");
+  expect(Array.isArray(row?.chain)).toBe(true);
+  expect(JSON.stringify(row)).not.toContain("the-value");
+});
+
+test("purpose reveal writes a reveal row, not a resolve row", async () => {
+  const { sock, token, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "K" }, "the-value");
+  const send = (purpose: unknown) =>
+    request(sock, {
+      v: PROTOCOL_VERSION, id: "1", token, op: "resolve",
+      scope: "global", key: "K", pid: 42, processName: "kerstel", cwd: 7, purpose,
+    });
+  await send("reveal");
+  await send("anything-else");
+
+  const rows = vault.listAudit(10);
+  expect(rows.filter((e) => e.event === "reveal").length).toBe(1);
+  expect(rows.filter((e) => e.event === "resolve").length).toBe(1);
+});
+
+test("prunes rows older than 90 days at start", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kerstel-daemon-prune-"));
+  const vault = openVault(generateDataKey(), join(dir, "vault.db"));
+  ownVaults.push(vault);
+  const base = { event: "resolve" as const, scope: "global", key: "K", pid: 1, processName: "node" };
+  vault.appendAudit({ ...base, ts: Date.now() - AUDIT_RETENTION_MS - 1000 });
+  vault.appendAudit({ ...base, ts: Date.now() });
+  expect(vault.listAudit(10).length).toBe(2);
+
+  const sock = process.platform === "win32" ? `\\.\pipe\kerstel-prune-${Date.now()}` : join(dir, "k.sock");
+  ownRunning.push(await startDaemon({ vault, socketPath: sock, token: TOKEN, backendName: "test" }));
+  expect(vault.listAudit(10).length).toBe(1);
 });
 
 test("an unknown secret returns not_found", async () => {

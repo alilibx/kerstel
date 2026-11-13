@@ -110,6 +110,14 @@ export class MoveApplyError extends Error {
  * An env file changed between the scan and Apply. Thrown before the backup,
  * so nothing was written and there is no backup to name.
  */
+/** The reveal of a value bound for plain text could not be logged; nothing was changed. */
+export class MoveAuditError extends Error {
+  constructor(ref: string, cause: Error) {
+    super(`Could not record that ${ref} would be written as plain text (${cause.message}); nothing was changed.`);
+    this.name = "MoveAuditError";
+  }
+}
+
 export class MoveStaleFileError extends Error {
   constructor(readonly file: string) {
     super(`${file} changed since ${cliName()} move read it; nothing was changed. Run ${cliName()} move again.`);
@@ -157,6 +165,18 @@ export function applyMove(plan: MovePlan, options: ApplyOptions): ApplyResult {
       current = null;
     }
     if (current !== f.before) throw new MoveStaleFileError(f.name);
+  }
+
+  // A value written out as plain text is revealed: log it before it reaches
+  // disk, as every other reveal does. A move that then rolls back leaves the
+  // row, which errs toward the log showing too much rather than too little.
+  for (const m of plan.moves) {
+    if (m.to !== "plaintext" || !m.fromRef) continue;
+    try {
+      vault.record("reveal", m.fromRef);
+    } catch (error) {
+      throw new MoveAuditError(refId(m.fromRef), error as Error);
+    }
   }
 
   // 1. Backup, before anything else changes.

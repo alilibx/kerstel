@@ -104,6 +104,8 @@ Plaintext never appears in log output, error messages, or audit rows. One except
 
 `kerstel scan ~` lists every env file in your home folder and what it still holds in plain text: secrets in projects you haven't set up, backup copies left from before `init`, templates with real keys in them, and files git tracks. It reads each file to judge it but prints only counts, key names and line numbers, and it checks references against the vault by name, without the vault key. Its exit code is `1` when it finds a secret, so it can run on a schedule or in CI.
 
+`kerstel audit` shows what Kerstel did with your secrets on this device: every reveal, every read by an app, and every change. Reveals come first. A reveal of a credential that is still the value that was shown comes with a hint to rotate it, in case you didn't make it yourself. Each row names the chain of programs that started the command or app and the project checkout it ran in. The chain is names only, so a program that wants to hide can fake it. Treat it as a clue, not proof. Rows hold key names, never values. They stay on this device and never sync, and the daemon deletes rows older than 90 days. `kerstel ui` shows the same log on its Audit screen. Its summary covers the last 7 days, and its rows go back through everything kept.
+
 ## Out of scope
 
 Kerstel does not defend against an attacker with root, a compromised OS credential store, code running as your user account, or malicious code running after it has been granted a secret.

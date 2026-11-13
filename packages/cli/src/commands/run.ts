@@ -47,14 +47,7 @@ export async function runCommand(args: string[]): Promise<number> {
       // process without the daemon seeing it, so the audit row the daemon
       // would have written has to be written here -- otherwise the log claims
       // these secrets were never read.
-      ctx.vault.appendAudit({
-        ts: Date.now(),
-        event: "run",
-        scope: ref.scope,
-        key: ref.key,
-        pid: process.pid,
-        processName: "kerstel",
-      });
+      ctx.vault.record("run", ref);
       env[name] = resolved;
     }
   } finally {

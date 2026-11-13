@@ -89,12 +89,20 @@ function createBridge(options) {
     // so the worst case is a throw, never a wrong value.
     const requestSeq = ++seq;
 
+    // An audit-only field must never break the env read: the working
+    // directory can be deleted or unreadable.
+    let cwd = null;
+    try {
+      cwd = process.cwd();
+    } catch {}
+
     channel.port1.postMessage({
       seq: requestSeq,
       scope,
       key,
       pid: process.pid,
       processName: path.basename(process.argv[1] || process.argv[0] || "node"),
+      cwd,
     });
 
     // Fixed ONCE, before the loop. The control word carries no request

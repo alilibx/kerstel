@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { listBackups, readBackup, readBackupVault } from "../src/init/backup";
 import { loadEnvFiles } from "../src/init/collect";
 import { discoverEnvFiles } from "../src/init/detect";
-import { MoveApplyError, MoveStaleFileError, applyMove, removeStaleTemps, writeFileAtomic } from "../src/move/apply";
+import { MoveApplyError, MoveAuditError, MoveStaleFileError, applyMove, removeStaleTemps, writeFileAtomic } from "../src/move/apply";
 import { planMove, type ConflictChoice } from "../src/move/plan";
 import { scanRows, type Place } from "../src/move/scan";
 import { generateDataKey } from "../src/vault/crypto";
@@ -97,6 +97,42 @@ test("apply backs up, writes, deletes, and saves every deleted and overwritten v
     { scope: "app", key: "B", value: "value-b" },
     { scope: "global", key: "B", value: "old-shared-b" },
   ]);
+});
+
+test("moving a key to plain text writes a reveal row for it", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=ks:app\nB=ks:app\n" }, { "app/A": "value-a", "app/B": "value-b" });
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"], ["B:ks:app/B", "global"]]);
+  applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app" });
+  const reveals = vault.listAudit(100).filter((r) => r.event === "reveal");
+  expect(reveals.map((r) => [r.scope, r.key])).toEqual([["app", "A"]]);
+});
+
+test("a move to plain text logs the reveal before writing, so a rollback keeps the row", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=ks:app\n" }, { "app/A": "value-a" });
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"]]);
+  const writeFile = () => {
+    expect(vault.listAudit(100).filter((r) => r.event === "reveal")).toHaveLength(1);
+    throw new Error("read-only file system");
+  };
+  expect(() => applyMove(plan, { vault, dataKey, scope: "app", root, registered: true, packageName: "app", writeFile })).toThrow(
+    MoveApplyError,
+  );
+  expect(vault.listAudit(100).filter((r) => r.event === "reveal")).toHaveLength(1);
+});
+
+test("a move to plain text whose reveal cannot be logged changes nothing", () => {
+  const { root, vault, dataKey } = setup({ ".env": "A=ks:app\n" }, { "app/A": "value-a" });
+  const plan = makePlan(root, vault, [["A:ks:app/A", "plaintext"]]);
+  const failing = Object.assign(Object.create(vault), {
+    record: () => {
+      throw new Error("database is locked");
+    },
+  });
+  expect(() => applyMove(plan, { vault: failing, dataKey, scope: "app", root, registered: true, packageName: "app" })).toThrow(
+    MoveAuditError,
+  );
+  expect(readFileSync(join(root, ".env"), "utf8")).toBe("A=ks:app\n");
+  expect(vault.getSecret({ scope: "app", key: "A" })).toBe("value-a");
 });
 
 test("a plain value that loses to a kept destination is saved in the backup's vault section", () => {

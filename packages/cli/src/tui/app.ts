@@ -1,9 +1,12 @@
 import type { ProjectRefs } from "../project-refs";
 import { formatReference, type SecretRef } from "../reference";
 import { keyProblem, scopeProblem, valueProblem } from "../secret-value";
-import type { Loaded, SecretRow } from "./data";
+import type { AuditAction } from "../vault/store";
+import { AUDIT_ACTIONS } from "../vault/store";
+import type { AuditView, Loaded, SecretRow } from "./data";
 import { scrollTop } from "./frame";
 import { isChar, isNamed, type Key } from "./keys";
+import { AUDIT_PAGE, auditRows } from "./screens/audit";
 import { referenceRows } from "./screens/references";
 import { secretRows } from "./screens/secrets";
 import type { Row } from "./widgets/list";
@@ -15,8 +18,8 @@ import type { Row } from "./widgets/list";
  * testable without either.
  */
 
-export type ScreenName = "secrets" | "references";
-export const SCREENS: ScreenName[] = ["secrets", "references"];
+export type ScreenName = "secrets" | "references" | "audit";
+export const SCREENS: ScreenName[] = ["secrets", "references", "audit"];
 
 export interface ListState {
   cursor: number;
@@ -30,6 +33,12 @@ export interface State {
   height: number;
   secrets: SecretRow[];
   refs: ProjectRefs | null;
+  /** The Audit screen's rows, loaded on entering it. */
+  audit: AuditView | null;
+  /** The action the Audit screen shows alone; null for all of them. */
+  auditAction: AuditAction | null;
+  /** How many rows the Audit screen asks for. */
+  auditLimit: number;
   lists: Record<ScreenName, ListState>;
   /** The filter line while it is open for typing. */
   filtering: boolean;
@@ -95,6 +104,7 @@ export type Event =
   | { type: "paste"; text: string }
   | { type: "resize"; width: number; height: number }
   | ({ type: "loaded" } & Loaded)
+  | { type: "auditLoaded"; view: AuditView }
   | { type: "error"; message: string }
   | { type: "revealed"; id: number; reference: string; value: string | null }
   | { type: "stored"; reference: string }
@@ -104,6 +114,7 @@ export type Event =
 /** Spec §4.2: the loop runs these against `data.ts` and feeds the result back as an event. */
 export type Effect =
   | { type: "reload" }
+  | { type: "audit"; action: AuditAction | null; limit: number }
   | { type: "reveal"; id: number; ref: SecretRef }
   | { type: "store"; ref: SecretRef; value: string; replace: boolean }
   | { type: "remove"; ref: SecretRef };
@@ -116,7 +127,10 @@ export function initialState(width: number, height: number): State {
     height,
     secrets: [],
     refs: null,
-    lists: { secrets: list(), references: list() },
+    audit: null,
+    auditAction: null,
+    auditLimit: AUDIT_PAGE,
+    lists: { secrets: list(), references: list(), audit: list() },
     filtering: false,
     help: false,
     byKey: false,
@@ -146,6 +160,7 @@ function matches(row: Row, filter: string): boolean {
 export function rowsFor(state: State, screen: ScreenName = state.screen): Row[] {
   const filter = state.lists[screen].filter;
   if (screen === "secrets") return secretRows(state.secrets, state.revealed).filter((r) => matches(r, filter));
+  if (screen === "audit") return state.audit ? auditRows(state.audit, state.auditAction, (r) => matches(r, filter)) : [];
   if (!state.refs) return [];
   const stored = new Set(state.secrets.map((s) => s.reference));
   const rows = referenceRows(state.refs, state.byKey, stored);
@@ -175,10 +190,13 @@ function switchTo(state: State, screen: ScreenName): State {
 type Result = { state: State; effects: Effect[] };
 const done = (state: State, effects: Effect[] = []): Result => ({ state, effects });
 
+const auditEffect = (state: State): Effect => ({ type: "audit", action: state.auditAction, limit: state.auditLimit });
+
 /** Spec §4.5: the References scan runs on entering the screen, so files changed meanwhile show. */
 function enter(state: State, screen: ScreenName): Result {
   if (screen === state.screen) return done(state);
   const next = switchTo(state, screen);
+  if (screen === "audit") return done({ ...next, loading: true }, [auditEffect(state)]);
   return screen === "references" ? done({ ...next, loading: true }, [{ type: "reload" }]) : done(next);
 }
 
@@ -201,6 +219,8 @@ export function update(state: State, event: Event): Result {
       }
       return done(next);
     }
+    case "auditLoaded":
+      return done(withList({ ...state, audit: event.view, loading: false }, "audit", {}));
     case "error":
       return done({ ...state, loading: false, status: { text: event.message, tone: "problem" } });
     case "revealed":
@@ -456,14 +476,29 @@ function onKey(state: State, key: Key, shown: string | null = null): Result {
   if (state.screen === "references") {
     if (isChar(key, "b")) return done(withList({ ...state, byKey: !state.byKey }, "references", { cursor: 0, top: 0 }));
     if (isChar(key, "R")) return done({ ...state, loading: true }, [{ type: "reload" }]);
-    if (isNamed(key, "enter")) {
-      const row = rowsFor(state)[state.lists.references.cursor];
-      if (!row?.reference) return done(state);
-      // Jump to that secret on the Secrets screen, with any filter there cleared.
-      const index = secretRows(state.secrets).findIndex((r) => r.reference === row.reference);
-      if (index === -1) return done(state);
-      return done(withList(switchTo(state, "secrets"), "secrets", { filter: "", cursor: index }));
+    if (isNamed(key, "enter")) return jumpToSecret(state);
+  }
+
+  if (state.screen === "audit") {
+    if (isChar(key, "a")) {
+      const at = state.auditAction === null ? -1 : AUDIT_ACTIONS.indexOf(state.auditAction);
+      const next: State = { ...state, auditAction: AUDIT_ACTIONS[at + 1] ?? null, auditLimit: AUDIT_PAGE, loading: true };
+      return done(next, [auditEffect(next)]);
     }
+    if (isChar(key, "n") && state.audit?.more) {
+      const next: State = { ...state, auditLimit: state.auditLimit + AUDIT_PAGE, loading: true };
+      return done(next, [auditEffect(next)]);
+    }
+    if (isNamed(key, "enter")) return jumpToSecret(state);
   }
   return done(state);
+}
+
+/** Enter on a row that names a stored secret: jump to it on the Secrets screen, with any filter there cleared. */
+function jumpToSecret(state: State): Result {
+  const row = rowsFor(state)[state.lists[state.screen].cursor];
+  if (!row?.reference) return done(state);
+  const index = secretRows(state.secrets).findIndex((r) => r.reference === row.reference);
+  if (index === -1) return done(state);
+  return done(withList(switchTo(state, "secrets"), "secrets", { filter: "", cursor: index }));
 }

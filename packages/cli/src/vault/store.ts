@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync } from "node:fs";
+import { cliActor, type AuditActor } from "../audit/actor";
 import { ensureHome, vaultPath } from "../paths";
 import type { SecretRef } from "../reference";
 import { decrypt, encrypt } from "./crypto";
@@ -21,13 +22,59 @@ export interface ProjectRecord {
   createdAt: number;
 }
 
+export type AuditAction = "resolve" | "run" | "reveal" | "set" | "remove" | "sync" | "device";
+export const AUDIT_ACTIONS: readonly AuditAction[] = ["resolve", "run", "reveal", "set", "remove", "sync", "device"];
+
 export interface AuditEntry {
   ts: number;
-  event: string;
+  event: AuditAction;
+  /** '' for a keyless row. */
+  scope: string;
+  /** '' for a keyless row. */
+  key: string;
+  pid: number | null;
+  processName: string | null;
+  /** The caller's parent process names, stored as JSON text. */
+  chain?: string[] | null;
+  /** Only selects `project_id` (deepest registered checkout containing it); never stored. */
+  cwd?: string | null;
+}
+
+export interface AuditRow {
+  id: number;
+  ts: number;
+  event: AuditAction;
   scope: string;
   key: string;
   pid: number | null;
   processName: string | null;
+  chain: string[] | null;
+  project: { name: string; rootPath: string } | null;
+}
+
+export interface AuditFilter {
+  limit: number;
+  scope?: string;
+  key?: string;
+  /** An empty list is the same as none: every action. */
+  events?: AuditAction[];
+  /** Rows at or after this timestamp. */
+  since?: number;
+}
+
+export interface AuditCounts {
+  reveals: number;
+  appReads: number;
+  processes: number;
+  projects: number;
+  changes: number;
+}
+
+export interface AppReadGroup {
+  project: string | null;
+  process: string;
+  keys: string[];
+  processes: number;
 }
 
 /** One key's sync bookkeeping. Sync spec §6.3. */
@@ -79,7 +126,17 @@ export interface Vault {
   registerProject(name: string, rootPath: string, packageName?: string | null): void;
   listProjects(): ProjectRecord[];
   appendAudit(entry: AuditEntry): void;
-  listAudit(limit: number): AuditEntry[];
+  /** Writes an audit row stamped with this vault's actor. A null ref writes an empty scope and key. The row's id. */
+  record(event: AuditAction, ref: SecretRef | null): number;
+  /** Moves a row's time to now. For a reveal whose value only became the stored one after the row was written. */
+  restampAudit(id: number): void;
+  /** Newest first. A number means `{ limit: n }`. */
+  listAudit(filter: number | AuditFilter): AuditRow[];
+  auditCounts(filter: Omit<AuditFilter, "limit">): AuditCounts;
+  /** `resolve` and `run` rows grouped by project and process, largest group first; `limit` bounds the groups. */
+  appReadGroups(filter: AuditFilter): AppReadGroup[];
+  /** Deletes rows with `ts` before the cutoff; returns how many. */
+  pruneAudit(before: number): number;
   /** Reads a `vault_meta` row. Not secret -- see meta.ts. */
   getMeta(key: string): string | null;
   /** Writes a `vault_meta` row, replacing any existing value. */
@@ -94,11 +151,38 @@ export interface Vault {
   close(): void;
 }
 
+/** The WHERE clause and bindings for an audit filter; `extra` is ANDed on. */
+function auditWhere(
+  f: Omit<AuditFilter, "limit">,
+  extra?: string,
+): { where: string; params: Record<string, string | number> } {
+  const clauses: string[] = extra ? [extra] : [];
+  const params: Record<string, string | number> = {};
+  if (f.scope !== undefined) {
+    clauses.push("a.scope = $scope");
+    params.$scope = f.scope;
+  }
+  if (f.key !== undefined) {
+    clauses.push("a.key = $key");
+    params.$key = f.key;
+  }
+  if (f.events && f.events.length > 0) {
+    clauses.push(`a.event IN (${f.events.map((_, i) => `$ev${i}`).join(", ")})`);
+    f.events.forEach((e, i) => (params[`$ev${i}`] = e));
+  }
+  if (f.since !== undefined) {
+    clauses.push("a.ts >= $since");
+    params.$since = f.since;
+  }
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
+}
+
 /**
  * Opens (creating and migrating as needed) the encrypted vault.
  * `dataKey` comes from the OS credential store and is held in memory only.
  */
-export function openVault(dataKey: Buffer, file?: string): Vault {
+export function openVault(dataKey: Buffer, file?: string, options: { actor?: AuditActor } = {}): Vault {
+  const actor = options.actor ?? cliActor();
   const target = file ?? vaultPath();
   if (!file) ensureHome();
 
@@ -129,6 +213,44 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
   }
 
   const now = (): number => Date.now();
+
+  const insertAudit = (entry: AuditEntry): number => {
+    const project = entry.cwd
+      ? db
+          .query<{ id: number }, { $cwd: string }>(
+            `SELECT id FROM projects
+             WHERE $cwd = root_path OR substr($cwd, 1, length(root_path) + 1) = root_path || '/'
+             ORDER BY length(root_path) DESC LIMIT 1`,
+          )
+          .get({ $cwd: entry.cwd })
+      : null;
+    return Number(db.query(
+      `INSERT INTO audit_log (ts, event, scope, key, pid, process_name, chain, project_id)
+       VALUES ($ts, $event, $scope, $key, $pid, $proc, $chain, $project)`,
+    ).run({
+      $ts: entry.ts,
+      $event: entry.event,
+      $scope: entry.scope,
+      $key: entry.key,
+      $pid: entry.pid,
+      $proc: entry.processName,
+      $chain: entry.chain ? JSON.stringify(entry.chain) : null,
+      $project: project?.id ?? null,
+    }).lastInsertRowid);
+  };
+
+  /** One row for this vault's actor; runs inside the caller's transaction when there is one. */
+  const record = (event: AuditAction, ref: SecretRef | null): number =>
+    insertAudit({
+      ts: now(),
+      event,
+      scope: ref?.scope ?? "",
+      key: ref?.key ?? "",
+      pid: actor.pid,
+      processName: actor.processName,
+      chain: actor.chain(),
+      cwd: actor.cwd,
+    });
 
   const syncOn = (): boolean =>
     db.query<{ value: string }, [string]>("SELECT value FROM vault_meta WHERE key = ?").get(SYNC_VAULT_META) !== null;
@@ -196,6 +318,7 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       return r ? toRow(r) : null;
     },
     applyRemote(ref, value, rev, expectedChange) {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       return db.transaction(() => {
         const current = sync.row(ref);
         if ((current?.change ?? 0) !== expectedChange) return false;
@@ -206,6 +329,7 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
            VALUES ($scope, $key, $rev, 0, 0, NULL)
            ON CONFLICT(scope, key) DO UPDATE SET base_rev = $rev, dirty = 0, conflict = NULL`,
         ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+        record("sync", ref);
         return true;
       })();
     },
@@ -224,9 +348,13 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
       });
     },
     keepLocal(ref, rev) {
-      db.query(
-        "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
-      ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+      actor.chain(); // spawns ps on first use: never while holding the write lock
+      db.transaction(() => {
+        db.query(
+          "UPDATE sync_state SET base_rev = $rev, dirty = 1, conflict = NULL WHERE scope = $scope AND key = $key",
+        ).run({ $scope: ref.scope, $key: ref.key, $rev: rev });
+        record("sync", ref);
+      })();
     },
     rebase(ref, rev) {
       db.query("UPDATE sync_state SET base_rev = $rev WHERE scope = $scope AND key = $key").run({
@@ -245,9 +373,11 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
     sync,
 
     setSecret(ref: SecretRef, value: string): void {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       db.transaction(() => {
         writeSecret(ref, value);
         touch(ref);
+        record("set", ref);
       })();
     },
 
@@ -282,10 +412,14 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
     },
 
     removeSecret(ref: SecretRef): boolean {
+      actor.chain(); // spawns ps on first use: never while holding the write lock
       return db.transaction(() => {
         const removed = deleteSecret(ref);
         // A removal syncs as a deletion; removing nothing changes nothing.
-        if (removed) touch(ref);
+        if (removed) {
+          touch(ref);
+          record("remove", ref);
+        }
         return removed;
       })();
     },
@@ -311,35 +445,107 @@ export function openVault(dataKey: Buffer, file?: string): Vault {
         .map((r) => ({ name: r.name, rootPath: r.root_path, packageName: r.package_name, createdAt: r.created_at }));
     },
 
-    appendAudit(entry: AuditEntry): void {
-      db.query(
-        `INSERT INTO audit_log (ts, event, scope, key, pid, process_name)
-         VALUES ($ts, $event, $scope, $key, $pid, $proc)`,
-      ).run({
-        $ts: entry.ts,
-        $event: entry.event,
-        $scope: entry.scope,
-        $key: entry.key,
-        $pid: entry.pid,
-        $proc: entry.processName,
-      });
-    },
+    appendAudit: insertAudit,
 
-    listAudit(limit: number): AuditEntry[] {
+    record,
+
+    listAudit(filter: number | AuditFilter): AuditRow[] {
+      const f = typeof filter === "number" ? { limit: filter } : filter;
+      const { where, params } = auditWhere(f);
       return db
         .query<
-          { ts: number; event: string; scope: string; key: string; pid: number | null; process_name: string | null },
-          { $limit: number }
-        >("SELECT ts, event, scope, key, pid, process_name FROM audit_log ORDER BY id DESC LIMIT $limit")
-        .all({ $limit: limit })
+          {
+            id: number;
+            ts: number;
+            event: AuditAction;
+            scope: string;
+            key: string;
+            pid: number | null;
+            process_name: string | null;
+            chain: string | null;
+            project_name: string | null;
+            project_root: string | null;
+          },
+          Record<string, string | number>
+        >(
+          `SELECT a.id, a.ts, a.event, a.scope, a.key, a.pid, a.process_name, a.chain,
+                  p.name AS project_name, p.root_path AS project_root
+           FROM audit_log a LEFT JOIN projects p ON p.id = a.project_id
+           ${where} ORDER BY a.id DESC LIMIT $limit`,
+        )
+        .all({ ...params, $limit: f.limit })
         .map((r) => ({
+          id: r.id,
           ts: r.ts,
           event: r.event,
           scope: r.scope,
           key: r.key,
           pid: r.pid,
           processName: r.process_name,
+          chain: r.chain === null ? null : (JSON.parse(r.chain) as string[]),
+          project: r.project_name === null ? null : { name: r.project_name, rootPath: r.project_root! },
         }));
+    },
+
+    auditCounts(filter: Omit<AuditFilter, "limit">): AuditCounts {
+      const { where, params } = auditWhere(filter);
+      const r = db
+        .query<
+          { reveals: number | null; app_reads: number | null; processes: number; projects: number; changes: number | null },
+          Record<string, string | number>
+        >(
+          `SELECT
+             SUM(a.event = 'reveal') AS reveals,
+             SUM(a.event IN ('resolve', 'run')) AS app_reads,
+             COUNT(DISTINCT CASE WHEN a.event IN ('resolve', 'run') THEN a.pid END) AS processes,
+             COUNT(DISTINCT CASE WHEN a.event IN ('resolve', 'run') THEN p.name END) AS projects,
+             SUM(a.event IN ('set', 'remove', 'sync', 'device')) AS changes
+           FROM audit_log a LEFT JOIN projects p ON p.id = a.project_id ${where}`,
+        )
+        .get(params)!;
+      return {
+        reveals: r.reveals ?? 0,
+        appReads: r.app_reads ?? 0,
+        processes: r.processes,
+        projects: r.projects,
+        changes: r.changes ?? 0,
+      };
+    },
+
+    appReadGroups(filter: AuditFilter): AppReadGroup[] {
+      const { where, params } = auditWhere(filter, "a.event IN ('resolve', 'run')");
+      return db
+        .query<
+          { project: string | null; process: string; keys: string; processes: number },
+          Record<string, string | number>
+        >(
+          `SELECT project, process, json_group_array(DISTINCT key) AS keys,
+                  COUNT(DISTINCT pid) AS processes
+           FROM (
+             SELECT p.name AS project, a.key AS key, a.pid AS pid,
+                    CASE WHEN a.event = 'run' THEN 'kerstel run' ELSE COALESCE(a.process_name, 'unknown') END AS process
+             FROM audit_log a LEFT JOIN projects p ON p.id = a.project_id
+             ${where}
+           )
+           GROUP BY project, process
+           ORDER BY COUNT(*) DESC, project, process
+           LIMIT $limit`,
+        )
+        .all({ ...params, $limit: filter.limit })
+        .map((r) => ({
+          project: r.project,
+          process: r.process,
+          keys: (JSON.parse(r.keys) as string[]).sort(),
+          processes: r.processes,
+        }));
+    },
+
+    restampAudit(id: number): void {
+      db.query("UPDATE audit_log SET ts = $ts WHERE id = $id").run({ $ts: now(), $id: id });
+    },
+
+    pruneAudit(before: number): number {
+      return db.query("DELETE FROM audit_log WHERE ts < $before").run({ $before: before }).changes;
     },
 
     getMeta(key: string): string | null {

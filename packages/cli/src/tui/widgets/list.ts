@@ -6,6 +6,8 @@ export interface Row {
   cells: string[];
   tone: "normal" | "heading" | "dim" | "problem";
   reference?: string;
+  /** Spans the row instead of filling the first column, like a heading. */
+  span?: boolean;
 }
 
 export function inverse(theme: Theme, text: string): string {
@@ -26,7 +28,7 @@ export function renderList(
   const inner = width - 2;
   // A heading spans the row, so a long one ("Referenced by no project") does
   // not widen the first column for every row under it.
-  const spans = (row: Row) => row.tone === "heading";
+  const spans = (row: Row) => row.tone === "heading" || row.span === true;
   const cellRows = rows.filter((r) => !spans(r)).map((r) => r.cells);
   const widths = columnWidths(header ? [header, ...cellRows] : cellRows, inner);
   const line = (cells: string[]) => fit(cells.map((cell, i) => fit(cell, widths[i] ?? 0)).join("  "), inner);

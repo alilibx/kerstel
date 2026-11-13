@@ -62,6 +62,8 @@ Lists which project files reference which secrets, and which secrets nothing ref
 
 ### 3.2 Audit rows (Next)
 
+Superseded by [the access-gating spec §4](2026-11-13-access-gating-design.md).
+
 The log records `resolve` (daemon), `reveal` (`get --reveal`), and `run` today. Every write path gains a row:
 
 | Event | Written by |
@@ -73,6 +75,8 @@ The log records `resolve` (daemon), `reveal` (`get --reveal`), and `run` today. 
 Process name is `kerstel` and the pid is the CLI's own, as `reveal` and `run` do now. A row never carries a value. `uninstall` deletes the vault, so it writes nothing.
 
 ### 3.3 `kerstel audit [--scope <s>] [--key <KEY>] [--action <a>] [--limit <n>]` (Next)
+
+Superseded by [the access-gating spec §4](2026-11-13-access-gating-design.md).
 
 Newest first, 50 rows by default, as one aligned table:
 
@@ -150,6 +154,8 @@ Add and edit write `set` rows and delete writes a `remove` row from Next. In 0.2
 The `refs` scan, rendered as a tree: scope, then checkout root, then file, then references. `b` toggles the by-key view. An unresolvable reference is marked in the theme's problem colour, an unreachable checkout shows its reason, and the last group is the secrets no project references. `Enter` on a reference jumps to its row on the Secrets screen. The scan runs on entering the screen and on `R`, and while it runs the status bar says so; a monorepo with many packages is a few hundred file reads, well under a second.
 
 ### 4.6 Audit (Next)
+
+Superseded by [the access-gating spec §4](2026-11-13-access-gating-design.md).
 
 The `audit` table as a list, newest first, 200 rows at a time. `/` filters by key, `a` cycles the action filter through all, `resolve`, `run`, `reveal`, `set`, and `remove`, and `n` loads the next 200. `Enter` on a row jumps to its secret on the Secrets screen if it still exists.
 

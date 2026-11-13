@@ -35,7 +35,7 @@ Values live in `~/.kerstel/vault.db`, encrypted per value with AES-256-GCM. The 
 
 ## The daemon
 
-A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (`~/.kerstel/kerstel.sock`). Each request carries a session token, so only processes running as you can ask. The daemon mints a fresh token every time it starts, keeps it in a `0600` file in the Kerstel home, and deletes it when it stops; the token never appears in any process's environment, only the file's path does, and the hook reads the file when it needs it. The daemon records an audit row for each resolution.
+A per-user resolver daemon unlocks the vault once, using the credential store, and then answers lookups over a local socket (`~/.kerstel/kerstel.sock`). Each request carries a session token, so only processes running as you can ask. The daemon mints a fresh token every time it starts, keeps it in a `0600` file in the Kerstel home, and deletes it when it stops; the token never appears in any process's environment, only the file's path does, and the hook reads the file when it needs it. The daemon records an audit row for each resolution, with the chain of programs that started the app and the project it ran in.
 
 `kerstel run` never talks to the daemon: it opens the vault directly and resolves references itself. The hook does need the daemon, and `kerstel exec` (which `init` writes into your scripts) starts it on demand, as does `kerstel resolve`; you never start it by hand. If the hook can't reach it, the error names the reference and tells you to run `kerstel doctor`. `kerstel daemon status` shows whether it is up at any time, and `kerstel daemon start` is there if you want to start it yourself, or to read why it won't start.
 
@@ -83,4 +83,4 @@ If the daemon is unreachable, the vault is locked, or the key is missing, the ho
 
 - **Build-time snapshots.** Frameworks that inline environment variables into a client bundle, such as `NEXT_PUBLIC_*`, only see real values when the build itself runs under the hook or through `kerstel run`.
 - **Scrubbed environments.** A process launched with a clean environment, or by an absolute-path exec that drops `NODE_OPTIONS`, cannot load the hook. Use `kerstel run` for those.
-- **One spawn resolves everything.** Building a child's environment enumerates every variable, so a single spawn resolves every reference in scope, whether or not the child reads it. Expect one audit row per reference per spawn.
+- **One spawn resolves everything.** Building a child's environment enumerates every variable, so a single spawn resolves every reference in scope, whether or not the child reads it. Expect one audit row per reference per spawn. Each row names the chain of programs that started the process and the project it ran in.

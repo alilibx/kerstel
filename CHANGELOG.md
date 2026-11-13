@@ -4,6 +4,16 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.3.1 (unreleased)
 
+### Added
+
+- `kerstel audit` shows what Kerstel did with your secrets on this device, without printing a value. It opens with a summary, then lists every reveal (with a hint to rotate a credential that is unchanged since you revealed it), the reads your apps made, grouped by project and process, and every change. It covers the last 7 days and 50 rows per section by default; `--since`, `--limit`, `--scope`, `--key` and `--action` narrow or widen it. Each row records the chain of programs that started the command or app, and the project checkout. The chain is names only, so a program that wants to hide can fake it. Rows stay on this device and never sync, and the daemon deletes rows older than 90 days. See the [CLI reference](https://kerstel.dev/docs/cli) and the [security model](https://kerstel.dev/security).
+- `kerstel ui` has a third screen, **Audit** (`3` or `Tab`): the same log as a list, newest first, with reveals marked. Its summary covers the last 7 days, and its rows go back through everything kept. `a` shows one action or all of them, `n` loads more rows, and `Enter` jumps to the secret.
+- The audit log now records every change as well as every read: `set` and `rm` from any command and from `kerstel ui` (including `init` and `move`), a value that arrives from another device or a conflict you settle with `kerstel sync`, a device paired or removed, and a reveal by `kerstel sync --reveal` or `kerstel move --to plaintext`.
+
+### Changed
+
+- `kerstel resolve` is now recorded as a reveal, not a resolve, since a person asked to see the value.
+
 ## 0.3.0 (2026-11-11)
 
 ### Added

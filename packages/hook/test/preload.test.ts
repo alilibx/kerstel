@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Vault } from "../../cli/src/vault/store";
@@ -36,7 +36,7 @@ async function runHooked(
   script: string,
   args: string[],
   env: Record<string, string>,
-  options: { preloadDir?: string; hookDirEnv?: string | null } = {},
+  options: { preloadDir?: string; hookDirEnv?: string | null; cwd?: string } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const preload = join(options.preloadDir ?? DIST, "preload.cjs");
   const cmd =
@@ -51,6 +51,7 @@ async function runHooked(
   const hookDirEnv = options.hookDirEnv === undefined ? DIST : options.hookDirEnv;
 
   const proc = Bun.spawn(cmd, {
+    cwd: options.cwd,
     env: {
       ...process.env,
       KERSTEL_SOCKET: sock,
@@ -314,7 +315,42 @@ test("repeated reads of the same key hit the daemon once", async () => {
 
   const { stdout } = await runHooked("node", sock, script, [], { CACHED: "ks:global/CACHED" });
   expect(stdout).toBe("cached-valuecached-valuecached-value");
-  expect(vault.listAudit(10).filter((e) => e.key === "CACHED").length).toBe(1);
+  expect(vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CACHED").length).toBe(1);
+});
+
+test("the request the hook sends carries the process's working directory", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "CWDKEY" }, "cwd-value");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-cwd-")));
+  vault.registerProject("cwdproj", root);
+  const script = join(root, "read.cjs");
+  await Bun.write(script, "process.stdout.write(process.env.CWDKEY);");
+
+  const { stdout } = await runHooked("node", sock, script, [], { CWDKEY: "ks:global/CWDKEY" }, { cwd: root });
+  expect(stdout).toBe("cwd-value");
+  const [row] = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "CWDKEY");
+  expect(row?.project?.name).toBe("cwdproj");
+});
+
+test("a deleted working directory does not stop a ks: variable resolving", async () => {
+  const { sock, vault } = await boot();
+  vault.setSecret({ scope: "global", key: "GONE" }, "gone-value");
+  const script = join(mkdtempSync(join(tmpdir(), "kerstel-gone-script-")), "read.cjs");
+  await Bun.write(
+    script,
+    "require('node:fs').rmdirSync(process.cwd()); process.stdout.write(process.env.GONE);",
+  );
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "kerstel-gone-cwd-")));
+
+  try {
+    const { stdout } = await runHooked("node", sock, script, [], { GONE: "ks:global/GONE" }, { cwd });
+    expect(stdout).toBe("gone-value");
+    const rows = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "GONE");
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.project).toBeNull();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("Object.keys and spread still see every variable", async () => {

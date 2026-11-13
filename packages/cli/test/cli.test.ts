@@ -239,8 +239,10 @@ test("resolve prints one value for scripting, through the daemon", async () => {
 
     // The daemon audits every resolution it serves; routing `resolve` through
     // it is what gives this command an audit row at all.
-    const audit = vault.listAudit(10).filter((e) => e.event === "resolve" && e.key === "R");
-    expect(audit.length).toBe(1);
+    // `ks resolve` is a person asking to see a value, so it is a reveal.
+    const rows = vault.listAudit(10).filter((e) => e.key === "R");
+    expect(rows.filter((e) => e.event === "reveal").length).toBe(1);
+    expect(rows.filter((e) => e.event === "resolve").length).toBe(0);
   } finally {
     await handle.close();
     vault.close();
