@@ -67,13 +67,13 @@ On the device that is already syncing:
 kerstel sync add-device
 ```
 
-It prints a line to run on the new device:
+It prints one line to run on the new device, and copies it to the clipboard when it can (with `pbcopy`, `wl-copy`, `xclip` or `xsel`):
 
 ```bash
-kerstel sync join https://sync.example.com KS-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
+kerstel sync join ks1-…
 ```
 
-The code works once and expires in 10 minutes. When the new device answers, both devices show the new device's key fingerprint. Check that they match, then say yes on the first device. The new device checks that the sync key it receives is the one you confirmed, so a server cannot slip in a key of its own.
+On the new device, paste the line as a command. Or run `kerstel sync join` on its own and paste the value at the hidden prompt. The value holds the server address and the pairing secret, so treat it as a secret until it expires. It works once and expires in 10 minutes. A device older than 0.4.0 can't read it: update that device first with `kerstel update`. To pair from a device on 0.3, run `kerstel sync join <url> <code>` instead. When the new device answers, both devices show the new device's key fingerprint. Check that they match, then say yes on the first device. The new device checks that the sync key it receives is the one you confirmed, so a server cannot slip in a key of its own.
 
 A new device that already holds secrets merges them in. A key only it holds is uploaded. A key both vaults hold with different values becomes a conflict for you to settle, and nothing is overwritten.
 

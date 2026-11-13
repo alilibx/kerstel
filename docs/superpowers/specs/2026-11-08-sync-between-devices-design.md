@@ -152,14 +152,20 @@ Upload the vault? (Y/n)
 $ ks sync add-device
 On the new device, run:
 
-  ks sync join https://sync.example.com KS-7Q2M-XR4P-9DKT-BW3H-6YFN-CJ8A
+  ks sync join ks1-AB3dEfGh…
 
-The code works once and expires in 10 minutes. Waiting for the new device…
+  If the new device runs an older Kerstel, update it first with: ks update
+
+Copied to the clipboard. It works once and expires in 10 minutes. Waiting for the new device…
 ```
+
+The line is one value. It is copied to the clipboard when `pbcopy`, `wl-copy`, `xclip` or `xsel` is available; the tool gets it on stdin, never on its command line. The value is `ks1-` plus the unpadded base64url of a record: one flag byte (bit 0 set when a certificate pin follows), the 15-byte pairing secret, the 32-byte SHA-256 of the server certificate's SPKI only when the flag is set, the server URLs as UTF-8 joined with `\n` (1 to 4, in order of preference), and the first 4 bytes of the SHA-256 of everything before them as a checksum. It has no spaces and no shell-special characters, so a terminal can wrap it and a shell can take it unquoted. `join` tries the URLs in order and moves on only when one can't be reached. In 0.4.0 nothing sets a pin, and `join` refuses a value that carries one until #112 checks it, so a pin is never accepted and then ignored. A value from a newer Kerstel (a prefix other than `ks1-`) is refused with a hint to update, and a value that is cut short or fails its checksum is refused too.
+
+`ks sync join` takes the value as an argument. With no arguments in a terminal, it asks for it at a hidden prompt, so it stays out of shell history. The old form `ks sync join <url> <code>` still works, so a device on 0.4.0 can pair from one on 0.3.
 
 `add-device` first opens a pairing slot on the server under a fresh pairing ID. The slot lasts 10 minutes, and a vault can have at most three open.
 
-On the new device, `ks sync join <url> <code>` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The code is a 120-bit secret in 24 base32 characters, which the server never sees. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the code needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
+On the new device, `ks sync join` creates its device keys and posts its public keys, name and platform to that slot. The server accepts one answer per slot, so a second device cannot replace the first one's keys. The secret is 120 bits, carried in the join value (or, in the older form, as a code of 24 base32 characters), and the server never sees it. The pairing ID, which it does see, is derived from the secret with HKDF (info `kerstel pairing-id v1`), so the code needs nothing else. The answer is sealed with AES-256-GCM under a key derived from the secret (info `kerstel pairing v1`, the pairing ID as associated data) and padded like a record: the server cannot read the name, and the first device refuses an answer that does not open, so one the server wrote itself is caught before anyone is asked. Both devices show the new device's key fingerprint, so the person pairing can compare them.
 
 Back on the first device:
 
@@ -287,8 +293,8 @@ Limits: 10,000 records, 64 KB per record and 8 MB in total per vault; 32 devices
 | Command | Does |
 |---|---|
 | `ks sync setup <url>` | Turn sync on for this vault and upload it |
-| `ks sync add-device` | Show a one-time code and confirm the new device |
-| `ks sync join <url> <code>` | Join a synced vault from a new device |
+| `ks sync add-device` | Show a one-time join line and confirm the new device |
+| `ks sync join [<value>]` | Join a synced vault from a new device |
 | `ks sync` | Pull, push, and settle conflicts |
 | `ks sync status` | Server, devices, last sync, pending changes, open conflicts |
 | `ks sync devices` | List devices |
@@ -319,7 +325,7 @@ When 0.3.0 ships, the following change in the same PR:
 ## 13. Open questions
 
 1. **A hosted server.** Should the project run one, such as `sync.kerstel.dev`? The protocol needs no accounts, so a hosted server would need abuse limits instead: a cap on vault creation per IP, quotas, and a privacy policy. Recommendation: ship self-hosting in 0.3.0 and decide on hosting separately. "No account, no cloud" stays true either way.
-2. **Short pairing codes.** A PAKE would allow a code of 6–8 characters. It needs an implementation outside `node:crypto`. Recommendation: ship the long code and revisit if users find it awkward.
+2. **Short pairing codes.** A PAKE would allow a code of 6–8 characters. It needs an implementation outside `node:crypto`. Recommendation: ship the long code and revisit if users find it awkward. 0.4.0 put the URL and the secret in one value (#108), so there is one thing to paste, and short codes stay open.
 3. **Excluding scopes.** Should `ks sync setup` let a user leave a scope, such as a work project, off the server? It is simple to add to `sync_state` but changes the conflict and join rules.
 4. **Windows.** The server needs no Windows build. The client follows the CLI's Windows work (#17).
 
