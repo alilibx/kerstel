@@ -14,14 +14,14 @@ Sync is optional and off until you turn it on. It is for one person's devices. A
 
 `kerstel-server` stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.
 
-Kerstel sends a vault only to an `https://` URL, or `http://` to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs.
+Kerstel sends a vault only to an `https://` URL, or `http://` to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs. Each has its own section below.
 
-| You have | Use |
+| You have | Read the section |
 |---|---|
-| A server at home or on a VPS, with no domain | [Its own certificate, pinned](#its-own-certificate-pinned) |
-| A domain that points at the server | [Your domain, with Let's Encrypt](#your-domain-with-lets-encrypt) |
-| A Tailscale network | [Tailscale](#tailscale) |
-| A proxy or load balancer that already terminates TLS | [Behind your own proxy](#behind-your-own-proxy) |
+| A server at home or on a VPS, with no domain | Its own certificate, pinned |
+| A domain that points at the server | Your domain, with Let's Encrypt |
+| A Tailscale network | Tailscale |
+| A proxy or load balancer that already terminates TLS | Behind your own proxy |
 
 First get the server. With Docker, the examples below use this image:
 

@@ -195,10 +195,31 @@ export async function obtainCertificate(o: {
     }
   }
 
+  // RFC 8555 §7.4: finalize a ready order. A CA may report the authorizations
+  // valid before the order is ready, so read the order until it is.
   const csr = base64url(certificateRequest({ key: o.certKey, domain: o.domain }));
+  /** Finalizes the order once it is ready. Null when it is already past ready, so there is nothing to finalize. */
+  const finalize = async (): Promise<Response | null> => {
+    const current = await poll<Order>(orderUrl, await post(orderUrl, null, "the order"), ["pending"], "the order");
+    if (current.status === "invalid") {
+      const problem = current.error ?? null;
+      throw new AcmeError(`The ACME CA marked the order for ${o.domain} invalid: ${problem?.detail ?? "no reason given"}`, problem);
+    }
+    if (current.status !== "ready") return null; // processing or valid
+    return await post(order.finalize, { csr }, "the certificate request");
+  };
+  let finalized: Response | null;
+  try {
+    finalized = await finalize();
+  } catch (error) {
+    // The order read as ready, but finalize disagreed: wait, then read the order and finalize once more.
+    if (!(error instanceof AcmeError) || error.problem?.type !== `${ERROR}orderNotReady`) throw error;
+    await deps.sleep(POLL_MS);
+    finalized = await finalize();
+  }
   const finished = await poll<Order>(
     orderUrl,
-    await post(order.finalize, { csr }, "the certificate request"),
+    finalized ?? (await post(orderUrl, null, "the certificate")),
     ["ready", "processing"],
     "the certificate",
   );

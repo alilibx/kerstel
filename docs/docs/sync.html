@@ -36,29 +36,29 @@
 <p class="lede">Keep one vault on your laptop and your desktop. Values are encrypted on your device with a key the server never holds.</p><p>Sync is optional and off until you turn it on. It is for one person&#39;s devices. A team still commits references and fills each teammate&#39;s vault, as in <a href="/docs/teams">Working with a team</a>, until shared vaults ship.</p>
 <h2>Run a server</h2>
 <p><code>kerstel-server</code> stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.</p>
-<p>Kerstel sends a vault only to an <code>https://</code> URL, or <code>http://</code> to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs.</p>
+<p>Kerstel sends a vault only to an <code>https://</code> URL, or <code>http://</code> to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs. Each has its own section below.</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
 <th>You have</th>
-<th>Use</th>
+<th>Read the section</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>A server at home or on a VPS, with no domain</td>
-<td><a href="#its-own-certificate-pinned">Its own certificate, pinned</a></td>
+<td>Its own certificate, pinned</td>
 </tr>
 <tr>
 <td>A domain that points at the server</td>
-<td><a href="#your-domain-with-lets-encrypt">Your domain, with Let&#39;s Encrypt</a></td>
+<td>Your domain, with Let&#39;s Encrypt</td>
 </tr>
 <tr>
 <td>A Tailscale network</td>
-<td><a href="#tailscale">Tailscale</a></td>
+<td>Tailscale</td>
 </tr>
 <tr>
 <td>A proxy or load balancer that already terminates TLS</td>
-<td><a href="#behind-your-own-proxy">Behind your own proxy</a></td>
+<td>Behind your own proxy</td>
 </tr>
 </tbody></table>
 </div><p>First get the server. With Docker, the examples below use this image:</p>

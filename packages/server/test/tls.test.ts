@@ -3,7 +3,11 @@ import { X509Certificate, createPublicKey, generateKeyPairSync } from "node:cryp
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect } from "node:tls";
 import { acmeAdvice, AcmeError } from "../src/acme";
+import { createApp } from "../src/app";
+import { openDatabase } from "../src/db";
+import { certificateListener, listener } from "../src/index";
 import { pinnedFetch } from "../../cli/src/sync/http";
 import { parsePin, pinOfCertificate } from "../src/pin";
 import {
@@ -399,6 +403,104 @@ describe("keepCertificate", () => {
     expect(t.timers.map((x) => x.ms)).toEqual([HOUR]);
     t.keeper.stop();
   });
+});
+
+describe("a renewal on a live listener", () => {
+  /** The certificate a new TLS connection to `port` receives, as DER. */
+  const peerCertificate = (port: number) =>
+    new Promise<Buffer>((resolve, reject) => {
+      const socket = connect({ host: "127.0.0.1", port, servername: DOMAIN, rejectUnauthorized: false }, () => {
+        const raw = socket.getPeerCertificate().raw;
+        socket.end();
+        resolve(raw);
+      });
+      socket.on("error", reject);
+    });
+
+  /** Waits until `ready()`, for up to 10 seconds. */
+  async function until(ready: () => boolean, what: string): Promise<void> {
+    for (const deadline = Date.now() + 10_000; !ready(); await Bun.sleep(10)) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
+    }
+  }
+
+  test("serves the renewed certificate to new connections and at /v1/certificate", async () => {
+    let clock = Date.now();
+    const logs: string[] = [];
+    // The challenge listener answers from the manager made below.
+    let manager: AcmeManager | null = null;
+    const challengeServer = serveChallenges({ challenges: { get: (token) => manager?.challenges.get(token) }, hostname: "127.0.0.1", port: 0 });
+    const ca = startFakeAcme({ challengePort: challengeServer.port!, validityMs: 90 * DAY });
+    manager = new AcmeManager({
+      db,
+      domain: DOMAIN,
+      directory: ca.directory,
+      email: null,
+      deps: { now: () => clock, log: (line) => logs.push(line), sleep: async () => {} },
+    });
+
+    const database = openDatabase(":memory:");
+    let certDer: Buffer | null = null;
+    const app = createApp({ db: database, version: "test", certificate: () => certDer });
+    const served: Buffer[] = [];
+    const https = certificateListener({
+      port: 0, // any free port, kept across renewals
+      listen: listener({ app, hostname: "127.0.0.1", trustProxy: false, log: () => {} }),
+      served: (_server, certificate) => {
+        certDer = certificate.certDer;
+        served.push(certificate.certDer);
+      },
+      log: (line) => logs.push(line),
+    });
+    const timers: (() => void)[] = [];
+    const keeper = keepCertificate({
+      manager: manager!,
+      serve: (certificate) => void https.serve(certificate),
+      log: (line) => logs.push(line),
+      schedule: (run) => {
+        timers.push(run);
+        return () => {};
+      },
+    });
+    const fetchCertificate = async (port: number) => {
+      const response = await fetch(`https://127.0.0.1:${port}/v1/certificate`, {
+        keepalive: false,
+        tls: {
+          ca: ca.caPem,
+          checkServerIdentity: (_host: string, cert: { raw: Buffer }) =>
+            certificateNames(cert.raw).includes(DOMAIN) ? undefined : new Error(`the certificate does not name ${DOMAIN}`),
+        },
+      });
+      expect(response.status).toBe(200);
+      return Buffer.from(((await response.json()) as { certificate: string }).certificate, "base64");
+    };
+
+    try {
+      await until(() => served.length === 1, "the first certificate");
+      const port = https.server()!.port!;
+      const first = manager!.current()!.certDer;
+      expect((await peerCertificate(port)).equals(first)).toBe(true);
+      expect((await fetchCertificate(port)).equals(first)).toBe(true);
+
+      // 29 days before it expires, the next check renews it and restarts the listener.
+      clock = Date.parse(new X509Certificate(first).validTo) - 29 * DAY;
+      timers[timers.length - 1]!();
+      await until(() => served.length === 2, "the renewed certificate");
+      const renewed = manager!.current()!.certDer;
+      expect(renewed.equals(first)).toBe(false);
+      expect(served[1]!.equals(renewed)).toBe(true);
+      expect(https.server()!.port).toBe(port);
+      expect((await peerCertificate(port)).equals(renewed)).toBe(true);
+      expect((await fetchCertificate(port)).equals(renewed)).toBe(true);
+      expect(ca.counts.newOrder).toBe(2);
+    } finally {
+      keeper.stop();
+      https.server()?.stop(true);
+      ca.stop();
+      challengeServer.stop(true);
+      database.close();
+    }
+  }, 20_000);
 });
 
 describe("bindAgain", () => {

@@ -10,11 +10,19 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import pkg from "../package.json";
-import { createApp } from "./app";
+import { createApp, type App } from "./app";
 import { openDatabase } from "./db";
 import { formatPin } from "./pin";
 import { LIMITS } from "./protocol";
-import { AcmeManager, bindAgain, certificateName, keepCertificate, loadSelfSigned, serveChallenges } from "./tls";
+import {
+  AcmeManager,
+  bindAgain,
+  certificateName,
+  keepCertificate,
+  loadSelfSigned,
+  serveChallenges,
+  type AcmeCertificate,
+} from "./tls";
 
 declare const KERSTEL_SERVER_VERSION: string | undefined;
 
@@ -218,6 +226,62 @@ function clientAddress(request: Request, direct: string, trustProxy: boolean): s
   return direct;
 }
 
+type Listener = ReturnType<typeof Bun.serve>;
+
+/**
+ * What listens for the app on `hostname`: plain HTTP, or HTTPS with `tls`. It
+ * logs one line per request, with a fixed label per route.
+ */
+export function listener(o: { app: App; hostname: string; trustProxy: boolean; log?: (line: string) => void }) {
+  const log = o.log ?? ((line: string) => console.log(line));
+  return (port: number, tls?: { cert: string; key: string }): Listener =>
+    Bun.serve({
+      hostname: o.hostname,
+      port,
+      maxRequestBodySize: LIMITS.bodyBytes,
+      ...(tls ? { tls } : {}),
+      async fetch(request, srv) {
+        const started = performance.now();
+        const ip = clientAddress(request, srv.requestIP(request)?.address ?? "unknown", o.trustProxy);
+        const response = await o.app.fetch(request, ip);
+        // A fixed label per route, IDs as :id, and "(unknown)" for anything else,
+        // so no text a caller puts in a path reaches the log.
+        const route = o.app.routeLabel(request.method, new URL(request.url).pathname);
+        log(`${request.method} ${route} ${response.status} ${Math.round(performance.now() - started)}ms`);
+        return response;
+      },
+    });
+}
+
+/**
+ * The HTTPS listener for `--domain`, for `keepCertificate` to serve each
+ * certificate with. Bun.serve's reload keeps the old certificate, so a new one
+ * restarts the listener on the same address. stop() lets requests in flight
+ * finish, and the address may stay taken for a moment, so the new listener
+ * tries again. `served` runs once the listener has the certificate; `serve`
+ * rejects when it cannot listen again.
+ */
+export function certificateListener(o: {
+  port: number;
+  listen: (port: number, tls: { cert: string; key: string }) => Listener;
+  served: (server: Listener, certificate: AcmeCertificate, first: boolean) => void;
+  log: (line: string) => void;
+}): { serve(certificate: AcmeCertificate): Promise<void>; server(): Listener | null } {
+  let server: Listener | null = null;
+  return {
+    async serve(certificate) {
+      const previous = server;
+      const tls = { cert: certificate.certPem, key: certificate.keyPem };
+      // Read before stop(): a stopped listener reports port 0, which would bind a new, random one.
+      const port = previous?.port || o.port;
+      previous?.stop();
+      server = previous ? await bindAgain(() => o.listen(port, tls), { log: o.log }) : o.listen(port, tls);
+      o.served(server, certificate, !previous);
+    },
+    server: () => server,
+  };
+}
+
 function main(): void {
   let config: ReturnType<typeof parseArgs>;
   try {
@@ -250,27 +314,11 @@ function main(): void {
   const app = createApp({ db, version: VERSION, enrollToken: config.enrollToken, certificate: () => certDer });
   const { trustProxy } = config;
 
-  const listen = (port: number, tls?: { cert: string; key: string }) =>
-    Bun.serve({
-      hostname: config.hostname,
-      port,
-      maxRequestBodySize: LIMITS.bodyBytes,
-      ...(tls ? { tls } : {}),
-      async fetch(request, srv) {
-        const started = performance.now();
-        const ip = clientAddress(request, srv.requestIP(request)?.address ?? "unknown", trustProxy);
-        const response = await app.fetch(request, ip);
-        // A fixed label per route, IDs as :id, and "(unknown)" for anything else,
-        // so no text a caller puts in a path reaches the log.
-        const route = app.routeLabel(request.method, new URL(request.url).pathname);
-        console.log(`${request.method} ${route} ${response.status} ${Math.round(performance.now() - started)}ms`);
-        return response;
-      },
-    });
-  const listening = (server: ReturnType<typeof listen>, scheme: string) =>
+  const listen = listener({ app, hostname: config.hostname, trustProxy });
+  const listening = (server: Listener, scheme: string) =>
     console.log(`kerstel-server ${VERSION} listening on ${scheme}://${server.hostname}:${server.port} (database ${config.db})`);
 
-  let server: ReturnType<typeof listen> | null = null;
+  let server: Listener | null = null;
   let stopAcme = () => {};
   if (config.tls.mode === "acme") {
     const acme = config.tls;
@@ -289,24 +337,21 @@ function main(): void {
       process.exit(1);
     }
     console.log(`Answering ACME challenges for ${acme.domain} on http://${challenges.hostname}:${challenges.port}`);
-    // Bun.serve's reload keeps the old certificate, so a new one restarts the
-    // listener on the same address. stop() lets requests in flight finish, and
-    // the address may stay taken for a moment, so the new listener tries again.
-    const serve = async (certificate: { certPem: string; keyPem: string; certDer: Buffer }) => {
-      const previous = server;
-      const tls = { cert: certificate.certPem, key: certificate.keyPem };
-      previous?.stop();
-      try {
-        server = previous
-          ? await bindAgain(() => listen(previous.port ?? config.port, tls), { log: (line) => console.error(`kerstel-server: ${line}`) })
-          : listen(config.port, tls);
-      } catch (error) {
+    const https = certificateListener({
+      port: config.port,
+      listen,
+      served: (next, certificate, first) => {
+        server = next;
+        certDer = certificate.certDer;
+        if (first) listening(next, "https");
+      },
+      log: (line) => console.error(`kerstel-server: ${line}`),
+    });
+    const serve = (certificate: AcmeCertificate) =>
+      https.serve(certificate).catch((error: unknown) => {
         console.error(`kerstel-server: ${(error as Error).message}`);
         process.exit(1);
-      }
-      certDer = certificate.certDer;
-      if (!previous) listening(server, "https");
-    };
+      });
     const keeper = keepCertificate({ manager, serve, log: (line) => console.log(line) });
     stopAcme = () => {
       keeper.stop();

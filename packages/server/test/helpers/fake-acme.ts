@@ -42,6 +42,9 @@ interface Order {
   authorization: Authorization;
   certificate: string | null;
   finalized: boolean;
+  /** Order reads still to answer `pending` once the authorization is valid, then `heldThen`. */
+  pendingReads: number;
+  heldThen: "ready" | "invalid";
 }
 
 export interface FakeAcme {
@@ -62,6 +65,16 @@ export interface FakeAcme {
   failValidation(type: string | null): void;
   /** Answer the next request to `endpoint` with badNonce. */
   badNonceOnce(endpoint: Endpoint): void;
+  /**
+   * For orders created from now on: once the authorization is valid, answer
+   * `reads` order reads with `pending` before the order turns `then`, as a CA
+   * that updates the two separately does. A finalize before then gets orderNotReady.
+   */
+  holdOrder(reads: number, then?: "ready" | "invalid"): void;
+  /** Answer the next `times` finalize requests with orderNotReady, even for a ready order. */
+  refuseFinalize(times: number): void;
+  /** Finalize requests answered with orderNotReady. */
+  notReady: number;
   stop(): void;
 }
 
@@ -90,6 +103,8 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
   const orders = new Map<string, Order>();
   let failType: string | null = null;
   let badNonceFor: Endpoint | null = null;
+  let hold: { reads: number; then: "ready" | "invalid" } = { reads: 0, then: "ready" };
+  let refusals = 0;
   let base = "";
 
   const fake: FakeAcme = {
@@ -107,6 +122,13 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
     badNonceOnce: (endpoint) => {
       badNonceFor = endpoint;
     },
+    holdOrder: (reads, then = "ready") => {
+      hold = { reads, then };
+    },
+    refuseFinalize: (times) => {
+      refusals = times;
+    },
+    notReady: 0,
     stop: () => server.stop(true),
   };
 
@@ -138,10 +160,14 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
     if (order.certificate) return "valid";
     if (order.finalized) return "processing";
     if (order.authorization.status === "invalid") return "invalid";
-    return order.authorization.status === "valid" ? "ready" : "pending";
+    if (order.authorization.status !== "valid" || order.pendingReads > 0) return "pending";
+    return order.heldThen;
   };
   const orderJson = (order: Order) => ({
     status: orderStatus(order),
+    ...(orderStatus(order) === "invalid" && order.heldThen === "invalid"
+      ? { error: { type: `${ERROR}rejectedIdentifier`, detail: "The fake CA was told to fail the order." } }
+      : {}),
     identifiers: [{ type: "dns", value: order.domain }],
     authorizations: [fake.url(`/authz/${order.authorization.id}`)],
     finalize: fake.url(`/finalize/${order.id}`),
@@ -270,7 +296,16 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
           pollsSinceChallenge: 0,
         };
         authorizations.set(authorization.id, authorization);
-        const order: Order = { id: newId(), account: account!.url, domain: authorization.domain, authorization, certificate: null, finalized: false };
+        const order: Order = {
+          id: newId(),
+          account: account!.url,
+          domain: authorization.domain,
+          authorization,
+          certificate: null,
+          finalized: false,
+          pendingReads: hold.reads,
+          heldThen: hold.then,
+        };
         orders.set(order.id, order);
         return json(orderJson(order), 201, { location: fake.url(`/order/${order.id}`) });
       }
@@ -290,7 +325,11 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
       }
       case "finalize": {
         const order = owned(orders, id, account);
-        if (orderStatus(order) !== "ready") throw new Problem(`${ERROR}orderNotReady`, "The order is not ready.", 403);
+        if (orderStatus(order) !== "ready" || refusals > 0) {
+          refusals = Math.max(refusals - 1, 0);
+          fake.notReady++;
+          throw new Problem(`${ERROR}orderNotReady`, "The order is not ready.", 403);
+        }
         const csr = readCsr(Buffer.from(payload?.csr ?? "", "base64url"));
         if (csr.names.length !== 1 || csr.names[0] !== order.domain) {
           throw new Problem(`${ERROR}badCSR`, `The CSR names ${csr.names.join(", ") || "nothing"}, not ${order.domain}.`);
@@ -313,9 +352,13 @@ export function startFakeAcme(o: { challengePort: number; validityMs?: number })
         order.certificate = toPem(leaf, "CERTIFICATE") + caPem; // ready from the next poll
         return response;
       }
-      case "order":
+      case "order": {
         postAsGet(payload);
-        return json(orderJson(owned(orders, id, account)));
+        const order = owned(orders, id, account);
+        const body = orderJson(order);
+        if (order.authorization.status === "valid" && order.pendingReads > 0) order.pendingReads--;
+        return json(body);
+      }
       case "certificate": {
         postAsGet(payload);
         // RFC 8555 lets the Accept header default; the fake insists on it, so the test sees the client send it.

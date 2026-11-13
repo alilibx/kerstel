@@ -128,6 +128,40 @@ describe("obtainCertificate", () => {
     expect(statuses).toEqual([400, 201]);
   });
 
+  test("finalizes only once the order is ready", async () => {
+    // The CA reports the authorization valid two order reads before the order is ready.
+    ca.holdOrder(2);
+    const pem = await run();
+    expect(certificatesIn(pem).length).toBe(2);
+    expect(ca.notReady).toBe(0);
+    expect(ca.counts.finalize).toBe(1);
+    // The authorization, then the order twice, every 2 s; then the certificate after its Retry-After.
+    expect(sleeps).toEqual([2000, 2000, 2000, 3000]);
+  });
+
+  test("an orderNotReady from finalize reads the order again, once", async () => {
+    ca.refuseFinalize(1);
+    const pem = await run();
+    expect(certificatesIn(pem).length).toBe(2);
+    expect(ca.notReady).toBe(1);
+    expect(ca.counts.finalize).toBe(2);
+    expect(sleeps).toEqual([2000, 2000, 3000]);
+
+    ca.refuseFinalize(2);
+    const error = await run().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AcmeError);
+    expect((error as AcmeError).problem?.type).toBe("urn:ietf:params:acme:error:orderNotReady");
+  });
+
+  test("an order the CA marks invalid fails with its problem", async () => {
+    ca.holdOrder(1, "invalid");
+    const error = await run().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AcmeError);
+    expect((error as AcmeError).problem?.type).toBe("urn:ietf:params:acme:error:rejectedIdentifier");
+    expect((error as AcmeError).message).toContain(DOMAIN);
+    expect(ca.counts.finalize).toBe(0);
+  });
+
   test("a failed order says which port or record to fix", async () => {
     ca.failValidation("urn:ietf:params:acme:error:connection");
     const error = await run().catch((e: unknown) => e);
