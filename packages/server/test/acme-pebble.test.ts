@@ -43,10 +43,13 @@ test.skipIf(!DIRECTORY)(
     const spki = createPublicKey(readFileSync(tlsFiles(db).key, "utf8")).export({ type: "spki", format: "der" });
     expect(leaf.publicKey.export({ type: "spki", format: "der" }).equals(spki)).toBe(true);
     expect(statSync(tlsFiles(db).account).mode & 0o777).toBe(0o600);
-    // An order that names no profile gets one of Pebble's at random: 90 days, or
-    // 6 days, which is already due for renewal.
+    // An order that names no profile gets one of Pebble's at random: 90 days or
+    // 6 days. Either way it is new, so it is renewed only once less than 30 days,
+    // or a third of its lifetime, remains.
+    const lifetime = Date.parse(leaf.validTo) - Date.parse(leaf.validFrom);
     const remaining = Date.parse(leaf.validTo) - Date.now();
-    expect(await manager.ensure()).toBe(remaining >= 30 * 86_400_000 ? "current" : "renewed");
+    const due = remaining < Math.min(30 * 86_400_000, lifetime / 3);
+    expect(await manager.ensure()).toBe(due ? "renewed" : "current");
   },
   60_000,
 );
