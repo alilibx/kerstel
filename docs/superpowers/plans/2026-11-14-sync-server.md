@@ -25,7 +25,6 @@
 - `ks sync` is never shown as a step to run regularly.
 - Tests never touch the real `~/Library/LaunchAgents`, `/Library/LaunchDaemons`, `/etc/systemd`, `launchctl`, `systemctl`, `docker`, `tailscale`, `ssh`, or the developer's real `~/.kerstel`. They never print a secret, and they clean up every temporary home, container, unit and listener. The SSH end-to-end test runs only in CI or when `KERSTEL_TEST_SSH_HOST` is set.
 - Copy uses `cliName()`. Status lines go to stderr with `process.stderr.write`. Every user-visible change gets a `CHANGELOG.md` line, and the website and README match the source (AGENTS.md).
-- Commits, PRs and copy never mention a hosted or paid sync service. "No account, no cloud" stays true.
 
 ## Decisions for the maintainer
 
