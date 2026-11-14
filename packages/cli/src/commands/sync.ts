@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { openContext, type CliContext } from "../context";
-import { ClackPrompter, DefaultsPrompter, type Prompter } from "../init/prompts";
+import { CancelledError, ClackPrompter, DefaultsPrompter, type Prompter } from "../init/prompts";
 import { bold, dim, fail, info, ok, yellow } from "../output";
 import {
   fingerprint,
@@ -13,10 +13,8 @@ import {
   verifiedName,
   openPairingAnswer,
   openSyncKey,
-  pairingCode,
   pairingConfirmation,
   pairingIdOf,
-  parsePairingCode,
   publicKeyOf,
   same,
   sealName,
@@ -37,6 +35,8 @@ import {
 } from "../sync/engine";
 import { leaveSyncNotice, syncLockPath, tryLockSync, waitForSyncLock } from "../sync/background";
 import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
+import { encodeJoinValue, parseJoinInput } from "../sync/join-value";
+import { copyToClipboard } from "../clipboard";
 import {
   forgetSync,
   isSafeServerUrl,
@@ -76,6 +76,8 @@ export interface SyncDeps {
   deviceName?: string;
   /** For tests: the pull timer, in place of the real launchd agent or systemd timer. */
   timer?: SyncTimer;
+  /** Copies the join line for `add-device`; true when it did. Defaults to the system clipboard. */
+  clipboard?: (text: string) => boolean;
 }
 
 /** How often each side of a pairing asks the server for news. The new device's polls count against a per-address limit of 30 a minute. */
@@ -87,8 +89,8 @@ const USAGE = `Usage:
                                        Pull, push, and settle conflicts
   ${cliName()} sync status                  Server, pending changes, conflicts, last sync
   ${cliName()} sync devices                 List the devices in this vault
-  ${cliName()} sync add-device              Show a one-time code to pair another device
-  ${cliName()} sync join <url> <code>       Join a synced vault from this device
+  ${cliName()} sync add-device              Show a one-time line to pair another device
+  ${cliName()} sync join [<value>]          Join a synced vault from this device
   ${cliName()} sync remove-device <name>    Remove a device and replace the sync key
   ${cliName()} sync off [--delete-vault]    Stop syncing this device`;
 
@@ -776,9 +778,9 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
 
 /**
  * Sync spec §7.1, on a device already in the vault: open a pairing slot,
- * show its code, wait for the new device's answer, and add that device only
- * once someone here says yes. The answer is sealed with the code's secret, so
- * one the server wrote itself does not open.
+ * show the line that joins it, wait for the new device's answer, and add that
+ * device only once someone here says yes. The answer is sealed with the
+ * pairing's secret, so one the server wrote itself does not open.
  */
 async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   if (args.length > 0) {
@@ -813,20 +815,27 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
     let settled = true;
     let answerId: string | null = null;
     try {
+      // The value is a secret while the slot is open: it goes to the terminal
+      // and the clipboard's stdin, never to a log or another command's argv.
+      const line = `${cliName()} sync join ${encodeJoinValue({ urls: [sync.config.server], pin: null, secret })}`;
       console.log("On the new device, run:");
       console.log("");
-      console.log(`  ${cliName()} sync join ${sync.config.server} ${pairingCode(secret)}`);
+      console.log(`  ${line}`);
+      console.log(dim(`  If the new device runs an older Kerstel, update it first with: ${cliName()} update`));
       console.log("");
-      console.log(dim("The code works once and expires in 10 minutes. Waiting for the new device…"));
+      const copied = (deps.clipboard ?? copyToClipboard)(line);
+      console.log(
+        dim(`${copied ? "Copied to the clipboard. " : ""}It works once and expires in 10 minutes. Waiting for the new device…`),
+      );
 
       const payload = await waitFor(async () => (await sync.client.readPairing(pairingId)).payload, POLL_MS.addDevice, deps);
       if (payload === null) {
-        fail(`The code expired before a device used it. Run ${cliName()} sync add-device for a new one.`);
+        fail(`The pairing expired before a device used it. Run ${cliName()} sync add-device for a new one.`);
         return 1;
       }
       const answer = openPairingAnswer(secret, payload);
       if (!answer || !isId(answer.deviceId) || !isPublicKey(answer.signPub) || !isPublicKey(answer.encPub)) {
-        fail("A device answered without this code's secret, so it was not added. Nothing was changed.");
+        fail("A device answered without this pairing's secret, so it was not added. Nothing was changed.");
         return 1;
       }
       answerId = answer.deviceId;
@@ -912,22 +921,55 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
  * Sync spec §7.1 and §10, on the new device: answer the pairing slot, wait
  * for the other device to confirm, check that the sealed key is the one it
  * confirmed, then pull the vault and merge this vault's own secrets into it.
+ * It takes the `ks1-…` value from `add-device` (on the command line or pasted
+ * at a hidden prompt), or the older `<url> <code>` pair.
  */
 async function join(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
-  if (args.length !== 2 || args.some((a) => a.startsWith("-"))) {
-    fail(`Usage: ${cliName()} sync join <url> <code>`);
+  const usage = () => {
+    fail(`Usage: ${cliName()} sync join [<value>]`);
+    return 2;
+  };
+  if (args[0]?.startsWith("-")) return usage();
+  let words = args;
+  if (words.length === 0) {
+    if (!isInteractive(deps)) return usage();
+    try {
+      const pasted = await (deps.prompter ?? new ClackPrompter()).text("Paste the line from sync add-device", { secret: true });
+      words = pasted.split(/\s+/);
+    } catch (error) {
+      if (error instanceof CancelledError) {
+        fail(error.message);
+        return 130;
+      }
+      throw error;
+    }
+  }
+  const input = parseJoinInput(words);
+  if ("error" in input) {
+    if (input.error === "empty") return usage();
+    if (input.error === "bad-url") {
+      fail(`${input.url} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+    } else if (input.error === "bad-code") {
+      fail(`That is not a pairing code. Copy the whole KS-… code that ${cliName()} sync add-device shows.`);
+    } else if (input.error === "newer") {
+      fail(`That join value is from a newer Kerstel. Update this device with ${cliName()} update, then run it again.`);
+    } else {
+      fail(`That is not a join value, or it was cut short. Copy the whole line that ${cliName()} sync add-device shows.`);
+    }
     return 2;
   }
-  const server = normaliseServerUrl(args[0]!);
-  if (!isSafeServerUrl(server)) {
-    fail(`${args[0]} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+  if (input.pin !== null) {
+    // #112 checks the pin; until then a value that carries one is refused, never accepted and then ignored.
+    fail(`That server pins its certificate, which this version of Kerstel can't check. Update this device with ${cliName()} update.`);
     return 2;
   }
-  const secret = parsePairingCode(args[1]!);
-  if (!secret) {
-    fail(`That is not a pairing code. Copy the whole KS-… code that ${cliName()} sync add-device shows.`);
+  const servers = input.urls.map(normaliseServerUrl);
+  const unsafe = servers.find((url) => !isSafeServerUrl(url));
+  if (unsafe !== undefined) {
+    fail(`${unsafe} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
     return 2;
   }
+  const secret = input.secret;
 
   const ctx = await open();
   try {
@@ -940,19 +982,29 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     const me = thisDevice(deps);
     const signPub = publicKeyOf(keys.sign);
     const pairingId = pairingIdOf(secret);
-    const pairing = pairingClient(server, deps.fetch);
-    try {
-      await pairing.answer(
-        pairingId,
-        sealPairingAnswer(secret, { v: 1, deviceId, signPub, encPub: publicKeyOf(keys.enc), ...me }),
-      );
-    } catch (error) {
-      if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
-        fail(`That code expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
-      } else {
-        fail(`Could not join: ${explain(error)}`);
+    const sealedAnswer = sealPairingAnswer(secret, { v: 1, deviceId, signPub, encPub: publicKeyOf(keys.enc), ...me });
+    // The value may name several addresses for one server. Only an address
+    // that can't be reached moves on to the next; the first that answers is
+    // the one this device polls, joins through and keeps.
+    let server = "";
+    let pairing = pairingClient(servers[0]!, deps.fetch);
+    for (const [i, url] of servers.entries()) {
+      server = url;
+      pairing = pairingClient(url, deps.fetch);
+      // Named before the request, so the person sees which server each attempt goes to.
+      console.log(`Joining the vault on ${url}.`);
+      try {
+        await pairing.answer(pairingId, sealedAnswer);
+        break;
+      } catch (error) {
+        if (error instanceof SyncHttpError && error.code === "unreachable" && i + 1 < servers.length) continue;
+        if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
+          fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
+        } else {
+          fail(`Could not join: ${explain(error)}`);
+        }
+        return 1;
       }
-      return 1;
     }
     console.log(`This device: ${bold(me.name)}, key fingerprint ${fingerprint(signPub)}`);
     console.log(dim("Confirm it on the other device, and check that it shows the same fingerprint. Waiting…"));
@@ -972,7 +1024,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       return 1;
     }
     if (!accepted) {
-      fail("The code expired, or the other device said no. Nothing was changed.");
+      fail("The pairing expired, or the other device said no. Nothing was changed.");
       return 1;
     }
 
@@ -984,7 +1036,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       fail(`Could not join: ${explain(error)}`);
       return 1;
     }
-    // The other device made this HMAC with the code's secret over the key it
+    // The other device made this HMAC with the pairing's secret over the key it
     // sealed. A key the server sealed itself, or a vault it swapped in, fails here.
     const expected = pairingConfirmation(secret, {
       vaultId: accepted.vaultId,

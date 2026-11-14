@@ -154,7 +154,7 @@ Asks for its URL, or a server value at a hidden prompt, then runs today's `setup
 
 ## 7. Pairing with one value (#108)
 
-- `ks sync add-device` prints one line, `ks sync join <value>`, and copies it to the clipboard when it can (`pbcopy`, `wl-copy`, `xclip` or `xsel`), saying so. When it can't, it says nothing about the clipboard.
+- `ks sync add-device` prints one line, `ks sync join <value>`, and copies it to the clipboard when it can (`pbcopy`, `wl-copy`, `xclip` or `xsel`; not `pbcopy` over SSH), saying so. When it can't, it says nothing about the clipboard.
 - The join value carries the server URL, the certificate pin when there is one, and the 120-bit pairing secret. Its prefix (`ks1-`) versions the format. The pairing ID is still derived from the secret, so the server sees exactly what it sees today.
 - `ks sync join` with no arguments asks for the value with hidden input and accepts the whole line pasted (`ks sync join ks1-…`).
 - `ks sync join <url> <code>` keeps working, so a 0.4.0 device can join from an older one.

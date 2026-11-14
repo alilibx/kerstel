@@ -47,6 +47,8 @@ import {
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
 import { loadSync, saveSync, SYNC_META } from "../src/sync/state";
+import { encodeJoinValue, parseJoinValue, type JoinValue } from "../src/sync/join-value";
+import type { Prompter } from "../src/init/prompts";
 import { generateDataKey } from "../src/vault/crypto";
 import { loadOrCreateDataKey } from "../src/vault/keychain";
 import { openVault, type Vault } from "../src/vault/store";
@@ -722,12 +724,34 @@ describe("pairing, joining and removing devices", () => {
     await Bun.sleep(1);
   };
 
+  /** The join value `add-device` printed, once it has. */
+  const VALUE = /ks1-[A-Za-z0-9_-]+/;
+  async function valueIn(log: { text: () => string }): Promise<string> {
+    let value: string | undefined;
+    for (let i = 0; i < 500 && !value; i += 1) {
+      await Bun.sleep(1);
+      value = log.text().match(VALUE)?.[0];
+    }
+    expect(value).toBeDefined();
+    return value!;
+  }
+  const decoded = (value: string) => parseJoinValue(value) as JoinValue;
+
   /** `add-device` on `a` and `join` on `b`, side by side, as two terminals would run them. */
   async function pairUp(
     a: Device,
     b: Device,
     s: Server,
-    options: { answer?: "yes" | "no"; joinFetch?: Fetch; aName?: string; bName?: string; joinTimer?: SyncTimer } = {},
+    options: {
+      answer?: "yes" | "no";
+      joinFetch?: Fetch;
+      aName?: string;
+      bName?: string;
+      joinTimer?: SyncTimer;
+      clipboard?: (text: string) => boolean;
+      /** How `b` runs `join` with the printed value; by default `["join", value]`. */
+      joinWith?: (value: string) => { args: string[]; prompter?: Prompter; interactive?: boolean };
+    } = {},
   ) {
     const log = captureLog();
     try {
@@ -739,24 +763,22 @@ describe("pairing, joining and removing devices", () => {
         prompter,
         now: tick(s),
         sleep: sleeper(s),
+        clipboard: options.clipboard ?? (() => false),
       });
-      let code: string | undefined;
-      for (let i = 0; i < 500 && !code; i += 1) {
-        await Bun.sleep(1);
-        code = log.text().match(/KS-[0-9A-Z-]{29}/)?.[0];
-      }
-      expect(code).toBeDefined();
-      const joining = syncCommand(["join", SERVER, code!], {
+      const value = await valueIn(log);
+      const how = options.joinWith?.(value) ?? { args: ["join", value] };
+      const joining = syncCommand(how.args, {
         fetch: options.joinFetch ?? s.fetch,
         context: b.context,
-        interactive: false,
+        interactive: how.interactive ?? false,
+        prompter: how.prompter,
         now: tick(s),
         sleep: sleeper(s),
         deviceName: options.bName ?? "second",
         timer: options.joinTimer,
       });
       const [added, joined] = await Promise.all([adding, joining]);
-      return { added, joined, out: log.text(), asked: prompter.asked };
+      return { added, joined, out: log.text(), asked: prompter.asked, value };
     } finally {
       log.restore();
     }
@@ -799,9 +821,206 @@ describe("pairing, joining and removing devices", () => {
     const devices = await sync(a, s, ["devices"]);
     expect(devices.out).toContain("second (");
     expect(devices.out).toContain("first (");
-    // A code works once.
-    const again = await sync(device(), s, ["join", SERVER, out.match(/KS-[0-9A-Z-]{29}/)![0]]);
+    // A pairing works once.
+    const again = await sync(device(), s, ["join", out.match(VALUE)![0]]);
     expect(again.code).toBe(1);
+    expect(again.out).toContain("That pairing expired or was already used");
+  });
+
+  test("add-device prints one line and copies it", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const copied: string[] = [];
+    const { added, joined, out } = await pairUp(a, device(), s, {
+      clipboard: (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    const lines = out.split("\n").filter((l) => l.includes("sync join ks1-"));
+    expect(lines).toHaveLength(1);
+    expect(copied).toEqual([lines[0]!.trim()]);
+    expect(out).toContain("Copied to the clipboard.");
+    expect(out).toContain("update it first with");
+  });
+
+  test("add-device shows the line before it calls the clipboard", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const { added, joined, out } = await pairUp(a, device(), s, {
+      clipboard: () => {
+        // A marker in the same stream shows what was already printed when the clipboard ran.
+        console.log("<clipboard>");
+        return true;
+      },
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    const marker = out.indexOf("<clipboard>");
+    expect(marker).toBeGreaterThan(out.indexOf("sync join ks1-"));
+    expect(marker).toBeGreaterThan(out.indexOf("update it first with"));
+    expect(marker).toBeLessThan(out.indexOf("Copied to the clipboard."));
+  });
+
+  test("without a clipboard it says nothing about one", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const { added, joined, out } = await pairUp(a, device(), s, { clipboard: () => false });
+    expect([added, joined]).toEqual([0, 0]);
+    expect(out).not.toContain("clipboard");
+  });
+
+  test("join takes the value pasted at a hidden prompt", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    let joinPrompter: ScriptedPrompter | undefined;
+    const { added, joined, out } = await pairUp(a, b, s, {
+      joinWith: (value) => {
+        joinPrompter = new ScriptedPrompter([`kerstel sync join ${value}`]);
+        return { args: ["join"], prompter: joinPrompter, interactive: true };
+      },
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    expect(joinPrompter!.asked).toEqual(["Paste the line from sync add-device"]);
+    const joining = out.indexOf("Joining the vault on http://127.0.0.1:8787.");
+    expect(joining).toBeGreaterThanOrEqual(0);
+    expect(joining).toBeLessThan(out.indexOf("This device:"));
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("cancelling the join prompt returns 130 and leaves sync off", async () => {
+    const { CancelledError } = await import("../src/init/prompts");
+    const s = server();
+    const b = device();
+    const prompter = {
+      async text(): Promise<string> {
+        throw new CancelledError();
+      },
+    } as unknown as Prompter;
+    const { result } = await quiet(() =>
+      syncCommand(["join"], { fetch: s.fetch, context: b.context, interactive: true, prompter, now: tick(s) }),
+    );
+    expect(result).toBe(130);
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
+  });
+
+  test("join still takes a URL and a code", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const { added, joined } = await pairUp(a, b, s, {
+      joinWith: (value) => ({ args: ["join", decoded(value).urls[0]!, pairingCode(decoded(value).secret)] }),
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("join glues a value that the terminal wrapped at a dash", async () => {
+    const s = server();
+    const b = device();
+    // A dash inside the body is likely but not certain, so draw secrets until there is one.
+    let value = "";
+    let at = -1;
+    while (at < 0) {
+      value = encodeJoinValue({ urls: [SERVER], pin: null, secret: newPairingSecret() });
+      at = value.indexOf("-", 5);
+    }
+    const { result, out } = await quiet(() =>
+      syncCommand(["join", value.slice(0, at), value.slice(at)], {
+        fetch: s.fetch,
+        context: b.context,
+        interactive: false,
+        now: tick(s),
+      }),
+    );
+    // The second word starts with a dash, yet it is part of the value: no usage error, and the request went out.
+    expect(out).not.toContain("Usage:");
+    expect(out).toContain(`Joining the vault on ${SERVER}.`);
+    expect(out).toContain("That pairing expired or was already used");
+    expect(result).toBe(1);
+  });
+
+  test("join keeps the old form's messages for a bad url or code", async () => {
+    const s = server();
+    const b = device();
+    const joinWith = async (args: string[]) => {
+      const { result, out } = await quiet(() =>
+        syncCommand(["join", ...args], { fetch: s.fetch, context: b.context, interactive: false, now: tick(s) }),
+      );
+      return { code: result, out };
+    };
+    const bad = await joinWith(["not a url", "KS-nonsense"]);
+    expect(bad.code).toBe(2);
+    expect(bad.out).toContain("not a url is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.");
+    const code = await joinWith([SERVER, "KS-nonsense"]);
+    expect(code.code).toBe(2);
+    expect(code.out).toContain("That is not a pairing code. Copy the whole KS-… code that");
+  });
+
+  test("join refuses a bad value before any request", async () => {
+    const s = server();
+    const b = device();
+    const requests: string[] = [];
+    const recording: Fetch = async (request) => {
+      requests.push(request.url);
+      return s.fetch(request);
+    };
+    const joinWith = async (args: string[]) => {
+      const { result, out } = await quiet(() =>
+        syncCommand(["join", ...args], { fetch: recording, context: b.context, interactive: false, now: tick(s) }),
+      );
+      return { code: result, out };
+    };
+    const secret = newPairingSecret();
+    const remote = encodeJoinValue({ urls: ["http://sync.example.com"], pin: null, secret });
+    const pinned = encodeJoinValue({ urls: [SERVER], pin: Buffer.alloc(32, 7), secret });
+
+    const usage = await joinWith([]);
+    expect(usage.code).toBe(2);
+    expect(usage.out).toContain("sync join [<value>]");
+    expect((await joinWith(["--yes"])).code).toBe(2);
+    const cut = await joinWith(["ks1-AAAA"]);
+    expect(cut.code).toBe(2);
+    expect(cut.out).toContain("it was cut short");
+    const newer = await joinWith(["ks2-AAAA"]);
+    expect(newer.code).toBe(2);
+    expect(newer.out).toContain("from a newer Kerstel");
+    const far = await joinWith([remote]);
+    expect(far.code).toBe(2);
+    expect(far.out).toContain("http://sync.example.com is not a server Kerstel will send your vault to");
+    const pin = await joinWith([pinned]);
+    expect(pin.code).toBe(2);
+    expect(pin.out).toContain("pins its certificate");
+
+    expect(requests).toEqual([]);
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
+  });
+
+  test("join tries the next address when one can't be reached", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const b = device();
+    const tried: string[] = [];
+    const flaky: Fetch = async (request) => {
+      const url = new URL(request.url);
+      tried.push(url.origin);
+      if (url.port === "1") throw new Error("connection refused");
+      return s.fetch(request);
+    };
+    const { added, joined, out } = await pairUp(a, b, s, {
+      joinFetch: flaky,
+      joinWith: (value) => ({
+        args: ["join", encodeJoinValue({ urls: ["http://127.0.0.1:1", SERVER], pin: null, secret: decoded(value).secret })],
+      }),
+    });
+    expect([added, joined]).toEqual([0, 0]);
+    const named = out.match(/Joining the vault on \S+\./g);
+    expect(named).toEqual(["Joining the vault on http://127.0.0.1:1.", `Joining the vault on ${SERVER}.`]);
+    // Only the first request walks the list; everything after goes to the server that answered.
+    expect(tried.filter((o) => o === "http://127.0.0.1:1")).toHaveLength(1);
+    expect(b.with((v) => loadSync(v, b.key))!.server).toBe(SERVER);
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
   });
 
   test("join schedules pulls", async () => {
@@ -865,18 +1084,22 @@ describe("pairing, joining and removing devices", () => {
     expect(b.with((v) => loadSync(v, b.key))).toBeNull();
   });
 
-  test("an answer sealed without the code's secret is refused before anyone is asked", async () => {
+  test("an answer sealed without the pairing's secret is refused before anyone is asked", async () => {
     const s = server();
     const a = await syncedDevice(s);
     const log = captureLog();
     try {
       const prompter = new ScriptedPrompter([]);
-      const adding = syncCommand(["add-device"], { fetch: s.fetch, context: a.context, interactive: true, prompter, now: tick(s), sleep: sleeper(s) });
-      let code: string | undefined;
-      for (let i = 0; i < 500 && !code; i += 1) {
-        await Bun.sleep(1);
-        code = log.text().match(/KS-[0-9A-Z-]{29}/)?.[0];
-      }
+      const adding = syncCommand(["add-device"], {
+        fetch: s.fetch,
+        context: a.context,
+        interactive: true,
+        prompter,
+        now: tick(s),
+        sleep: sleeper(s),
+        clipboard: () => false,
+      });
+      const value = await valueIn(log);
       // The server, which sees the slot's ID but not the secret, answers it itself.
       const forged = sealPairingAnswer(newPairingSecret(), {
         v: 1,
@@ -886,10 +1109,10 @@ describe("pairing, joining and removing devices", () => {
         name: "forged",
         platform: "Linux",
       });
-      await pairingClient(SERVER, s.fetch).answer(pairingIdOf(parsePairingCode(code!)!), forged);
+      await pairingClient(SERVER, s.fetch).answer(pairingIdOf(decoded(value).secret), forged);
       expect(await adding).toBe(1);
       expect(prompter.asked).toEqual([]);
-      expect(log.text()).toContain("without this code's secret");
+      expect(log.text()).toContain("without this pairing's secret");
     } finally {
       log.restore();
     }
@@ -1064,13 +1287,10 @@ describe("pairing, joining and removing devices", () => {
         prompter: new ScriptedPrompter(["yes"]),
         now: tick(s),
         sleep: sleeper(s),
+        clipboard: () => false,
       });
-      let code: string | undefined;
-      for (let i = 0; i < 500 && !code; i += 1) {
-        await Bun.sleep(1);
-        code = log.text().match(/KS-[0-9A-Z-]{29}/)?.[0];
-      }
-      const joining = syncCommand(["join", SERVER, code!], {
+      const value = await valueIn(log);
+      const joining = syncCommand(["join", value], {
         fetch: s.fetch,
         context: b.context,
         interactive: false,

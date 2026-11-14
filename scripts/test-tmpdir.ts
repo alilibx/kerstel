@@ -25,6 +25,10 @@ process.env.TMPDIR = runDir;
 // developer's machine; syncTimer() is inert unless a test hands it a fake `run`.
 process.env.KERSTEL_TEST_NO_SYNC_TIMER = "1";
 
+// Tests must never write to the developer's real clipboard; copyToClipboard() is
+// inert unless a test hands it a fake `run`.
+process.env.KERSTEL_TEST_NO_CLIPBOARD = "1";
+
 // Registered from a preload, afterAll runs once after every test file has
 // finished. `process.on("exit")` does not fire under `bun test`.
 afterAll(() => {
