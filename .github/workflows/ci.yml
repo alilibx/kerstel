@@ -52,6 +52,109 @@ jobs:
         env:
           KERSTEL_TEST_PEBBLE_DIRECTORY: https://localhost:14000/dir
 
+  # `ks sync setup` over real ssh against this runner: the wizard installs
+  # kerstel-server with Docker and as a systemd service, from an image and a
+  # release mirror built here for this checkout's version.
+  wizard-ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile
+      - name: Build the CLI, kerstel-server and its image
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version packages/cli/package.json)"
+          test "$(jq -r .version packages/server/package.json)" = "$version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          bun run --cwd packages/cli build
+          # As release.yml builds it.
+          bun build packages/server/src/index.ts --compile --no-compile-autoload-dotenv \
+            --define "KERSTEL_SERVER_VERSION=\"$version\"" \
+            --target=bun-linux-x64 --outfile dist/kerstel-server-linux-x64
+          test "$(dist/kerstel-server-linux-x64 --version)" = "$version"
+          # The installer finds this tag locally, so nothing is pulled.
+          context="$RUNNER_TEMP/image"
+          mkdir -p "$context/amd64" "$context/data"
+          cp dist/kerstel-server-linux-x64 "$context/amd64/kerstel-server"
+          cp packages/server/Dockerfile "$context/Dockerfile"
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t "ghcr.io/alilibx/kerstel-server:$version" "$context"
+          test "$(docker run --rm "ghcr.io/alilibx/kerstel-server:$version" --version)" = "$version"
+      - name: Serve a release mirror on 127.0.0.1
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/mirror/releases/download/v$VERSION"
+          mkdir -p "$dir"
+          cp dist/kerstel-server-linux-x64 packages/server/install/kerstel-server.sh "$dir/"
+          (cd "$dir" && sha256sum kerstel-server-linux-x64 kerstel-server.sh > SHA256SUMS)
+          nohup python3 -m http.server 18080 --bind 127.0.0.1 --directory "$RUNNER_TEMP/mirror" \
+            > "$RUNNER_TEMP/mirror.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -fsS -o /dev/null "http://127.0.0.1:18080/releases/download/v$VERSION/SHA256SUMS" && exit 0
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/mirror.log"
+          exit 1
+      - name: Start sshd on 127.0.0.1:2222 for this user
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/ssh"
+          mkdir -m 700 "$d"
+          if [ ! -x /usr/sbin/sshd ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q openssh-server
+          fi
+          ssh-keygen -q -t ed25519 -N '' -f "$d/host_key"
+          ssh-keygen -q -t ed25519 -N '' -f "$d/client_key"
+          cp "$d/client_key.pub" "$d/authorized_keys"
+          sudo mkdir -p /run/sshd
+          # No system config: only these settings. The key goes in its own
+          # file, so ~/.ssh is left alone. UsePAM accepts the runner user's
+          # key even though the account has no password.
+          sudo /usr/sbin/sshd -f /dev/null -E "$d/sshd.log" \
+            -o ListenAddress=127.0.0.1 -o Port=2222 -o HostKey="$d/host_key" -o PidFile="$d/sshd.pid" \
+            -o AuthorizedKeysFile="$d/authorized_keys" -o StrictModes=no -o UsePAM=yes \
+            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o AllowUsers="$(id -un)"
+          cat > "$d/config" <<EOF
+          Host kerstel-test
+            HostName 127.0.0.1
+            Port 2222
+            User $(id -un)
+            IdentityFile $d/client_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile $d/known_hosts
+            LogLevel ERROR
+          EOF
+          echo "KERSTEL_TEST_SSH_CONFIG=$d/config" >> "$GITHUB_ENV"
+          for _ in $(seq 1 50); do
+            ssh -F "$d/config" kerstel-test true && exit 0
+            sleep 0.2
+          done
+          sudo cat "$d/sshd.log"
+          exit 1
+      - name: Run the setup wizard over ssh
+        run: bun test packages/cli/test/sync-wizard-ssh.test.ts
+        env:
+          KERSTEL_TEST_SSH_HOST: kerstel-test
+          KERSTEL_RELEASES_URL: http://127.0.0.1:18080
+      - name: Show the logs
+        if: failure()
+        run: |
+          sudo cat "$RUNNER_TEMP/ssh/sshd.log" || true
+          cat "$RUNNER_TEMP/mirror.log" || true
+          docker logs kerstel-server || true
+          sudo journalctl -u kerstel-server --no-pager || true
+      - name: Stop sshd and the mirror
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/ssh/sshd.pid" ]; then sudo kill "$(cat "$RUNNER_TEMP/ssh/sshd.pid")" || true; fi
+          pkill -f 'http.server 18080' || true
+          docker image rm "ghcr.io/alilibx/kerstel-server:$VERSION" || true
+          rm -rf "$RUNNER_TEMP/ssh" "$RUNNER_TEMP/mirror" "$RUNNER_TEMP/image" "$RUNNER_TEMP/mirror.log"
+
   build:
     strategy:
       fail-fast: false
