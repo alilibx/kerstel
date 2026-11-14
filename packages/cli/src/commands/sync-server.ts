@@ -3,7 +3,6 @@ import type { CliContext } from "../context";
 import { openContext } from "../context";
 import { ClackPrompter } from "../init/prompts";
 import { dim, fail, info, ok, printable, yellow } from "../output";
-import { isSafeReleaseUrl } from "../update/release-source";
 import { isOlderRelease } from "../update/versions";
 import { vaultPath } from "../paths";
 import { glanceSync } from "../sync/background";
@@ -14,6 +13,7 @@ import { readInstallRecord, removeInstallRecord, writeInstallRecord, type Instal
 import { manualCommand } from "../sync/installer";
 import { PIN_NEEDS_HTTPS, SyncHttpError, syncClient, type Fetch } from "../sync/http";
 import { localHost, sshHost, type Host } from "../sync/remote";
+import { ANOTHER_DEVICES_SERVER, DOCKER_NOT_CHECKED, DOCKER_UNCHECKED, hostOfUrl, releasesUrl, warn } from "../sync/server-shared";
 import { SYNC_META, isSafeServerUrl, loadSync, normaliseServerUrl, saveSync, shownAddress, type SyncConfig } from "../sync/state";
 import { isHttps, parsePin } from "../../../server/src/pin";
 import { clientFor, isInteractive, lockedOpen, notOn, type SyncDeps } from "./sync";
@@ -52,14 +52,9 @@ const MANAGED_ELSEWHERE = () =>
 
 const DATABASE_QUESTION = "Also delete its database? Every device keeps its secrets, but syncing stops.";
 
-/** The installer's exit code when the host runs a server another device set up. */
-const ANOTHER_DEVICES_SERVER = 3;
-
 /** For the installer's exit 3: the host runs a server, but not the one this device set up. */
 const NOT_THIS_DEVICES = (where: string) =>
   `${where === "this machine" ? "This machine" : where} runs a Kerstel server that another device set up, not the one this device did. Nothing was changed there.`;
-
-const warn = (message: string) => console.log(yellow(`!  ${message}`));
 
 /** A label column wide enough for "Installed". */
 const row = (label: string, value: string) => `${label.padEnd(9)}  ${value}`;
@@ -137,13 +132,6 @@ function hostFor(deps: SyncServerDeps, route: "ssh" | "local", target: string | 
   return route === "ssh" ? sshHost(target!, write ? { write } : {}) : localHost(write ? { write } : {});
 }
 
-/** The release source the installer downloads from, when it is set, or a message when it can't be used. */
-function releasesUrl(): { url: string | null } | { error: string } {
-  const url = process.env.KERSTEL_RELEASES_URL || null;
-  if (url !== null && !isSafeReleaseUrl(url)) return { error: "KERSTEL_RELEASES_URL must be https://, or http:// to this machine." };
-  return { url };
-}
-
 /** Prints the command for a server installed by hand, to run there. */
 function printManual(what: string, args: string[], version: string): void {
   info(`Run this on the server. It ${what}:`);
@@ -180,7 +168,7 @@ async function show(deps: SyncServerDeps, open: () => Promise<CliContext>): Prom
     // Without this vault's pin, a pinned server can't be checked.
     console.log(row("Answers", dim(`not checked: sync is off on this device`)));
   } else {
-    const health = await healthWithin(config, deps);
+    const health = await healthWithin(config, deps, last);
     if ("version" in health) {
       console.log(row("Answers", servers.length > 1 ? `yes, at ${health.address}` : "yes"));
       console.log(row("Version", health.version));
@@ -199,8 +187,12 @@ async function show(deps: SyncServerDeps, open: () => Promise<CliContext>): Prom
   return 0;
 }
 
-/** The server's version through the first address that answers, or why none did. */
-async function healthOf(config: SyncConfig, deps: SyncServerDeps): Promise<{ address: string; version: string } | { error: string }> {
+/** The server's version through the first address that answers, `last` first, or why none did. */
+async function healthOf(
+  config: SyncConfig,
+  deps: SyncServerDeps,
+  last: string | null,
+): Promise<{ address: string; version: string } | { error: string }> {
   if (deps.health) {
     for (const url of config.servers) {
       const health = await deps.health(url);
@@ -208,7 +200,7 @@ async function healthOf(config: SyncConfig, deps: SyncServerDeps): Promise<{ add
     }
     return { error: "no address answered" };
   }
-  const client = clientFor(config, deps);
+  const client = clientFor(config, deps, last);
   try {
     const health = await client.health();
     return { address: client.address() ?? config.servers[0]!, version: printable(String(health.version)) };
@@ -224,6 +216,7 @@ export const SERVER_CHECK_MS = 3_000;
 async function healthWithin(
   config: SyncConfig,
   deps: SyncServerDeps,
+  last: string | null,
   timeoutMs: number = SERVER_CHECK_MS,
 ): Promise<{ address: string; version: string } | { error: string }> {
   // One deadline for every request, the pinned certificate fetch included, so
@@ -237,7 +230,7 @@ async function healthWithin(
     timer = setTimeout(() => resolve({ error: `no answer within ${timeoutMs / 1000} seconds` }), timeoutMs);
   });
   try {
-    return await Promise.race([healthOf(config, { ...deps, fetch: timed }), late]);
+    return await Promise.race([healthOf(config, { ...deps, fetch: timed }, last), late]);
   } catch (error) {
     return { error: (error as Error).message };
   } finally {
@@ -247,11 +240,17 @@ async function healthWithin(
 
 /**
  * The version the server answers with, through this vault's addresses and
- * pin, or null when none answers within `timeoutMs`. Never throws: an
- * offline server is never an error where this is asked.
+ * pin, `last` (the address that answered the last sync) first, or null when
+ * none answers within `timeoutMs`. Never throws: an offline server is never
+ * an error where this is asked.
  */
-export async function serverVersion(config: SyncConfig, deps: SyncServerDeps = {}, timeoutMs: number = SERVER_CHECK_MS): Promise<string | null> {
-  const health = await healthWithin(config, deps, timeoutMs);
+export async function serverVersion(
+  config: SyncConfig,
+  deps: SyncServerDeps = {},
+  timeoutMs: number = SERVER_CHECK_MS,
+  last: string | null = null,
+): Promise<string | null> {
+  const health = await healthWithin(config, deps, last, timeoutMs);
   return "version" in health ? health.version : null;
 }
 
@@ -265,10 +264,12 @@ export async function serverBehind(version: string, deps: SyncServerDeps = {}): 
   // Read-only, so a device with sync off never opens its vault for this.
   if (record === null || !glanceSync(vaultPath()).on) return null;
   let config: SyncConfig | null;
+  let last: string | null;
   try {
     const ctx = await (deps.context ?? (() => openContext({ warnFileKey: false })))();
     try {
       config = loadSync(ctx.vault, ctx.dataKey);
+      last = ctx.vault.getMeta(SYNC_META.lastAddress);
     } finally {
       ctx.vault.close();
     }
@@ -276,7 +277,7 @@ export async function serverBehind(version: string, deps: SyncServerDeps = {}): 
     return null;
   }
   if (config === null) return null;
-  const running = await serverVersion(config, deps);
+  const running = await serverVersion(config, deps, SERVER_CHECK_MS, last);
   if (running === null || !isOlderRelease(running, version)) return null;
   return { place: serverPlace(record), version: running };
 }
@@ -299,6 +300,10 @@ async function update(record: InstallRecord, deps: SyncServerDeps): Promise<numb
   const run = await hostFor(deps, record.route, record.host).run(args, { interactive: true });
   if (run.code === ANOTHER_DEVICES_SERVER) {
     fail(NOT_THIS_DEVICES(where));
+    return 1;
+  }
+  if (run.code === DOCKER_UNCHECKED) {
+    fail(DOCKER_NOT_CHECKED(where, `run ${cliName()} sync server update again`));
     return 1;
   }
   if (run.code !== 0) {
@@ -325,6 +330,10 @@ async function stop(record: InstallRecord, deps: SyncServerDeps): Promise<number
   const run = await hostFor(deps, record.route, record.host).run(["stop", "--install-id", record.installId], { interactive: true });
   if (run.code === ANOTHER_DEVICES_SERVER) {
     fail(NOT_THIS_DEVICES(where));
+    return 1;
+  }
+  if (run.code === DOCKER_UNCHECKED) {
+    fail(DOCKER_NOT_CHECKED(where, `run ${cliName()} sync server stop again`));
     return 1;
   }
   if (run.code !== 0) {
@@ -401,6 +410,10 @@ async function remove(record: InstallRecord, deps: SyncServerDeps): Promise<numb
     fail(NOT_THIS_DEVICES(where!));
     return 1;
   }
+  if (run.code === DOCKER_UNCHECKED) {
+    fail(DOCKER_NOT_CHECKED(where!, `run ${cliName()} sync server remove again`));
+    return 1;
+  }
   if (run.code !== 0) {
     fail(`The server on ${where} was not removed. Fix what the installer said above, then run ${cliName()} sync server remove again.`);
     return 1;
@@ -430,6 +443,11 @@ export async function removeServerKeepingData(record: InstallRecord, deps: SyncS
   const run = await hostFor(deps, record.route, record.host).run(["remove", "--install-id", record.installId], { interactive: true });
   if (run.code === ANOTHER_DEVICES_SERVER) {
     fail(NOT_THIS_DEVICES(where));
+    return false;
+  }
+  if (run.code === DOCKER_UNCHECKED) {
+    // The record goes with Kerstel: the caller names manage, so another device can remove it.
+    fail(DOCKER_NOT_CHECKED(where, "remove it from another device"));
     return false;
   }
   if (run.code !== 0) {
@@ -466,7 +484,7 @@ async function knowsThisDevice(config: SyncConfig, servers: string[], deps: Sync
   try {
     const { devices } = await client.devices();
     if (devices.some((d) => d.id === config.deviceId)) return null;
-    return `${servers[0]} answered, but it does not know this vault.`;
+    return `${client.address() ?? servers[0]!} answered, but it does not know this vault.`;
   } catch (error) {
     return notThisVault(error, client.address() ?? servers[0]!);
   }
@@ -571,10 +589,6 @@ export function hidingReport(write: (text: string) => void): (text: string) => v
   };
 }
 
-function hostOfUrl(url: string): string {
-  return new URL(url).hostname.replace(/^\[(.*)\]$/, "$1").toLowerCase();
-}
-
 /** The names and addresses the host answers to, as `detect` reports them. */
 function namesOf(facts: HostFacts): Set<string> {
   const names = new Set<string>(facts.ipv4);
@@ -662,15 +676,20 @@ async function manage(target: string, deps: SyncServerDeps, open: () => Promise<
   const host = hostFor(deps, "ssh", target, hidingReport((text) => void process.stderr.write(text)));
   const run = await host.run(["info"], { interactive: true });
   const found = parseInfo(run.lines);
-  if (run.code !== 0 || found.facts.installed === null) {
-    if (found.facts.installed === null && found.facts.os !== "") fail(`No Kerstel server is installed on ${target}. Nothing was saved.`);
+  const runtime = found.facts.installed;
+  if (run.code !== 0 || runtime === null || runtime === "unknown") {
+    if (run.code === DOCKER_UNCHECKED || runtime === "unknown") {
+      fail(
+        `Couldn't check Docker on ${target} for a Kerstel server. Check that Docker runs there and that sudo works, then run this again. Nothing was saved.`,
+      );
+    } else if (runtime === null && found.facts.os !== "") fail(`No Kerstel server is installed on ${target}. Nothing was saved.`);
     else if (run.code === ANOTHER_DEVICES_SERVER) {
       fail(`The Kerstel server on ${target} was set up by another user there, or started by hand, so it can't be managed as this user. Nothing was saved.`);
     }
     else fail(`Could not read the server on ${target}. Check that ssh ${target} works, then run this again. Nothing was saved.`);
     return 1;
   }
-  info(`Found kerstel-server ${found.version ?? "(version unknown)"} on ${target}, ${found.facts.installed}, ${found.running ? "running" : "stopped"}.`);
+  info(`Found kerstel-server ${found.version ?? "(version unknown)"} on ${target}, ${runtime}, ${found.running ? "running" : "stopped"}.`);
   // Without an ID, update, stop and remove can't tell it is the same server.
   const installId = found.facts.installId;
   if (installId === null) {
@@ -717,7 +736,7 @@ async function manage(target: string, deps: SyncServerDeps, open: () => Promise<
     installId,
     route: "ssh",
     host: target,
-    runtime: found.facts.installed,
+    runtime,
     reach,
     addresses: config.servers,
     version: found.version ?? "",

@@ -100,9 +100,7 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
   const pin = pinText === null ? null : parsePin(pinText);
   // Never read as unpinned: that would drop the pin's protection without a word.
   if (pinText !== null && pin === null) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is not a pin)`);
-  const server = need(SYNC_META.server);
-  if (pin && !isHttps(server)) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is set for an http:// server)`);
-  const servers = readServers(server, get(SYNC_META.servers));
+  const servers = readServers(need(SYNC_META.server), get(SYNC_META.servers));
   if (pin && !servers.every(isHttps)) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is set for an http:// server)`);
   return {
     servers,
@@ -120,19 +118,27 @@ export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
 }
 
 /**
- * The addresses in `sync_servers`, or `[server]` for a vault without the row.
- * A row that does not start with `server` was left by an older Kerstel, which
- * knows only `sync_server`: its `sync off` keeps the row and its `setup`
- * writes `sync_server` alone. It names another server, so it is not used.
+ * The addresses in `sync_servers` (`row`), or `[server]` for a vault without
+ * the row. A row that does not start with `server` was left by an older
+ * Kerstel, which knows only `sync_server`: its `sync off` keeps the row and
+ * its `setup` writes `sync_server` alone. It names another server, so it is
+ * not used. Checks nothing else, and never throws.
  */
-function readServers(server: string, row: string | null): string[] {
-  if (row === null) return [server];
-  const servers = row.split("\n");
-  if (servers.some((url) => url === "")) throw new SyncSettingsError(`damaged (${SYNC_META.servers} is empty)`);
-  if (!servers.every(isSafeServerUrl)) {
-    throw new SyncSettingsError(`damaged (${SYNC_META.servers} names a server Kerstel will not send your vault to)`);
-  }
+export function serversOf(server: string, row: string | null): string[] {
+  const servers = row === null ? [] : row.split("\n");
   return servers[0] === server ? servers : [server];
+}
+
+/** `serversOf`, refusing a row that is empty or names an unsafe server. */
+function readServers(server: string, row: string | null): string[] {
+  if (row !== null) {
+    const servers = row.split("\n");
+    if (servers.some((url) => url === "")) throw new SyncSettingsError(`damaged (${SYNC_META.servers} is empty)`);
+    if (!servers.every(isSafeServerUrl)) {
+      throw new SyncSettingsError(`damaged (${SYNC_META.servers} names a server Kerstel will not send your vault to)`);
+    }
+  }
+  return serversOf(server, row);
 }
 
 /**
@@ -141,6 +147,15 @@ function readServers(server: string, row: string | null): string[] {
  */
 export function shownAddress(servers: string[], last: string | null): string {
   return last !== null && servers.includes(last) ? last : servers[0]!;
+}
+
+/**
+ * The order a client tries `servers` in: the one that answered last first,
+ * while it is still one of them, then the rest in their saved order.
+ */
+export function triedOrder(servers: string[], last: string | null): string[] {
+  if (last === null || !servers.includes(last)) return servers;
+  return [last, ...servers.filter((url) => url !== last)];
 }
 
 /**

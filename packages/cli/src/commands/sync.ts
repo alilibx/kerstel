@@ -34,7 +34,7 @@ import {
   type SyncReport,
 } from "../sync/engine";
 import { leaveSyncNotice, syncLockPath, tryLockSync, waitForSyncLock } from "../sync/background";
-import { PIN_NEEDS_HTTPS, SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
+import { PIN_NEEDS_HTTPS, SyncHttpError, pairingClient, syncClient, type Fetch, type SyncClient } from "../sync/http";
 import { encodeJoinValue, parseJoinInput } from "../sync/join-value";
 import { copyToClipboard } from "../clipboard";
 import {
@@ -49,6 +49,7 @@ import {
   shownAddress,
   SYNC_META,
   SyncSettingsError,
+  triedOrder,
   writeSync,
   type SyncConfig,
 } from "../sync/state";
@@ -366,7 +367,7 @@ export async function enableSync(
   o: { servers: string[]; pin: Buffer | null; token: string | null; yes: boolean; deps: SyncDeps },
 ): Promise<number> {
   const { servers, pin, yes, deps } = o;
-  const server = servers[0]!;
+  let client: SyncClient | null = null;
   try {
     if (loadSync(ctx.vault, ctx.dataKey)) {
       fail(`Sync is already on for this vault. Run ${cliName()} sync status to see where.`);
@@ -403,7 +404,7 @@ export async function enableSync(
     const deviceId = newId();
     const keys = generateDeviceKeys();
     const syncKey = generateSyncKey();
-    const client = syncClient({ servers, vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
+    client = syncClient({ servers, vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
     await client.createVault(
       {
         vaultId,
@@ -432,7 +433,8 @@ export async function enableSync(
     schedule(ctx.vault, deps);
     return 0;
   } catch (error) {
-    fail(`Sync setup failed: ${explainBeforeSync(error, server)}`);
+    // The address that answered, or failed with a pin mismatch: not always the first.
+    fail(`Sync setup failed: ${explainBeforeSync(error, client?.address() ?? servers[0]!)}`);
     if (!pin && isUnpinnedSelfSigned(error)) {
       info("If this server pins its own certificate, pass --pin with the pin kerstel-server printed (sha256/…).");
     }
@@ -442,10 +444,13 @@ export async function enableSync(
   }
 }
 
-/** A signed client for this device's vault. */
-export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "now"> = {}) {
+/**
+ * A signed client for this device's vault. It tries `last`, the address that
+ * answered the last sync, first, while it is still one of the server's.
+ */
+export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "now"> = {}, last: string | null = null) {
   return syncClient({
-    servers: config.servers,
+    servers: triedOrder(config.servers, last),
     vaultId: config.vaultId,
     deviceId: config.deviceId,
     sign: config.keys.sign,
@@ -458,7 +463,7 @@ export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "no
 function contextFor(ctx: CliContext, deps: SyncDeps): SyncContext | null {
   const config = loadSync(ctx.vault, ctx.dataKey);
   if (!config) return null;
-  return { vault: ctx.vault, dataKey: ctx.dataKey, config, client: clientFor(config, deps) };
+  return { vault: ctx.vault, dataKey: ctx.dataKey, config, client: clientFor(config, deps, ctx.vault.getMeta(SYNC_META.lastAddress)) };
 }
 
 export const notOn = () =>

@@ -12,7 +12,7 @@ import type { Fetch } from "../src/sync/http";
 import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
 import { manualCommand } from "../src/sync/installer";
 import type { Host, InstallerRun } from "../src/sync/remote";
-import { loadSync } from "../src/sync/state";
+import { loadSync, saveSync } from "../src/sync/state";
 import type { SyncTimer } from "../src/sync/timer";
 import { cliName } from "../src/ui/cli-name";
 import { VERSION } from "../src/version";
@@ -431,6 +431,24 @@ describe("another device's server on the recorded host", () => {
   });
 });
 
+describe("Docker that could not be checked on the recorded host", () => {
+  test("update, stop and remove say so, change nothing, and keep the record", async () => {
+    const d = device();
+    writeInstallRecord(record());
+    const unchecked: InstallerRun = { code: 4, lines: [], value: null };
+    const host = fakeHost({ update: unchecked, stop: unchecked, remove: unchecked });
+    for (const [args, answers] of [[["update"], []], [["stop"], []], [["remove"], ["yes", "keep"]]] as const) {
+      const run = await server(d, [...args], { hostFor: host.hostFor, answers: [...answers] });
+      expect({ args, code: run.code }).toEqual({ args, code: 1 });
+      expect(run.out).toContain(
+        `Could not check Docker on ali@homebox for a Kerstel server, so nothing was changed there. Check that Docker runs there and that sudo works, then run ${CLI} sync server ${args[0]} again.`,
+      );
+      expect(run.out).not.toContain("Removed the server");
+      expect(readInstallRecord()).toEqual(record());
+    }
+  });
+});
+
 describe("a server installed by hand", () => {
   test("manual installs print the line to run", async () => {
     const d = device();
@@ -721,6 +739,38 @@ describe("ks sync server manage", () => {
     const { code, out } = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor });
     expect(code).toBe(1);
     expect(out).toContain("No Kerstel server is installed on ali@homebox");
+    expect(readInstallRecord()).toBeNull();
+  });
+
+  test("a host whose Docker could not be checked is not called empty", async () => {
+    const d = device();
+    const l = listener();
+    await pinnedSync(d, l);
+    const lines = infoLines({ pin: formatPin(l.pin) }).filter((x) => !/^(installed|install-id|version|pin|running)=/.test(x));
+    const host = fakeHost({ info: { code: 4, lines: [...lines, "installed=unknown"], value: null } });
+    const { code, out } = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor });
+    expect(code).toBe(1);
+    expect(out).toContain(
+      "Couldn't check Docker on ali@homebox for a Kerstel server. Check that Docker runs there and that sudo works, then run this again. Nothing was saved.",
+    );
+    expect(out).not.toContain("No Kerstel server is installed");
+    expect(readInstallRecord()).toBeNull();
+  });
+
+  test("a server that answers without this device names the address that answered", async () => {
+    const d = device();
+    const s = plainServer();
+    await plainSync(d, s.fetch, "https://sync.example.com");
+    d.with((v) => saveSync(v, d.key, { ...loadSync(v, d.key)!, servers: ["https://sync.example.com", "https://sync2.example.com"] }));
+    const host = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.5"] }), value: null } });
+    // The first address can't be reached; the second answers, but does not list this device.
+    const fetch: Fetch = async (request) => {
+      if (new URL(request.url).hostname === "sync.example.com") throw new Error("connection refused");
+      return Response.json({ devices: [] });
+    };
+    const { code, out } = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor, fetch, resolveAll: async () => ["10.0.0.5"] });
+    expect(code).toBe(1);
+    expect(out).toContain("https://sync2.example.com answered, but it does not know this vault. Nothing was saved.");
     expect(readInstallRecord()).toBeNull();
   });
 

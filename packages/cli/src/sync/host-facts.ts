@@ -10,7 +10,8 @@ export interface HostFacts {
   tailscale: string | null;
   hostname: string;
   ipv4: string[];
-  installed: "docker" | "service" | null;
+  /** `unknown`: Docker is there but could not be checked, so a server may run in it. */
+  installed: "docker" | "service" | "unknown" | null;
   installId: string | null;
 }
 
@@ -56,7 +57,7 @@ export function parseHostFacts(lines: string[]): HostFacts {
         if (value) facts.ipv4.push(value);
         break;
       case "installed":
-        facts.installed = value === "docker" || value === "service" ? value : null;
+        facts.installed = value === "docker" || value === "service" || value === "unknown" ? value : null;
         break;
       case "install-id":
         facts.installId = value || null;

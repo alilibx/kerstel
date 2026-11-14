@@ -32,7 +32,8 @@
 #
 # Progress goes to stderr, each line starting with "kerstel-server.sh: ".
 # What a command reports (detect, info, the server value) goes to stdout.
-# Exit codes: 0 done, 1 failed, 2 usage, 3 another device's server is here.
+# Exit codes: 0 done, 1 failed, 2 usage, 3 another device's server is here,
+# 4 Docker could not be checked, so whether a server is here is unknown.
 set -eu
 umask 077
 
@@ -68,6 +69,7 @@ ARCH=""
 FOUND_RUNTIME=""
 FOUND_ID=""
 NAMED_CONTAINER=""
+DOCKER_UNCHECKED=""
 EXPECT_ID=""
 VERSION=""
 INSTALL_ID=""
@@ -102,10 +104,18 @@ another_devices() {
   exit 3
 }
 
+# Exits 4: Docker is installed but could not be checked, so a server may
+# run in it. Nothing was changed, and the message says so.
+docker_unchecked() {
+  LEFT=""
+  say "could not check Docker for a Kerstel server, so nothing was changed."
+  exit 4
+}
+
 on_exit() {
   code=$?
   if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
-  if [ "$code" -ne 0 ]; then say "$LEFT"; fi
+  if [ "$code" -ne 0 ] && [ -n "$LEFT" ]; then say "$LEFT"; fi
 }
 
 # matches <ERE> <text>: the whole text is one line, and it matches.
@@ -186,13 +196,21 @@ host_name() {
   printf '%s\n' "${name%.local}"
 }
 
-# One IPv4 address per line, without loopback.
+# Interfaces only this host reaches: loopback, and the bridges and tunnels of
+# Docker, libvirt, Tailscale, Kubernetes networking and macOS.
+VIRTUAL_IF='^(lo|docker|br-|veth|virbr|tailscale|cni|flannel|cali|vxlan|utun|bridge)'
+
+# One IPv4 address per line, without loopback or virtual interfaces.
 ipv4s() {
   if command -v ip >/dev/null 2>&1; then
+    # "2: eth0    inet 192.168.1.20/24 …": the interface is the second field.
     ip -4 -o addr show 2>/dev/null |
-      awk '{ for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), a, "/"); print a[1] } }'
+      awk -v skip="$VIRTUAL_IF" '$2 !~ skip { for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), a, "/"); print a[1] } }'
   elif command -v ifconfig >/dev/null 2>&1; then
-    ifconfig 2>/dev/null | awk '$1 == "inet" { sub(/^addr:/, "", $2); print $2 }'
+    # Each interface starts a line ("en0: flags=…", "eth0   Link encap…"); its addresses follow, indented.
+    ifconfig 2>/dev/null | awk -v skip="$VIRTUAL_IF" '
+      /^[^ \t]/ { name = $1; sub(/:$/, "", name) }
+      $1 == "inet" && name !~ skip { sub(/^addr:/, "", $2); print $2 }'
   fi | grep -v '^127\.' || true
 }
 
@@ -237,7 +255,8 @@ docker_access() {
   return 1
 }
 
-# The same without ever asking for a password.
+# The same without ever asking for a password. Returns 2 when sudo would ask
+# for one: a run that may ask can still check.
 docker_access_quiet() {
   case "$DOCKER_SUDO" in
     no | yes) return 0 ;;
@@ -247,9 +266,12 @@ docker_access_quiet() {
     DOCKER_SUDO="no"
     return 0
   fi
-  if ! is_root && command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
-    DOCKER_SUDO="yes"
-    return 0
+  if ! is_root && command -v sudo >/dev/null 2>&1; then
+    if sudo -n docker info >/dev/null 2>&1; then
+      DOCKER_SUDO="yes"
+      return 0
+    fi
+    if ! sudo -n true >/dev/null 2>&1; then return 2; fi
   fi
   return 1
 }
@@ -631,16 +653,18 @@ tailscale_unserve() {
 # What is installed
 
 # Sets FOUND_RUNTIME (docker, service or empty), FOUND_ID and NAMED_CONTAINER
-# (yes when the container kerstel-server exists).
+# (yes when the container kerstel-server exists). DOCKER_UNCHECKED is yes when
+# Docker is installed but could not be checked, so a server may run in it.
 # With "ask" it may use sudo to reach Docker, after saying why; with "quiet"
-# it never asks. A unit or plist without this user's install-id file is a
-# service another user set up, and a server started by hand from the image is
-# someone else's too: each counts as installed, with no ID, so nothing here
-# touches it.
+# it never asks, and Docker that needs a sudo password is left unseen. A unit
+# or plist without this user's install-id file is a service another user set
+# up, and a server started by hand from the image is someone else's too: each
+# counts as installed, with no ID, so nothing here touches it.
 find_install() {
   FOUND_RUNTIME=""
   FOUND_ID=""
   NAMED_CONTAINER=""
+  DOCKER_UNCHECKED=""
   if [ -f "$KH/install-id" ]; then
     FOUND_RUNTIME="service"
     FOUND_ID="$(cat "$KH/install-id")"
@@ -655,17 +679,23 @@ find_install() {
       ;;
   esac
   command -v docker >/dev/null 2>&1 || return 0
+  checked=0
   if [ "$1" = ask ]; then
-    checked=0
     docker_access "Checking for a Kerstel server in Docker" || checked=1
   else
-    checked=0
-    docker_access_quiet || checked=1
+    docker_access_quiet || checked=$?
   fi
-  if [ "$checked" != 0 ]; then
-    say "could not check Docker for a Kerstel server."
-    return 0
-  fi
+  case "$checked" in
+    0) ;;
+    2)
+      say "could not check Docker for a Kerstel server without a sudo password."
+      return 0
+      ;;
+    *)
+      DOCKER_UNCHECKED="yes"
+      return 0
+      ;;
+  esac
   if found="$(dk container inspect --format "{{index .Config.Labels \"$LABEL.install-id\"}}" "$CONTAINER" 2>/dev/null)"; then
     FOUND_RUNTIME="docker"
     NAMED_CONTAINER="yes"
@@ -695,6 +725,8 @@ detect_lines() {
   if [ -n "$FOUND_RUNTIME" ]; then
     printf 'installed=%s\n' "$FOUND_RUNTIME"
     if [ -n "$FOUND_ID" ]; then printf 'install-id=%s\n' "$FOUND_ID"; fi
+  elif [ -n "$DOCKER_UNCHECKED" ]; then
+    echo "installed=unknown"
   else
     echo "installed=no"
   fi
@@ -702,7 +734,10 @@ detect_lines() {
 
 # Uses FOUND_RUNTIME and FOUND_ID from find_install.
 check_owner() {
-  if [ -z "$FOUND_RUNTIME" ]; then return 0; fi
+  if [ -z "$FOUND_RUNTIME" ]; then
+    if [ -n "$DOCKER_UNCHECKED" ]; then docker_unchecked; fi
+    return 0
+  fi
   if [ "$FOUND_ID" != "$INSTALL_ID" ]; then another_devices; fi
   if [ "$FOUND_RUNTIME" != "$RUNTIME" ]; then
     die "This host already runs the server this device set up, with $FOUND_RUNTIME. Remove it first to run it with $RUNTIME."
@@ -724,7 +759,10 @@ expect_id() {
 }
 
 require_install() {
-  if [ -z "$FOUND_RUNTIME" ]; then die "No Kerstel server is installed on this host."; fi
+  if [ -z "$FOUND_RUNTIME" ]; then
+    if [ -n "$DOCKER_UNCHECKED" ]; then docker_unchecked; fi
+    die "No Kerstel server is installed on this host."
+  fi
   require_own_install
   RUNTIME="$FOUND_RUNTIME"
   INSTALL_ID="$FOUND_ID"
@@ -883,6 +921,7 @@ check_releases_url() {
 cmd_detect() {
   if [ $# -gt 0 ]; then usage_error "detect takes no options."; fi
   find_install quiet
+  if [ -n "$DOCKER_UNCHECKED" ]; then say "could not check Docker for a Kerstel server."; fi
   detect_lines
 }
 
@@ -1126,6 +1165,7 @@ cmd_remove() {
     docker) remove_docker ;;
     service) remove_service ;;
     *)
+      if [ -n "$DOCKER_UNCHECKED" ]; then docker_unchecked; fi
       say "No Kerstel server is installed on this host."
       if [ "$DELETE_DATA" = yes ]; then delete_leftover_data; fi
       ;;

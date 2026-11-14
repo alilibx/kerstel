@@ -99,6 +99,11 @@ describe("parseHostFacts", () => {
     expect(facts.ipv4).toEqual([]);
   });
 
+  test("Docker that could not be checked is unknown", () => {
+    expect(parseHostFacts(["installed=unknown"]).installed).toBe("unknown");
+    expect(parseHostFacts(["installed=maybe"]).installed).toBeNull();
+  });
+
   test("an installed server without an id", () => {
     const facts = parseHostFacts(["installed=docker"]);
     expect(facts.installed).toBe("docker");

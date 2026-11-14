@@ -710,6 +710,20 @@ describe("the sync server this device installed", () => {
     expect(existsSync(home)).toBe(false);
   });
 
+  test("Docker that could not be checked there leaves the server, and says so", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost(4);
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "yes"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    const out = output.join("\n");
+    expect(out).toContain(
+      "Could not check Docker on ali@homebox for a Kerstel server, so nothing was changed there. Check that Docker runs there and that sudo works, then remove it from another device.",
+    );
+    expect(out).not.toContain("Removed the server");
+    expect(out).toContain(MANAGE);
+  });
+
   test("no record, no question", async () => {
     await setup();
     const prompter = new ScriptedPrompter(["yes"]);

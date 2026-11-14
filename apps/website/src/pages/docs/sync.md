@@ -44,11 +44,11 @@ Then it asks how your other devices will reach the server:
 
 | Choice | What it means |
 |---|---|
-| Its own certificate, pinned by your devices | No domain needed. The server listens on 8787. See [Its own certificate, pinned](#its-own-certificate-pinned). |
+| Its own certificate, pinned by your devices | No domain needed. The server listens on 8787, or on the port your addresses name. See [Its own certificate, pinned](#its-own-certificate-pinned). |
 | My domain, with a Let's Encrypt certificate | The server listens on 443 and answers the challenge on 80. Kerstel warns when the domain does not point at the host yet. See [Your domain, with Let's Encrypt](#your-domain-with-lets-encrypt). |
 | Tailscale | Offered when the host runs Tailscale. On a command you run yourself, it is always offered. Every device that syncs must be on your tailnet. See [Tailscale](#tailscale). |
 
-For a pinned server, it asks for the address your devices use. It starts from what it found. A host with a public IPv4 address (a VPS) gets `https://<public-ip>:8787`. A host that reports only private addresses, when your `ssh` reaches it at a public one, is a VPS behind its provider's NAT: it gets the name or IP that `ssh` connects to. A home box gets its `.local` name first, `https://<hostname>.local:8787`, when this device resolves that name, and then its LAN addresses. Docker's and Tailscale's own addresses are left out, since other devices on your LAN can't reach them. You can edit the answer. Give up to four addresses, separated by commas. A device uses the first one that answers, and `kerstel sync status` shows which one answered last.
+For a pinned server, it asks for the address your devices use. It starts from what it found. A host with a public IPv4 address (a VPS) gets `https://<public-ip>:8787`. A host that reports only private addresses, when your `ssh` reaches it at a public one, is a VPS behind its provider's NAT: it gets the name or IP that `ssh` connects to. A home box gets its `.local` name first, `https://<hostname>.local:8787`, when this device resolves that name, and then its LAN addresses. Addresses on Docker, Tailscale and other virtual interfaces are left out, since other devices on your LAN can't reach them. You can edit the answer. Give up to four addresses, separated by commas. To use another port, add it to each address, such as `192.168.1.20:9443`. Every address needs the same port. A device tries the address that answered last first, then the others in order. `kerstel sync status` shows which one answered last.
 
 The installer says the server is running only once it answers on the host, or, with a domain, once it runs. Kerstel then turns sync on for this device and uploads the vault. The server restarts on reboot.
 
@@ -73,6 +73,8 @@ On a terminal, `--server-value -` asks for the value at a hidden prompt instead 
 Every step on the host checks what already exists, so run `kerstel sync setup` again and it continues where it stopped. On the host this device set up a server on, a new run continues with that server, even after `kerstel sync off`. If this device has a server on another host, finished or not, a new run asks before setting up another, and the default is no. If sync is already on, `kerstel sync setup` says so and points at `kerstel sync server` and `kerstel sync add-device`.
 
 If the host already runs a Kerstel server that another device set up, Kerstel stops and says to run `kerstel sync add-device` on that device. A server you started yourself from the image counts too, and so does a `kerstel-server` volume the installer did not make, so Kerstel never starts a second server beside it. This device keeps its record of the server it set up before.
+
+If Kerstel can't check Docker on the host for a server, it stops and changes nothing. This happens when Docker does not answer, or `sudo` fails. Fix that on the host, then run `kerstel sync setup` again.
 
 ### What the install changes on the host
 
@@ -108,7 +110,7 @@ The device that set up the server keeps a record of it in `~/.kerstel/sync-serve
 
 For a server you installed with a pasted command, these print the matching command to run on the server.
 
-`update`, `stop` and `remove` pass the server's install ID to the installer. If the host now runs a server that another device set up, they change nothing there and say so. `manage` asks before it replaces this device's record of a server on another host, and the default is no. It refuses while this device is still setting up a server elsewhere: finish it with `kerstel sync setup`, or run `kerstel sync server remove`. It also refuses a server you started by hand, such as with `docker run`, since that server has no install ID to check.
+`update`, `stop` and `remove` pass the server's install ID to the installer. If the host now runs a server that another device set up, they change nothing there and say so. They also change nothing when Docker on the host can't be checked, and this device keeps its record. `manage` says so too. `manage` asks before it replaces this device's record of a server on another host, and the default is no. It refuses while this device is still setting up a server elsewhere: finish it with `kerstel sync setup`, or run `kerstel sync server remove`. It also refuses a server you started by hand, such as with `docker run`, since that server has no install ID to check.
 
 `kerstel update` checks the server after it installs a new Kerstel. If the server is older, it says so and asks whether to update it now. If that server update fails, `kerstel update` still succeeds, since Kerstel itself was updated, and says to run `kerstel sync server update`. Without a terminal, or with `--check`, it only says so. `kerstel doctor` warns about a server that is behind. `kerstel uninstall` on the device that set up the server asks whether to remove it too, and the default is no, since other devices may still use it. `kerstel sync off` and `kerstel uninstall` name `kerstel sync server manage` when they leave the server running, so another device can look after it.
 

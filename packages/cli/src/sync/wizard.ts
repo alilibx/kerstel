@@ -2,8 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { CliContext } from "../context";
 import { enableSync, serverValueTarget, type SyncDeps } from "../commands/sync";
 import { CancelledError, ClackPrompter, type Choice, DefaultsPrompter, type Prompter } from "../init/prompts";
-import { fail, info, ok, yellow } from "../output";
-import { isSafeReleaseUrl } from "../update/release-source";
+import { fail, info, ok } from "../output";
 import { cliName } from "../ui/cli-name";
 import { VERSION } from "../version";
 import { serverPlace } from "../commands/sync-server";
@@ -21,6 +20,7 @@ import {
 import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "./install-record";
 import { installerReleaseUrl, manualCommand } from "./installer";
 import { localHost, sshHost, sshHostname, type Host } from "./remote";
+import { ANOTHER_DEVICES_SERVER, DOCKER_NOT_CHECKED, DOCKER_UNCHECKED, hostOfUrl, releasesUrl, warn } from "./server-shared";
 import { isSafeServerUrl, loadSync, normaliseServerUrl } from "./state";
 
 /**
@@ -68,21 +68,16 @@ interface Target {
   token: string | null;
 }
 
-/** The port a pinned or Tailscale server listens on. A domain uses 443. */
+/** The port a pinned or Tailscale server listens on, unless the addresses name another. A domain uses 443. */
 const PORT = 8787;
 
 /** `https://…`, `http://…`: a URL rather than a bare name. */
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 
-/** The installer's exit code when the host runs a server another device set up. */
-const ANOTHER_DEVICES_SERVER = 3;
-
 const STOPPED = () => `The install stopped. Run ${cliName()} sync setup again to continue.`;
 
 const SOMEONE_ELSES = (label: string) =>
   `${capitalised(label)} already runs a Kerstel server. If another device syncs with it, run ${cliName()} sync add-device there instead.`;
-
-const warn = (message: string) => console.log(yellow(`!  ${message}`));
 
 export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<number> {
   // `enableSync` closes the vault once it has it.
@@ -122,9 +117,9 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
     }
 
     const version = deps.version ?? VERSION;
-    const releasesUrl = process.env.KERSTEL_RELEASES_URL || null;
-    if (releasesUrl !== null && !isSafeReleaseUrl(releasesUrl)) {
-      fail("KERSTEL_RELEASES_URL must be https://, or http:// to this machine.");
+    const releases = releasesUrl();
+    if ("error" in releases) {
+      fail(releases.error);
       return 1;
     }
     // The installer fetches this version's image or binary: a build with no release has none.
@@ -147,7 +142,7 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
       installing = true;
       info("Run this on the server. It installs kerstel-server, then prints a server value:");
       console.log("");
-      console.log(manualCommand({ version, args: installArgs(plan, version, releasesUrl) }));
+      console.log(manualCommand({ version, args: installArgs(plan, version, releases.url) }));
       console.log("");
       const pasted = await pastedValue(prompter);
       if (pasted === null) {
@@ -194,12 +189,13 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
       record = { ...plan, route, host: sshTarget, version, finished: false };
       writeInstallRecord(record);
       installing = true;
-      const run = await host.run(installArgs(plan, version, releasesUrl), { interactive: true });
-      if (run.code === ANOTHER_DEVICES_SERVER) {
-        // Nothing of this device's is on the host: keep what this device knew before.
+      const run = await host.run(installArgs(plan, version, releases.url), { interactive: true });
+      if (run.code === ANOTHER_DEVICES_SERVER || run.code === DOCKER_UNCHECKED) {
+        // Nothing was changed on the host: keep what this device knew before.
         if (previous !== null) writeInstallRecord(previous);
         else removeInstallRecord();
-        info(SOMEONE_ELSES(host.label));
+        if (run.code === ANOTHER_DEVICES_SERVER) info(SOMEONE_ELSES(host.label));
+        else fail(DOCKER_NOT_CHECKED(host.label, `run ${cliName()} sync setup again`));
         return 1;
       }
       const value = run.code === 0 && run.value !== null ? serverValueTarget(run.value) : null;
@@ -253,18 +249,21 @@ async function releaseFound(url: string): Promise<boolean | null> {
 /** `kerstel-server.sh install …` for `plan`. The token is never among them: the server makes it. */
 function installArgs(plan: Plan, version: string, releasesUrl: string | null): string[] {
   const args = ["install", "--version", version, "--install-id", plan.installId, "--runtime", plan.runtime, "--reach", plan.reach];
-  args.push("--port", String(plan.reach === "domain" ? 443 : PORT));
+  // A pinned server listens on the port its addresses name, which `askAddresses` keeps the same.
+  const port = plan.reach === "domain" ? 443 : plan.reach === "self" && plan.addresses.length > 0 ? portOf(plan.addresses[0]!) : PORT;
+  args.push("--port", String(port));
   // The names go into the self-signed certificate.
-  if (plan.reach === "self") for (const name of new Set(plan.addresses.map(hostOf))) args.push("--name", name);
-  if (plan.reach === "domain") args.push("--domain", hostOf(plan.addresses[0]!));
+  if (plan.reach === "self") for (const name of new Set(plan.addresses.map(hostOfUrl))) args.push("--name", name);
+  if (plan.reach === "domain") args.push("--domain", hostOfUrl(plan.addresses[0]!));
   if (releasesUrl !== null) args.push("--releases-url", releasesUrl);
   // The addresses the server value carries.
   for (const url of plan.addresses) args.push("--url", url);
   return args;
 }
 
-function hostOf(url: string): string {
-  return new URL(url).hostname.replace(/^\[(.*)\]$/, "$1");
+/** The port an `https://` address names, or 443. */
+function portOf(url: string): number {
+  return Number(new URL(url).port || 443);
 }
 
 const newInstallId = () => randomBytes(16).toString("base64url");
@@ -342,10 +341,12 @@ async function replacesRecord(prompter: Prompter, record: InstallRecord): Promis
 
 /** The manual route: every question detection would have answered. A number is the exit code when it stops. */
 async function askManual(prompter: Prompter, version: string): Promise<Plan | number> {
-  // A rerun prints the same install ID, so the installer on the server continues the first run.
+  // A rerun of an unfinished manual install prints the same install ID, so the
+  // installer on the server continues the first run. Any other record is
+  // replaced only on a yes, and the new install gets a new ID.
   const record = readInstallRecord();
   let installId: string;
-  if (record?.route === "manual") installId = record.installId;
+  if (record?.route === "manual" && !record.finished) installId = record.installId;
   else if (record !== null && !(await replacesRecord(prompter, record))) return 1;
   else installId = newInstallId();
   const runtime = await askRuntime(prompter, "systemd or launchd", version);
@@ -368,6 +369,11 @@ async function planForHost(
   o: { route: "ssh" | "local"; target: string | null; label: string; facts: HostFacts; version: string; record: InstallRecord | null },
 ): Promise<Plan | number> {
   const { label, facts, record } = o;
+  // A server may run in Docker there: installing beside it could start a second one.
+  if (facts.installed === "unknown") {
+    fail(DOCKER_NOT_CHECKED(label, `run ${cliName()} sync setup again`));
+    return 1;
+  }
   const ours = record !== null && facts.installId !== null && record.installId === facts.installId;
   if (facts.installed !== null && !ours) {
     info(SOMEONE_ELSES(label));
@@ -533,6 +539,12 @@ async function askAddresses(prompter: Prompter, defaults: string[], o: { found: 
     const bad = parts.find((_, i) => urls[i] === null);
     if (bad !== undefined) {
       fail(`${bad} is not an address devices can use. Type a name or an IP address, like 192.168.1.20.`);
+      continue;
+    }
+    // The server listens on one port, so every address names the same one.
+    const ports = new Set((urls as string[]).map(portOf));
+    if (ports.size > 1) {
+      fail(`These addresses name different ports (${[...ports].join(", ")}). The server listens on one, so give each address the same port, or none for ${PORT}.`);
       continue;
     }
     return [...new Set(urls as string[])];

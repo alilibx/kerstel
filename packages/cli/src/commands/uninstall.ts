@@ -320,10 +320,8 @@ export async function uninstallCommand(
       try {
         const config = loadSync(existing.vault, existing.key);
         if (config) {
-          synced = {
-            client: clientFor(config, syncDeps),
-            shown: shownAddress(config.servers, existing.vault.getMeta(SYNC_META.lastAddress)),
-          };
+          const last = existing.vault.getMeta(SYNC_META.lastAddress);
+          synced = { client: clientFor(config, syncDeps, last), shown: shownAddress(config.servers, last) };
         }
       } catch {
         // Settings too broken to load have no device to remove either.

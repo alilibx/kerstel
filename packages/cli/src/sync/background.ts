@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { daemonCwd, daemonEnv } from "../daemon/env";
 import { cliCommand } from "../daemon/spawn";
 import { kerstelHome, vaultPath } from "../paths";
-import { shownAddress, SYNC_META } from "./state";
+import { serversOf, shownAddress, SYNC_META } from "./state";
 
 /**
  * Sync in the background. Sync spec §8.1: a command that writes the vault
@@ -78,9 +78,7 @@ export function writeSpawnMarker(ms: number, file: string = spawnMarkerPath()): 
 function glancedServer(meta: Map<string, string>): string | null {
   const server = meta.get(SYNC_META.server);
   if (server === undefined) return null;
-  const row = meta.get(SYNC_META.servers);
-  // A row that does not start with sync_server is one `loadSync` does not use either.
-  const servers = row === undefined || row.split("\n")[0] !== server ? [server] : row.split("\n");
+  const servers = serversOf(server, meta.get(SYNC_META.servers) ?? null);
   return shownAddress(servers, meta.get(SYNC_META.lastAddress) ?? null);
 }
 

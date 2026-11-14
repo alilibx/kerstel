@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
 import { openDatabase } from "../../server/src/db";
-import { TIMING, newId, signRequest } from "../../server/src/protocol";
+import { HEADERS, TIMING, newId, signRequest } from "../../server/src/protocol";
 import { JOIN_PIN_DOES_NOT_MATCH, PIN_DOES_NOT_MATCH, syncCommand } from "../src/commands/sync";
 import type { CliContext } from "../src/context";
 import { listBackups } from "../src/init/backup";
@@ -382,6 +382,8 @@ describe("a server with several addresses", () => {
     a.with((v) => v.setSecret(ref("app", "A"), "1"));
     await setUp(a, s);
     setServers(a, [DOWN, SERVER]);
+    // No address has answered yet, so the saved order is tried.
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
     a.with((v) => v.setSecret(ref("app", "A"), "2"));
     const reach = behindDown(s);
     const { code, out } = await sync(a, reach);
@@ -475,6 +477,55 @@ describe("a server with several addresses", () => {
     const one = (await sync(a, s, ["status"])).out;
     expect(one).toContain(`Server        ${SERVER}\n`);
     expect(one).not.toContain("(also");
+  });
+
+  test("the address that answered last is tried first, and the saved order stays", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.setMeta(SYNC_META.lastAddress, SERVER));
+    const reach = behindDown(s);
+    expect((await sync(a, reach)).code).toBe(0);
+    expect(reach.tried.length).toBeGreaterThan(0);
+    expect(reach.tried).not.toContain(DOWN);
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([DOWN, SERVER]);
+
+    // A last address that is no longer one of the server's is not tried: the saved order is.
+    a.with((v) => v.setMeta(SYNC_META.lastAddress, "http://localhost:9"));
+    const again = behindDown(s);
+    expect((await sync(a, again)).code).toBe(0);
+    expect(again.tried[0]).toBe(DOWN);
+  });
+
+  test("a request one address delivered before it failed is signed again for the next", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const config = a.with((v) => loadSync(v, a.key))!;
+    const sent: { origin: string; timestamp: string | null; signature: string | null }[] = [];
+    // The first address delivers the request, then times out before its reply comes back.
+    const late: Fetch = async (request) => {
+      const origin = new URL(request.url).origin;
+      sent.push({ origin, timestamp: request.headers.get(HEADERS.timestamp), signature: request.headers.get(HEADERS.signature) });
+      if (origin !== DOWN) return s.fetch(request);
+      await s.fetch(new Request(request.url.replace(DOWN, SERVER), request));
+      throw new Error("The operation timed out.");
+    };
+    // A clock that stands still: the client still never stamps two requests alike.
+    const client = syncClient({
+      servers: [DOWN, SERVER],
+      vaultId: config.vaultId,
+      deviceId: config.deviceId,
+      sign: config.keys.sign,
+      fetch: late,
+      now: () => s.clock.t,
+    });
+    const { devices } = await client.devices();
+    expect(devices.map((d) => d.id)).toContain(config.deviceId);
+    expect(sent.map((r) => r.origin)).toEqual([DOWN, SERVER]);
+    expect(Number(sent[1]!.timestamp)).toBeGreaterThan(Number(sent[0]!.timestamp));
+    expect(sent[1]!.signature).not.toBe(sent[0]!.signature);
   });
 
   test("doctor's glance names the address that answered", async () => {
@@ -1727,6 +1778,14 @@ describe("pairing, joining and removing devices", () => {
         expect(out).toContain("Could not reach https://127.0.0.1:1");
         expect(out).toContain("If this server pins its own certificate, pass --pin with the pin kerstel-server printed (sha256/…).");
         expect(p.listener.paths).toEqual([]);
+      });
+
+      test("a pin mismatch names the address that answered, not the first", async () => {
+        const other = pinOfCertificate(selfSignedCertificate({ key: serverKey(), names: ["localhost"] }));
+        const { result, out, p } = await setUpFromValue((p) => valueOf(p, { urls: ["https://127.0.0.1:1", p.listener.url], pin: other }));
+        expect(result).toBe(1);
+        expect(out).toContain(`Sync setup failed: ${PIN_DOES_NOT_MATCH(p.listener.url)}`);
+        expect(out).not.toContain("https://127.0.0.1:1 presented");
       });
 
       test("a server value is never taken from an argument, or beside a url or a pin", async () => {

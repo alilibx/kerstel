@@ -237,6 +237,32 @@ describe("the setup wizard", () => {
     expect(flags(args, "--name")).toEqual(["homebox.local", "192.168.1.20"]);
   });
 
+  test("addresses with a port set the server's port, and mixed ports are asked again", async () => {
+    const s = server();
+    const host = fakeHost({ detected: facts(), value: s.value });
+    const d = device();
+    const { code, out, prompter } = await wizard(
+      d,
+      ["ssh", "ali@homebox", "docker", "self", "192.168.1.20:9443, homebox.lan", "192.168.1.20:9443, homebox.lan:9443"],
+      { hostFor: host.hostFor },
+    );
+    expect(code).toBe(0);
+    expect(out).toContain(
+      "These addresses name different ports (9443, 8787). The server listens on one, so give each address the same port, or none for 8787.",
+    );
+    expect(prompter.asked.filter((q) => q.startsWith("Address your devices use"))).toHaveLength(2);
+    const args = host.installs()[0]!.args;
+    expect(flag(args, "--port")).toBe("9443");
+    expect(flags(args, "--url")).toEqual(["https://192.168.1.20:9443", "https://homebox.lan:9443"]);
+    expect(flags(args, "--name")).toEqual(["192.168.1.20", "homebox.lan"]);
+
+    // A bare name gets 8787.
+    const bare = fakeHost({ detected: facts(), value: s.value });
+    expect((await wizard(device(), ["ssh", "ali@homebox", "docker", "self", "homebox.lan"], { hostFor: bare.hostFor })).code).toBe(0);
+    expect(flag(bare.installs()[0]!.args, "--port")).toBe("8787");
+    expect(flags(bare.installs()[0]!.args, "--url")).toEqual(["https://homebox.lan:8787"]);
+  });
+
   test("with no address found it asks with no default and refuses an empty answer", async () => {
     const s = server();
     const host = fakeHost({ detected: facts({ ipv4: ["169.254.3.4"] }), value: s.value });
@@ -467,6 +493,33 @@ describe("the setup wizard", () => {
     expect(readInstallRecord()).toMatchObject({ installId: id, finished: true });
   });
 
+  test("a finished manual record is replaced only on a yes, with a new install ID", async () => {
+    const d = device();
+    const earlier: InstallRecord = {
+      installId: "first-install",
+      route: "manual",
+      host: null,
+      runtime: "docker",
+      reach: "self",
+      addresses: ["https://192.168.1.20:8787"],
+      version: VERSION,
+      started: true,
+      finished: true,
+    };
+    writeInstallRecord(earlier);
+    const no = await wizard(d, ["manual", "no"]);
+    expect(no.code).toBe(1);
+    expect(no.out).toContain(`This device looks after the server on 192.168.1.20. A new server replaces that.`);
+    expect(readInstallRecord()).toEqual(earlier);
+
+    const s = server();
+    const yes = await wizard(d, ["manual", "yes", "docker", "self", "192.168.1.30", s.value]);
+    expect(yes.code).toBe(0);
+    expect(yes.out).not.toContain("'first-install'");
+    expect(readInstallRecord()!.installId).not.toBe("first-install");
+    expect(readInstallRecord()).toMatchObject({ route: "manual", finished: true });
+  });
+
   test("a host with someone else's server is left alone", async () => {
     const d = device();
     const host = fakeHost({ detected: facts({ installed: "docker", installId: "someone-else" }) });
@@ -624,6 +677,18 @@ describe("the setup wizard", () => {
     expect(readInstallRecord()).toMatchObject({ installId: firstId, finished: true });
   });
 
+  test("Docker that detect could not check stops before any change", async () => {
+    const d = device();
+    const host = fakeHost({ detected: facts({ installed: "unknown" }) });
+    const { code, out } = await wizard(d, ["ssh", "ali@homebox"], { hostFor: host.hostFor });
+    expect(code).toBe(1);
+    expect(out).toContain(
+      `Could not check Docker on ali@homebox for a Kerstel server, so nothing was changed there. Check that Docker runs there and that sudo works, then run ${CLI} sync setup again.`,
+    );
+    expect(host.installs()).toEqual([]);
+    expect(readInstallRecord()).toBeNull();
+  });
+
   test("an installer that finds another device's server says so", async () => {
     const d = device();
     const host = fakeHost({ detected: facts(), install: () => ({ code: 3, lines: [], value: null }) });
@@ -765,6 +830,21 @@ describe("the setup wizard", () => {
       const run = await wizard(d, ["ssh", "ali@nas", "yes", "docker", "self", "192.168.1.30"], { hostFor: nas.hostFor });
       expect(run.code).toBe(1);
       expect(run.out).toContain(`ali@nas already runs a Kerstel server. If another device syncs with it, run ${CLI} sync add-device there instead.`);
+      expect(nas.installs()).toHaveLength(1);
+      expect(readInstallRecord()).toEqual(earlier);
+    }
+  });
+
+  test("exit 4 says Docker could not be checked, and keeps the earlier record", async () => {
+    for (const earlier of [null, homebox()]) {
+      const d = device();
+      if (earlier) writeInstallRecord(earlier);
+      const nas = fakeHost({ detected: facts(), install: () => ({ code: 4, lines: [], value: null }) });
+      const answers = [...["ssh", "ali@nas"], ...(earlier ? ["yes"] : []), "docker", "self", "192.168.1.30"];
+      const run = await wizard(d, answers, { hostFor: nas.hostFor });
+      expect(run.code).toBe(1);
+      expect(run.out).toContain(`Could not check Docker on ali@nas for a Kerstel server, so nothing was changed there.`);
+      expect(run.out).not.toContain("The install stopped.");
       expect(nas.installs()).toHaveLength(1);
       expect(readInstallRecord()).toEqual(earlier);
     }

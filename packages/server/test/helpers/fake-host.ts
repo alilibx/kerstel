@@ -2,7 +2,7 @@
  * A fake server host for the installer tests: a temp HOME, a temp root for
  * the files the installer writes outside HOME (KERSTEL_INSTALL_ROOT), and a
  * PATH that holds only fake `docker`, `systemctl`, `launchctl`, `sudo`,
- * `tailscale`, `curl`, `uname`, `hostname` and `ip`, plus logging shims for
+ * `tailscale`, `curl`, `uname`, `hostname` and `ip` (or `ifconfig`), plus logging shims for
  * the few real tools the script uses. Nothing real is ever reached: no Docker,
  * systemd, launchd, sudo, Tailscale or network.
  *
@@ -38,7 +38,7 @@ const SERVER_ENTRY = join(import.meta.dir, "../../src/index.ts");
 const SCRIPT = join(import.meta.dir, "../../install/kerstel-server.sh");
 const FAKES = ["docker", "systemctl", "launchctl", "sudo", "tailscale", "curl", "uname", "hostname", "ip"] as const;
 /** Fakes linked into a host only when its config asks for them. */
-const OPTIONAL_FAKES = ["id", "sleep"] as const;
+const OPTIONAL_FAKES = ["id", "sleep", "ifconfig"] as const;
 type Fake = (typeof FAKES)[number] | (typeof OPTIONAL_FAKES)[number];
 /** The real tools the script may run, each behind a shim that logs its argv. */
 const REAL_TOOLS = [
@@ -55,10 +55,18 @@ export interface HostConfig {
   arch: string;
   hostname: string;
   ipv4: string[];
+  /** What `ip -o -4 addr show` prints, in place of one ethN line per `ipv4`. */
+  ipLines: string[] | null;
+  /** The host has `ifconfig`, which prints this, and no `ip`. */
+  ifconfigLines: string[] | null;
   /** Whether the `docker` command exists. */
   docker: boolean;
   /** Docker answers only through sudo. */
   dockerNeedsSudo: boolean;
+  /** The Docker daemon does not answer, even through sudo. */
+  dockerDown: boolean;
+  /** `sudo -n` fails: sudo would ask for a password. */
+  sudoNeedsPassword: boolean;
   systemd: boolean;
   /** This host's tailnet name, or null when Tailscale is not running. */
   tailscale: string | null;
@@ -140,8 +148,12 @@ export class FakeHost {
       arch: "x86_64",
       hostname: "box",
       ipv4: ["192.168.1.20"],
+      ipLines: null,
+      ifconfigLines: null,
       docker: true,
       dockerNeedsSudo: false,
+      dockerDown: false,
+      sudoNeedsPassword: false,
       systemd: true,
       tailscale: null,
       tailscaleNeedsSudo: false,
@@ -157,10 +169,12 @@ export class FakeHost {
     const tools = sharedTools();
     for (const tool of FAKES) {
       if (tool === "docker" && !full.docker) continue;
+      if (tool === "ip" && full.ifconfigLines !== null) continue;
       symlinkSync(join(tools, "fakes", tool), join(this.bin, tool));
     }
     if (full.root) symlinkSync(join(tools, "fakes", "id"), join(this.bin, "id"));
     if (full.quickSleep) symlinkSync(join(tools, "fakes", "sleep"), join(this.bin, "sleep"));
+    if (full.ifconfigLines !== null) symlinkSync(join(tools, "fakes", "ifconfig"), join(this.bin, "ifconfig"));
   }
 
   /**
@@ -407,10 +421,19 @@ class Tools {
           return 0;
         case "ip":
           process.stdout.write(
-            ["1: lo    inet 127.0.0.1/8 scope host lo", ...this.config.ipv4.map((ip, i) => `${i + 2}: eth${i}    inet ${ip}/24 brd x scope global eth${i}`)]
+            (
+              this.config.ipLines ?? [
+                "1: lo    inet 127.0.0.1/8 scope host lo",
+                ...this.config.ipv4.map((ip, i) => `${i + 2}: eth${i}    inet ${ip}/24 brd x scope global eth${i}`),
+              ]
+            )
               .map((l) => `${l}\n`)
               .join(""),
           );
+          return 0;
+        case "ifconfig":
+          // Only linked for a host whose config gives its output.
+          process.stdout.write((this.config.ifconfigLines ?? []).map((l) => `${l}\n`).join(""));
           return 0;
       }
     } catch (error) {
@@ -422,7 +445,13 @@ class Tools {
   }
 
   sudoRun(argv: string[]): number {
-    while (argv[0]?.startsWith("-")) argv = argv.slice(1);
+    const flags: string[] = [];
+    while (argv[0]?.startsWith("-")) {
+      flags.push(argv[0]);
+      argv = argv.slice(1);
+    }
+    if (this.config.sudoNeedsPassword && flags.includes("-n")) fail(1, "sudo: a password is required");
+    if (argv[0] === "true") return 0;
     const result = Bun.spawnSync(argv, { env: { ...process.env, FAKE_SUDO: "1" }, stdio: ["inherit", "inherit", "inherit"] });
     // The child changed the state; keep its copy.
     this.state = readState(this.dir);
@@ -465,6 +494,7 @@ class Tools {
   }
 
   async docker(argv: string[]): Promise<number> {
+    if (this.config.dockerDown) fail(1, "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?");
     if (this.config.dockerNeedsSudo && !this.sudo) {
       fail(1, "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock");
     }

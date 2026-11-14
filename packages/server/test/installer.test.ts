@@ -95,6 +95,101 @@ describe("detect", () => {
   });
 });
 
+describe("addresses on virtual interfaces", () => {
+  test("detect skips Docker, bridge, Tailscale and loopback interfaces", async () => {
+    const linux = host({
+      ipLines: [
+        "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever",
+        "2: eth0    inet 192.168.1.20/24 brd 192.168.1.255 scope global eth0\\       valid_lft forever preferred_lft forever",
+        "3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\\       valid_lft forever preferred_lft forever",
+        "4: br-3f2a9c1d7e05    inet 172.18.0.1/16 brd 172.18.255.255 scope global br-3f2a9c1d7e05\\       valid_lft forever preferred_lft forever",
+        "5: veth1a2b3c4@if4    inet 169.254.10.2/16 scope link veth1a2b3c4\\       valid_lft forever preferred_lft forever",
+        "6: virbr0    inet 192.168.122.1/24 brd 192.168.122.255 scope global virbr0\\       valid_lft forever preferred_lft forever",
+        "7: tailscale0    inet 100.101.1.2/32 scope global tailscale0\\       valid_lft forever preferred_lft forever",
+        "8: cni0    inet 10.42.0.1/24 scope global cni0\\       valid_lft forever preferred_lft forever",
+        "9: flannel.1    inet 10.42.0.0/32 scope global flannel.1\\       valid_lft forever preferred_lft forever",
+        "10: cali8d2f    inet 10.43.0.1/32 scope global cali8d2f\\       valid_lft forever preferred_lft forever",
+        "11: vxlan.calico    inet 10.44.0.1/32 scope global vxlan.calico\\       valid_lft forever preferred_lft forever",
+        "12: wlan0    inet 10.0.0.7/24 brd 10.0.0.255 scope global wlan0\\       valid_lft forever preferred_lft forever",
+      ],
+    });
+    const r = await linux.run(["detect"]);
+    expectOk(r);
+    expect(lines(r).filter((l) => l.startsWith("ipv4="))).toEqual(["ipv4=192.168.1.20", "ipv4=10.0.0.7"]);
+
+    // macOS has ifconfig and no ip; an older Linux ifconfig writes "inet addr:".
+    const mac = host({
+      os: "Darwin",
+      arch: "arm64",
+      docker: false,
+      systemd: false,
+      ifconfigLines: [
+        "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384",
+        "\tinet 127.0.0.1 netmask 0xff000000",
+        "en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500",
+        "\tinet 192.168.1.30 netmask 0xffffff00 broadcast 192.168.1.255",
+        "bridge100: flags=8a63<UP,BROADCAST,SMART,RUNNING,ALLMULTI,SIMPLEX,MULTICAST> mtu 1500",
+        "\tinet 192.168.64.1 netmask 0xffffff00 broadcast 192.168.64.255",
+        "utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280",
+        "\tinet 100.80.1.2 --> 100.80.1.2 netmask 0xffffffff",
+        "docker0   Link encap:Ethernet  HWaddr 02:42:ac:11:00:01",
+        "          inet addr:172.17.0.1  Bcast:172.17.255.255  Mask:255.255.0.0",
+        "eth1      Link encap:Ethernet  HWaddr 52:54:00:12:34:56",
+        "          inet addr:10.0.0.9  Bcast:10.0.0.255  Mask:255.255.255.0",
+      ],
+    });
+    const m = await mac.run(["detect"]);
+    expectOk(m);
+    expect(lines(m).filter((l) => l.startsWith("ipv4="))).toEqual(["ipv4=192.168.1.30", "ipv4=10.0.0.9"]);
+  });
+});
+
+describe("Docker that can't be checked", () => {
+  const UNCHECKED = "kerstel-server.sh: could not check Docker for a Kerstel server, so nothing was changed.\n";
+
+  test(
+    "detect says unknown, and info, value, stop, update, remove and a service install exit 4 and change nothing",
+    async () => {
+      const h = host({ dockerDown: true });
+      const detect = await h.run(["detect"]);
+      expectOk(detect);
+      expect(lines(detect)).toContain("installed=unknown");
+      expect(lines(detect)).not.toContain("installed=no");
+
+      for (const args of [
+        ["info"],
+        ["value", "--url", "https://box.local:8787"],
+        ["stop"],
+        ["stop", "--install-id", ID],
+        ["update", "--version", VERSION, "--releases-url", RELEASES_URL],
+        ["remove"],
+        ["remove", "--delete-data", "--install-id", ID],
+        ["install", "--version", VERSION, "--install-id", ID, "--runtime", "service", "--releases-url", RELEASES_URL, "--reach", "self", "--name", "box.local"],
+      ]) {
+        const r = await h.run(args);
+        expect({ args, code: r.code }).toEqual({ args, code: 4 });
+        expect(r.stderr).toContain(UNCHECKED);
+        expect(r.stderr).not.toContain("No Kerstel server is installed");
+        expect(r.stdout).not.toContain("ks-server1-");
+      }
+      // info still reports what it found.
+      expect(lines(await h.run(["info"]))).toContain("installed=unknown");
+      expect(existsSync(h.serverHome)).toBe(false);
+      expect(existsSync(h.unitPath)).toBe(false);
+      expect(h.calls("systemctl")).toEqual([]);
+    },
+    SLOW,
+  );
+
+  test("detect, which never asks for a password, does not count Docker behind one as unchecked", async () => {
+    const h = host({ dockerNeedsSudo: true, sudoNeedsPassword: true });
+    const r = await h.run(["detect"]);
+    expectOk(r);
+    expect(lines(r)).toContain("installed=no");
+    expect(h.calls("sudo").every((c) => c.argv[0] === "-n")).toBe(true);
+  });
+});
+
 describe("install with Docker", () => {
   test(
     "install with Docker starts one container with the settings for each reach",

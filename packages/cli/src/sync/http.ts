@@ -367,14 +367,17 @@ export function syncClient(options: ClientOptions) {
 
   function call<T>(method: string, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
     const raw = encode(body);
-    const headers = {
-      ...signRequest(options.sign, options.deviceId, method, `${PROTOCOL_PREFIX}${path}`, raw ?? new Uint8Array(), now()),
-      ...extra,
-    };
-    // Signed once for every address: one that timed out may still have
-    // delivered the request, and the server then refuses the same signature
-    // as a replay rather than applying the request twice.
-    return server.send((url, doFetch) => send<T>(doFetch, url, method, path, raw, headers));
+    // Signed again for each address: one that timed out may still have
+    // delivered the request, and the next would refuse the same signature as
+    // a replay. The protocol's own checks (revisions, a vault that exists)
+    // decide whether the request applies twice.
+    return server.send((url, doFetch) => {
+      const headers = {
+        ...signRequest(options.sign, options.deviceId, method, `${PROTOCOL_PREFIX}${path}`, raw ?? new Uint8Array(), now()),
+        ...extra,
+      };
+      return send<T>(doFetch, url, method, path, raw, headers);
+    });
   }
 
   const vault = `/vaults/${options.vaultId}`;

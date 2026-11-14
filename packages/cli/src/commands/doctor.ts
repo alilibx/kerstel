@@ -14,12 +14,12 @@ import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
 import { glanceSync } from "../sync/background";
 import { readInstallRecord } from "../sync/install-record";
-import { loadSync, type SyncConfig } from "../sync/state";
+import { loadSync, SYNC_META, type SyncConfig } from "../sync/state";
 import { syncTimer, type TimerStatus } from "../sync/timer";
 import { githubReleases } from "../update/release-source";
 import { VERSION } from "../version";
 import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
-import { serverVersion } from "./sync-server";
+import { SERVER_CHECK_MS, serverVersion } from "./sync-server";
 
 /**
  * A path's actual mode next to the one Kerstel intends. `null` means "not
@@ -143,7 +143,7 @@ async function installedServerVersion(ctx: CliContext): Promise<string | null> {
     // The Sync row already reports what is wrong with sync here.
     return null;
   }
-  return config === null ? null : serverVersion(config);
+  return config === null ? null : serverVersion(config, {}, SERVER_CHECK_MS, ctx.vault.getMeta(SYNC_META.lastAddress));
 }
 
 /** Where `doctor` looks for the newest release. Injectable so tests never call GitHub. */
