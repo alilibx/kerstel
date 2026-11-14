@@ -50,10 +50,10 @@ const fakeTimer: SyncTimer = {
   remove: () => true,
 };
 
-/** A command here; its output, never printed. */
-function run(argv: string[]): { code: number; out: string } {
+/** A command here; its output, never printed. `err` is its stderr. */
+function run(argv: string[]): { code: number; out: string; err: string } {
   const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", env: process.env });
-  return { code: proc.exitCode ?? 1, out: proc.stdout.toString().trim() };
+  return { code: proc.exitCode ?? 1, out: proc.stdout.toString().trim(), err: proc.stderr.toString().trim() };
 }
 
 const containerIds = () => run(["docker", "ps", "-aq", "--filter", `name=^${CONTAINER}$`]).out.split("\n").filter(Boolean);
@@ -62,9 +62,35 @@ const unitFiles = () => run(["sh", "-c", "ls /etc/systemd/system | grep '^kerste
 const mainPid = () => run(["systemctl", "show", "--property=MainPID", "--value", "kerstel-server.service"]).out;
 const serviceActive = () => run(["systemctl", "is-active", "--quiet", "kerstel-server.service"]).code === 0;
 
-/** What the host already runs, so the test never takes over or removes someone's real server. */
+/**
+ * Whether the host has no Kerstel server and no data one left behind, so the
+ * test never takes over a real server or deletes a database that a
+ * `remove` without `--delete-data` kept.
+ */
 function hostIsClean(): boolean {
-  return containerIds().length === 0 && !existsSync(UNIT) && !existsSync(join(KH, "install-id"));
+  return containerIds().length === 0 && volumes().length === 0 && !existsSync(UNIT) && !existsSync(KH);
+}
+
+/** Removes everything the test may have put on the host. Each step is harmless when there is nothing to remove. */
+function cleanHost(): void {
+  if (!ours) return;
+  run(["docker", "rm", "-f", CONTAINER]);
+  run(["docker", "volume", "rm", VOLUME]);
+  if (existsSync(UNIT)) {
+    run(["sudo", "-n", "systemctl", "disable", "--now", "kerstel-server.service"]);
+    run(["sudo", "-n", "rm", "-f", UNIT]);
+    run(["sudo", "-n", "systemctl", "daemon-reload"]);
+  }
+  rmSync(KH, { recursive: true, force: true });
+}
+
+/** The server's own log, for the transcript: the container's, or the unit's journal. */
+function serverLog(runtime: "docker" | "service"): string {
+  const r =
+    runtime === "docker"
+      ? run(["docker", "logs", CONTAINER])
+      : run(["sudo", "-n", "journalctl", "-u", "kerstel-server.service", "--no-pager", "-o", "cat"]);
+  return `---- kerstel-server log (${runtime}) ----\n${[r.out, r.err].filter(Boolean).join("\n")}\n`;
 }
 
 /** The enroll token kerstel-server made, read from its file; null when there is none yet. */
@@ -143,6 +169,7 @@ async function quietly<T>(work: () => Promise<T>): Promise<{ result: T; out: str
   }
 }
 
+/** Prints the transcript, with the token and any server value blanked out, then forgets it. */
 function showTranscript(token: string | null): void {
   let text = transcript.join("").replace(VALUE, "ks-server1-<value>");
   if (token) text = text.replaceAll(token, "<token>");
@@ -150,7 +177,13 @@ function showTranscript(token: string | null): void {
   process.stderr.write(text);
 }
 
-/** Every process's full argv on the host (`ps -ww`, never cut to the terminal's width), every 100 ms into a file until stopped. */
+/**
+ * Every process's full argv on the host (`ps -ww`, never cut to the
+ * terminal's width), every 100 ms into a file until stopped. A process that
+ * lives less than 100 ms can fall between two samples, so this catches the
+ * long-running steps (the installer, `docker run`, the server) for certain,
+ * and short ones only by chance.
+ */
 function sampleArgv() {
   const dir = mkdtempSync(join(tmpdir(), "kerstel-ssh-argv-"));
   dirs.push(dir);
@@ -213,11 +246,29 @@ async function expectSynced(d: Device): Promise<void> {
   expect((refused as SyncHttpError).code).toBe("pin_mismatch");
 }
 
+/**
+ * Whether `text` appears in `out`, as a boolean: a failed `toContain` prints
+ * the whole string, which could put a leaked token in the CI log. The masked
+ * transcript in each test's `finally` gives the context instead.
+ */
+function expectIncludes(out: string, text: string): void {
+  expect(out.includes(text)).toBe(true);
+}
+
 /** The argv samples show the installer ran and never carried the token or a server value. */
 function expectNoSecretInArgv(argv: string, token: string): void {
-  expect(argv).toContain("kerstel-server.sh install");
+  expectIncludes(argv, "kerstel-server.sh install");
   expect(argv.includes(token)).toBe(false);
   expect(argv.includes("ks-server1-")).toBe(false);
+}
+
+/** After a test: the server's log and the transcript, masked, then nothing left on the host. */
+async function finish(runtime: "docker" | "service", argv: { stop(): Promise<string> }, token: string | null): Promise<void> {
+  await argv.stop().catch(() => "");
+  const known = token ?? tokenOnHost(runtime);
+  if (ours) transcript.push(serverLog(runtime));
+  showTranscript(known);
+  cleanHost();
 }
 
 async function removeServer(): Promise<{ code: number; out: string }> {
@@ -240,16 +291,7 @@ beforeAll(() => {
 afterAll(() => {
   restoreEnv();
   while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
-  if (!ours) return;
-  // What a failed test may have left. Each step is harmless when there is nothing to remove.
-  run(["docker", "rm", "-f", CONTAINER]);
-  run(["docker", "volume", "rm", VOLUME]);
-  if (existsSync(UNIT)) {
-    run(["sudo", "-n", "systemctl", "disable", "--now", "kerstel-server.service"]);
-    run(["sudo", "-n", "rm", "-f", UNIT]);
-    run(["sudo", "-n", "systemctl", "daemon-reload"]);
-  }
-  rmSync(KH, { recursive: true, force: true });
+  cleanHost();
 });
 
 describe("the setup wizard over ssh", () => {
@@ -263,8 +305,8 @@ describe("the setup wizard over ssh", () => {
         // The first run installs the server, then can't reach it to sync.
         const first = await wizard(d, ["ssh", HOST, "docker", "self", "127.0.0.1"], offline);
         expect(first.code).toBe(1);
-        expect(first.out).toContain("Docker found");
-        expect(first.out).toContain(`sync setup again to continue`);
+        expectIncludes(first.out, "Docker found");
+        expectIncludes(first.out, "sync setup again to continue");
         expect(readInstallRecord()).toMatchObject({ route: "ssh", host: HOST, runtime: "docker", reach: "self", addresses: [ADDRESS], started: true, finished: false });
         expect(d.with((v) => loadSync(v, d.key))).toBeNull();
         const installId = readInstallRecord()!.installId;
@@ -277,8 +319,8 @@ describe("the setup wizard over ssh", () => {
         token = tokenOnHost("docker");
         expect(again.code).toBe(0);
         expect(again.asked).toHaveLength(3);
-        expect(again.out).toContain("Found the server this device started setting up. Continuing.");
-        expect(again.out).toContain("already runs");
+        expectIncludes(again.out, "Found the server this device started setting up. Continuing.");
+        expectIncludes(again.out, "already runs");
         expect(containerIds()).toEqual(ids);
         expect(readInstallRecord()).toMatchObject({ installId, finished: true });
         await expectSynced(d);
@@ -290,13 +332,12 @@ describe("the setup wizard over ssh", () => {
 
         const removed = await removeServer();
         expect(removed.code).toBe(0);
-        expect(removed.out).toContain(`Removed the server from ${HOST}.`);
+        expectIncludes(removed.out, `Removed the server from ${HOST}.`);
         expect(containerIds()).toEqual([]);
         expect(volumes()).toEqual([]);
         expect(readInstallRecord()).toBeNull();
       } finally {
-        await argv.stop().catch(() => "");
-        showTranscript(token ?? tokenOnHost("docker"));
+        await finish("docker", argv, token);
       }
     },
     TIMEOUT,
@@ -311,7 +352,7 @@ describe("the setup wizard over ssh", () => {
       try {
         const first = await wizard(d, ["ssh", HOST, "service", "self", "127.0.0.1"], offline);
         expect(first.code).toBe(1);
-        expect(first.out).toContain("Checksum verified.");
+        expectIncludes(first.out, "Checksum verified.");
         expect(readInstallRecord()).toMatchObject({ runtime: "service", started: true, finished: false });
         const installId = readInstallRecord()!.installId;
         expect(readFileSync(join(KH, "install-id"), "utf8").trim()).toBe(installId);
@@ -324,11 +365,12 @@ describe("the setup wizard over ssh", () => {
         token = tokenOnHost("service");
         expect(again.code).toBe(0);
         expect(again.asked).toHaveLength(3);
-        expect(again.out).toContain("Found the server this device started setting up. Continuing.");
-        expect(again.out).toContain("kerstel-server is already running.");
+        expectIncludes(again.out, "Found the server this device started setting up. Continuing.");
+        expectIncludes(again.out, "kerstel-server is already running.");
         expect(unitFiles()).toEqual(["kerstel-server.service"]);
         expect(mainPid()).toBe(pid);
         expect(containerIds()).toEqual([]);
+        expect(readInstallRecord()).toMatchObject({ installId, finished: true });
         await expectSynced(d);
 
         expect(token).not.toBeNull();
@@ -338,7 +380,7 @@ describe("the setup wizard over ssh", () => {
 
         const removed = await removeServer();
         expect(removed.code).toBe(0);
-        expect(removed.out).toContain(`Removed the server from ${HOST}.`);
+        expectIncludes(removed.out, `Removed the server from ${HOST}.`);
         expect(existsSync(UNIT)).toBe(false);
         expect(serviceActive()).toBe(false);
         expect(existsSync(join(KH, "install-id"))).toBe(false);
@@ -346,8 +388,7 @@ describe("the setup wizard over ssh", () => {
         expect(existsSync(join(KH, "kerstel-server.db"))).toBe(false);
         expect(readInstallRecord()).toBeNull();
       } finally {
-        await argv.stop().catch(() => "");
-        showTranscript(token ?? tokenOnHost("service"));
+        await finish("service", argv, token);
       }
     },
     TIMEOUT,

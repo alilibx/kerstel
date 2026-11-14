@@ -57,6 +57,7 @@ jobs:
   # release mirror built here for this checkout's version.
   wizard-ssh:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -115,7 +116,8 @@ jobs:
           sudo /usr/sbin/sshd -f /dev/null -E "$d/sshd.log" \
             -o ListenAddress=127.0.0.1 -o Port=2222 -o HostKey="$d/host_key" -o PidFile="$d/sshd.pid" \
             -o AuthorizedKeysFile="$d/authorized_keys" -o StrictModes=no -o UsePAM=yes \
-            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o AllowUsers="$(id -un)"
+            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o AllowUsers="$(id -un)" \
+            || { sudo cat "$d/sshd.log"; exit 1; }
           cat > "$d/config" <<EOF
           Host kerstel-test
             HostName 127.0.0.1
@@ -140,13 +142,13 @@ jobs:
         env:
           KERSTEL_TEST_SSH_HOST: kerstel-test
           KERSTEL_RELEASES_URL: http://127.0.0.1:18080
-      - name: Show the logs
+      # The test prints kerstel-server's own log, masked, before it removes
+      # the server, so only the job's sshd and mirror are left to show.
+      - name: Show the sshd and mirror logs
         if: failure()
         run: |
           sudo cat "$RUNNER_TEMP/ssh/sshd.log" || true
           cat "$RUNNER_TEMP/mirror.log" || true
-          docker logs kerstel-server || true
-          sudo journalctl -u kerstel-server --no-pager || true
       - name: Stop sshd and the mirror
         if: always()
         run: |
