@@ -61,7 +61,7 @@ export function manualCommandFor(o: ManualCommandFor): string {
  * `releasesUrl`, else `KERSTEL_RELEASES_URL`, else the Kerstel repository.
  */
 export function installerReleaseUrl(version: string, releasesUrl?: string): string {
-  const base = (releasesUrl ?? process.env.KERSTEL_RELEASES_URL ?? KERSTEL_REPO_URL).replace(/\/$/, "");
+  const base = (releasesUrl || process.env.KERSTEL_RELEASES_URL || KERSTEL_REPO_URL).replace(/\/$/, "");
   if (!isSafeReleaseUrl(base)) {
     throw new Error("The release URL must be https://, or http:// to this machine.");
   }

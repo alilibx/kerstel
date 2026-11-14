@@ -103,3 +103,15 @@ describe("the manual command", () => {
     expect(() => manualCommand({ version: "0.4.0", args: [], releasesUrl: "http://example.test" })).toThrow();
   });
 });
+
+test("an empty KERSTEL_RELEASES_URL counts as unset", async () => {
+  const { installerReleaseUrl } = await import("../src/sync/installer");
+  const saved = process.env.KERSTEL_RELEASES_URL;
+  process.env.KERSTEL_RELEASES_URL = "";
+  try {
+    expect(installerReleaseUrl("0.4.0")).toBe("https://github.com/alilibx/kerstel/releases/download/v0.4.0/kerstel-server.sh");
+  } finally {
+    if (saved === undefined) delete process.env.KERSTEL_RELEASES_URL;
+    else process.env.KERSTEL_RELEASES_URL = saved;
+  }
+});
