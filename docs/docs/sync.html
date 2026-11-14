@@ -34,7 +34,142 @@
 <main class="wrap">
 <h1>Sync</h1>
 <p class="lede">Keep one vault on your laptop and your desktop. Values are encrypted on your device with a key the server never holds.</p><p>Sync is optional and off until you turn it on. It is for one person&#39;s devices. A team still commits references and fills each teammate&#39;s vault, as in <a href="/docs/teams">Working with a team</a>, until shared vaults ship.</p>
-<h2>Run a server</h2>
+<h2>Set up sync</h2>
+<p>Run this on the device that holds your vault, in a terminal:</p>
+<pre><code class="language-bash">kerstel sync setup
+</code></pre>
+<p>It sets up a sync server and this device step by step. It first asks where the server should run:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>On another machine, over SSH</td>
+<td>Kerstel installs <code>kerstel-server</code> there with the system <code>ssh</code>.</td>
+</tr>
+<tr>
+<td>On another machine, I&#39;ll run a command there myself</td>
+<td>Kerstel prints one command. You run it on the server.</td>
+</tr>
+<tr>
+<td>On this machine</td>
+<td>Kerstel installs <code>kerstel-server</code> here. It is reachable only while this machine is on.</td>
+</tr>
+<tr>
+<td>I already have a server</td>
+<td>You give its address, or a server value.</td>
+</tr>
+</tbody></table>
+</div><p>Kerstel never asks for an SSH password or key. It runs your own <code>ssh</code>, so your keys, agent, <code>~/.ssh/config</code>, jump hosts and known-hosts checks all apply, and host-key and passphrase prompts show up in your terminal.</p>
+<h3>Over SSH or on this machine</h3>
+<p>Kerstel asks for the SSH host, as you would type it after <code>ssh</code>, like <code>ali@homebox</code>. It connects and says what it found, such as <code>Linux x64, Docker found.</code> It supports Linux and macOS hosts, on x64 and arm64.</p>
+<p>Then it asks how to run the server:</p>
+<ul>
+<li><strong>Docker.</strong> The image is <code>ghcr.io/alilibx/kerstel-server:&lt;version&gt;</code>, the same version as your Kerstel.</li>
+<li><strong>A service, no Docker.</strong> It downloads the <code>kerstel-server</code> binary of your Kerstel&#39;s version, checks it against the release&#39;s <code>SHA256SUMS</code>, and runs it under systemd on Linux or launchd on macOS.</li>
+</ul>
+<p>Without Docker on the host, it uses a service. Linux without systemd needs Docker.</p>
+<p>Then it asks how your other devices will reach the server:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Its own certificate, pinned by your devices</td>
+<td>No domain needed. The server listens on 8787. See <a href="#its-own-certificate-pinned">Its own certificate, pinned</a>.</td>
+</tr>
+<tr>
+<td>My domain, with a Let&#39;s Encrypt certificate</td>
+<td>The server listens on 443 and answers the challenge on 80. Kerstel warns when the domain does not point at the host yet. See <a href="#your-domain-with-lets-encrypt">Your domain, with Let&#39;s Encrypt</a>.</td>
+</tr>
+<tr>
+<td>Tailscale</td>
+<td>Offered when the host runs Tailscale. On a command you run yourself, it is always offered. Every device that syncs must be on your tailnet. See <a href="#tailscale">Tailscale</a>.</td>
+</tr>
+</tbody></table>
+</div><p>For a pinned server, it asks for the address your devices use. It starts from what it found: a host with a public IPv4 address (a VPS) gets <code>https://&lt;public-ip&gt;:8787</code>. A home box gets <code>https://&lt;hostname&gt;.local:8787</code> when this device resolves that name, and its LAN address otherwise. You can edit the answer. Give up to four addresses, separated by commas. A device uses the first one that answers, and <code>kerstel sync status</code> shows which one answered last.</p>
+<p>When the install finishes, Kerstel turns sync on for this device and uploads the vault. The server restarts on reboot.</p>
+<h3>A command you run yourself</h3>
+<p>Kerstel asks the same questions without detecting anything, then prints one command to paste on the server. The command downloads the installer for your Kerstel&#39;s version, checks its SHA-256 against a hash Kerstel computed, and only then runs it. When it finishes, the server prints a server value (<code>ks-server1-…</code>). Paste it at the hidden prompt, <code>Paste the server value it printed</code>. The value holds the enroll token, so treat it as a secret. Kerstel never takes it as an argument.</p>
+<h3>A server you already have</h3>
+<p>Give its address, or paste a server value. The address and the enroll token (<code>Enroll token (leave empty if the server has none)</code>) are asked at hidden prompts. <code>KERSTEL_SYNC_ENROLL_TOKEN</code> supplies the token instead. Kerstel then shows the server, how many secrets and scopes it will upload, and this device&#39;s name, and asks before uploading.</p>
+<p>For a script, pass a server value on stdin, so it never lands in your shell history or a process list:</p>
+<pre><code class="language-bash">printf &#39;%s\n&#39; &quot;$VALUE&quot; | kerstel sync setup --server-value - --yes
+</code></pre>
+<p>Without a terminal, <code>kerstel sync setup</code> with no arguments prints its usage instead.</p>
+<h3>If a step fails</h3>
+<p>Every step on the host checks what already exists, so run <code>kerstel sync setup</code> again and it continues where it stopped. If this device already started a server somewhere, a new run asks before setting up another. If sync is already on, <code>kerstel sync setup</code> says so and points at <code>kerstel sync server</code> and <code>kerstel sync add-device</code>.</p>
+<p>If the host already runs a Kerstel server that another device set up, Kerstel stops and says to run <code>kerstel sync add-device</code> on that device.</p>
+<h3>What the install changes on the host</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Runtime</th>
+<th>What it creates</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Docker</td>
+<td>A container and a volume, both named <code>kerstel-server</code>. The container restarts unless you stop it. The enroll token is <code>/data/enroll-token</code> in the volume.</td>
+</tr>
+<tr>
+<td>Service</td>
+<td><code>~/.kerstel-server/</code> for the SSH user, holding the database, the binary and the enroll token. On Linux the unit is <code>/etc/systemd/system/kerstel-server.service</code>, and it runs as that user. On macOS it is <code>/Library/LaunchDaemons/dev.kerstel.server.plist</code>.</td>
+</tr>
+</tbody></table>
+</div><p><code>kerstel-server</code> creates the enroll token file the first time it starts. The token never appears in a command line or in shell history. Devices need it to create a vault, not to join one.</p>
+<p>The installer asks for <code>sudo</code> only where it must, and says why before it asks:</p>
+<ul>
+<li>The service install needs <code>sudo</code> once, because the unit or plist belongs to root and systemd or launchd starts it.</li>
+<li>Docker needs <code>sudo</code> only when your user cannot reach the Docker daemon.</li>
+<li>Tailscale needs <code>sudo</code> only when your user is not a Tailscale operator.</li>
+</ul>
+<p>With a domain on Linux, the unit adds <code>CAP_NET_BIND_SERVICE</code>, so the server can listen on 80 and 443 as your user.</p>
+<p><strong>SELinux.</strong> On SELinux-enforcing hosts (RHEL, Fedora, Rocky), systemd may refuse to run the service&#39;s binary from your home directory (<code>203/EXEC</code>). Use Docker there, or relabel the binary.</p>
+<h3>Look after the server</h3>
+<p>The device that set up the server keeps a record of it in <code>~/.kerstel/sync-server.json</code>. It holds no secret and never syncs.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kerstel sync server</code></td>
+<td>Shows the server&#39;s address, whether it answers, its version, and where it runs.</td>
+</tr>
+<tr>
+<td><code>kerstel sync server update</code></td>
+<td>Updates the server to this Kerstel&#39;s version.</td>
+</tr>
+<tr>
+<td><code>kerstel sync server address &lt;url&gt;</code></td>
+<td>Points this device at the server&#39;s new address. It saves the address only when the server there answers with the pinned key and knows this device. Run it on each device.</td>
+</tr>
+<tr>
+<td><code>kerstel sync server manage &lt;ssh-host&gt;</code></td>
+<td>Takes over a server another device set up, after checking that it is the one this vault syncs with.</td>
+</tr>
+<tr>
+<td><code>kerstel sync server stop</code></td>
+<td>Stops the server and keeps its data.</td>
+</tr>
+<tr>
+<td><code>kerstel sync server remove</code></td>
+<td>Removes the server. It asks first, and asks again before it deletes the database.</td>
+</tr>
+</tbody></table>
+</div><p>For a server you installed with a pasted command, these print the matching command to run on the server.</p>
+<p><code>kerstel update</code> checks the server after it installs a new Kerstel. If the server is older, it says so and asks whether to update it now. Without a terminal, or with <code>--check</code>, it only says so. <code>kerstel doctor</code> warns about a server that is behind. <code>kerstel uninstall</code> on the device that set up the server asks whether to remove it too, and the default is no, since other devices may still use it. <code>kerstel sync off</code> and <code>kerstel uninstall</code> name <code>kerstel sync server manage</code> when they leave the server running, so another device can look after it.</p>
+<h2>Run a server yourself</h2>
+<p>The wizard does everything below for you. Run <code>kerstel-server</code> yourself when you want a different setup, or when the wizard does not fit.</p>
 <p><code>kerstel-server</code> stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.</p>
 <p>Kerstel sends a vault only to an <code>https://</code> URL, or <code>http://</code> to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs. Each has its own section below.</p>
 <div class="table-wrap"><table>
@@ -91,7 +226,7 @@ chmod +x kerstel-server-linux-x64
 </tr>
 <tr>
 <td><code>--enroll-token-file &lt;file&gt;</code></td>
-<td><code>KERSTEL_SERVER_ENROLL_TOKEN</code></td>
+<td><code>KERSTEL_SERVER_ENROLL_TOKEN_FILE</code>, or <code>KERSTEL_SERVER_ENROLL_TOKEN</code> for the token itself</td>
 <td>none: anyone who can reach the server can create a vault</td>
 </tr>
 <tr>
@@ -131,7 +266,8 @@ chmod +x kerstel-server-linux-x64
 </tr>
 </tbody></table>
 </div><p>A flag wins over its variable. <code>--domain</code> ignores <code>KERSTEL_SERVER_TLS</code> and <code>KERSTEL_SERVER_TLS_NAMES</code>, and <code>--tls self</code> ignores <code>KERSTEL_SERVER_DOMAIN</code>.</p>
-<p>With an enroll token, only a device that has it can create a vault: set <code>KERSTEL_SYNC_ENROLL_TOKEN</code> when you run <code>sync setup</code>. Joining an existing vault never needs it.</p>
+<p>With an enroll token, only a device that has it can create a vault: set <code>KERSTEL_SYNC_ENROLL_TOKEN</code> when you run <code>sync setup</code>. Joining an existing vault never needs it. <code>--enroll-token-file</code> creates the file with a new token when it does not exist, and says so without printing the token.</p>
+<p>Two commands read a running setup. <code>kerstel-server info</code> prints the version, the TLS mode and, with <code>--tls self</code>, the pin. <code>kerstel-server value --url &lt;url&gt;</code> prints a server value (<code>ks-server1-…</code>) from the token file and the pin, with the same flags and environment variables as the server. Up to four <code>--url</code> addresses are allowed. Pass the value to a device with <code>kerstel sync setup --server-value -</code> on stdin. With Docker, run it as <code>docker exec kerstel-server kerstel-server value --url &lt;url&gt;</code>.</p>
 <h3>Its own certificate, pinned</h3>
 <p>This needs no domain and no proxy. The server makes a certificate for itself, and your devices trust exactly that one. Start it on an address your devices can reach, and name that address:</p>
 <pre><code class="language-bash">./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
@@ -179,6 +315,7 @@ tailscale serve --bg 8787
 <pre><code class="language-bash">docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 tailscale serve --bg 8787
 </code></pre>
+<p>On a server the wizard set up, <code>kerstel sync server remove</code> turns off <code>tailscale serve</code> on port 443, including any other handlers you set up there.</p>
 <p>Turn on HTTPS certificates for your tailnet first: in the Tailscale admin console, open DNS and enable MagicDNS and HTTPS Certificates. Every device that syncs must be on the tailnet. The address is <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>, with no pin:</p>
 <pre><code class="language-bash">kerstel sync setup https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net
 </code></pre>
@@ -188,8 +325,8 @@ tailscale serve --bg 8787
 	reverse_proxy 127.0.0.1:8787
 }
 </code></pre>
-<h2>Turn it on</h2>
-<p>On the device that holds your vault:</p>
+<h2>Turn it on with an address</h2>
+<p>To use a server you already run, on the device that holds your vault:</p>
 <pre><code class="language-bash">kerstel sync setup https://sync.example.com
 </code></pre>
 <p>For a server with its own certificate, add the pin the server printed: <code>kerstel sync setup https://203.0.113.7:8787 --pin sha256/…</code>. <code>--pin</code> works only with an <code>https://</code> URL. Without it, <code>sync setup</code> can&#39;t check that server&#39;s certificate, and says to pass <code>--pin</code>. A pin that is not the server&#39;s fails, and nothing is sent.</p>

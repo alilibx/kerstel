@@ -6,7 +6,9 @@ The [Sync docs](https://kerstel.dev/docs/sync) cover setup, pairing and conflict
 
 ## Install
 
-Every [release](https://github.com/alilibx/kerstel/releases/latest) ships the server next to the CLI, with the same version: `kerstel-server-<platform>` binaries for Linux and macOS, covered by the release's `SHA256SUMS`, and an image:
+The easy way is `kerstel sync setup`. It installs `kerstel-server` for you, over SSH, on this machine, or with one command you run on the server, with Docker or as a service. See the [Sync docs](https://kerstel.dev/docs/sync).
+
+To install it by hand: every [release](https://github.com/alilibx/kerstel/releases/latest) ships the server next to the CLI, with the same version: `kerstel-server-<platform>` binaries for Linux and macOS, covered by the release's `SHA256SUMS`, and an image:
 
 ```bash
 docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
@@ -27,7 +29,7 @@ bun run --cwd packages/server build        # dist/kerstel-server
 |---|---|---|
 | `--db <file>` | `KERSTEL_SERVER_DB` | `./kerstel-server.db` |
 | `--listen <host:port>` | `KERSTEL_SERVER_LISTEN` | `127.0.0.1:8787`, or `0.0.0.0:443` with `--domain` when neither this flag nor the variable is set |
-| `--enroll-token-file <file>` | `KERSTEL_SERVER_ENROLL_TOKEN` | none: anyone who can reach the server can create a vault |
+| `--enroll-token-file <file>` | `KERSTEL_SERVER_ENROLL_TOKEN_FILE`, or `KERSTEL_SERVER_ENROLL_TOKEN` for the token itself | none: anyone who can reach the server can create a vault |
 | `--trust-proxy` | | off: rate limits use the socket address, not `X-Forwarded-For` |
 | `--tls self` | `KERSTEL_SERVER_TLS` | off: plain HTTP |
 | `--tls-name <name>` | `KERSTEL_SERVER_TLS_NAMES` | none. Repeat the flag, or comma-separate the variable. |
@@ -35,6 +37,13 @@ bun run --cwd packages/server build        # dist/kerstel-server
 | `--acme-email <address>` | `KERSTEL_SERVER_ACME_EMAIL` | none |
 | `--acme-http <host:port>` | `KERSTEL_SERVER_ACME_HTTP` | `0.0.0.0:80` |
 | `--acme-directory <url>` | `KERSTEL_SERVER_ACME_DIRECTORY` | Let's Encrypt |
+
+`--enroll-token-file` creates the file with a new token (32 random bytes, base64url, mode `0600`) when it does not exist, and logs that it did, without the token. A mistyped path fails closed: no device can create a vault until the right token is used.
+
+Two commands read a setup and exit:
+
+- `kerstel-server info` prints the version, the TLS mode and, with `--tls self`, the pin.
+- `kerstel-server value --url <url> [--url <url>]...` prints a server value (`ks-server1-…`) from the token file and the TLS pin. It takes up to four addresses and the same flags and environment variables as the server. Give the value to a device with `kerstel sync setup --server-value -` on stdin. The value holds the enroll token, so paste it only into Kerstel. With Docker, run `docker exec kerstel-server kerstel-server value --url <url>`.
 
 A flag wins over its variable. `--domain` ignores `KERSTEL_SERVER_TLS` and `KERSTEL_SERVER_TLS_NAMES`, and `--tls self` ignores `KERSTEL_SERVER_DOMAIN`.
 
@@ -51,13 +60,13 @@ kerstel sync setup https://203.0.113.7:8787 --pin sha256/…
 
 The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs`. To move to a domain later, start the server with `--domain` and the same database. The new certificate is for the same key, so pinned devices keep working.
 
-**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. Ports 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, or a third of the certificate's lifetime if that is shorter, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again after 10 tries, a second apart, the server exits, so something must start it again.
+**Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. TCP 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, or a third of the certificate's lifetime if that is shorter, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again after 10 tries, a second apart, the server exits, so something must start it again.
 
 **Files.** The key, certificate and ACME account key sit beside the database: `<db>.tls-key.pem` (mode `0600`), `<db>.tls-cert.pem` and `<db>.acme-account.pem` (mode `0600`). The key survives restarts, so the pin does too.
 
 **Certificate request.** `GET /v1/certificate` returns `{ "certificate": "<base64 DER>" }` without authentication, or 404 when the server has no certificate of its own.
 
-**Tailscale.** Run `kerstel-server --listen 127.0.0.1:8787`, then `tailscale serve --bg 8787`. Enable HTTPS Certificates for your tailnet in the Tailscale admin console, under DNS. Every device must be on the tailnet. The URL is `https://<machine>.<tailnet>.ts.net`, with no pin.
+**Tailscale.** Run `kerstel-server --listen 127.0.0.1:8787`, then `tailscale serve --bg 8787`. On a server `kerstel sync setup` installed, `kerstel sync server remove` turns off `tailscale serve` on port 443, including any other handlers you set up there. Enable HTTPS Certificates for your tailnet in the Tailscale admin console, under DNS. Every device must be on the tailnet. The URL is `https://<machine>.<tailnet>.ts.net`, with no pin.
 
 **Behind your own proxy.** Without `--tls` or `--domain` the server speaks plain HTTP. Put it behind a proxy that terminates TLS. With Caddy:
 

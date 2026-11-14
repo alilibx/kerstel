@@ -40,8 +40,10 @@ const COMMANDS = `Usage:
   ${cliName()} exec -- <command>                     Run a command with the hook wired in
   ${cliName()} resolve ks:<scope>/<KEY>             Print one resolved value
   ${cliName()} daemon <serve|start|stop|status>      Manage the resolver daemon
-  ${cliName()} sync setup <url> | status | devices | off
+  ${cliName()} sync setup | setup <url> | status | devices | off
                                                 Sync the vault between your devices
+  ${cliName()} sync server [update | address <url> | manage <ssh-host> | stop | remove]
+                                                Look after the server this device set up
   ${cliName()} sync add-device | join <url> <code> | remove-device <name>
                                                 Pair a device, or remove one
   ${cliName()} sync [--keep local|remote]            Pull, push, and settle conflicts

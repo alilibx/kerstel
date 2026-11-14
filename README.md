@@ -57,8 +57,11 @@ ks resolve ks:<scope>/<KEY>                       # Print one resolved value
 ks daemon <serve|start|stop|status>               # Manage the resolver daemon
 ks doctor [--verbose]                             # Diagnose this machine's setup
 ks scan [path] [--keys] [--all] [--json]          # Find env files that still hold secrets
+ks sync setup                                     # Set up a sync server and this device, step by step
 ks sync setup <url> [--pin <pin>] | status | devices | off
                                                   # Sync the vault between your devices (end-to-end encrypted)
+ks sync server [update|address <url>|manage <ssh-host>|stop|remove]
+                                                  # Look after the server this device set up
 ks sync add-device / ks sync join [<value>]       # Pair another device with one pasted value
 ks sync remove-device <name>                      # Remove a device and replace the sync key
 ks sync [--keep local|remote]                     # Pull, push, and settle conflicts
