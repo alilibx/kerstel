@@ -47,6 +47,8 @@ import {
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
 import { loadSync, saveSync, SYNC_META, SyncSettingsError } from "../src/sync/state";
+import { readInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
+import { cliName } from "../src/ui/cli-name";
 import { encodeJoinValue, parseJoinValue, type JoinValue } from "../src/sync/join-value";
 import type { Prompter } from "../src/init/prompts";
 import { encrypt, generateDataKey } from "../src/vault/crypto";
@@ -340,6 +342,36 @@ describe("one device and the server", () => {
     const before = a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length);
     expect((await sync(a, s, ["off", "--delete-vault"])).code).toBe(0);
     expect(a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length)).toBe(before + 1);
+  });
+
+  test("sync off on the device that installed the server names manage, and keeps the record", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const installed: InstallRecord = {
+      installId: "install-id-1",
+      route: "ssh",
+      host: "ali@homebox",
+      runtime: "docker",
+      reach: "domain",
+      addresses: [SERVER],
+      version: "0.0.1",
+      finished: true,
+    };
+    writeInstallRecord(installed, a.home);
+    const { code, out } = await sync(a, s, ["off", "--delete-vault"]);
+    expect(code).toBe(0);
+    expect(out).toContain(`The server keeps running. To manage it from another device: ${cliName()} sync server manage ali@homebox`);
+    expect(readInstallRecord(a.home)).toEqual(installed);
+  });
+
+  test("sync off without a record says nothing of manage", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const { code, out } = await sync(a, s, ["off", "--delete-vault"]);
+    expect(code).toBe(0);
+    expect(out).not.toContain("sync server manage");
   });
 });
 

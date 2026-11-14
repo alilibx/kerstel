@@ -17,6 +17,22 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
   return 0;
 }
 
+/** `MAJOR.MINOR.PATCH` of `v`, without a leading `v` or a `-dev`, pre-release or build suffix; null when `v` is not a version. */
+function releaseOf(v: string): string | null {
+  const match = /^v?(\d+\.\d+\.\d+)(?:[-+].*)?$/.exec(v.trim());
+  return match ? match[1]! : null;
+}
+
+/**
+ * Whether `a` is an older release than `b`. Suffixes are dropped first, since
+ * `compareVersions` reads only numbers. False when either is not a version.
+ */
+export function isOlderRelease(a: string, b: string): boolean {
+  const left = releaseOf(a);
+  const right = releaseOf(b);
+  return left !== null && right !== null && compareVersions(left, right) < 0;
+}
+
 /**
  * `https://github.com/<owner>/<repo>/releases/latest` answers with a redirect
  * to `.../releases/tag/v<version>`. That Location is the only thing the check

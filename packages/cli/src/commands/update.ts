@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { stopDaemonIfRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
+import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
 import { fail, info, ok, yellow } from "../output";
 import { SYMBOLS } from "../ui/theme";
 import { cliName } from "../ui/cli-name";
@@ -10,6 +11,7 @@ import { ProgressBar } from "../update/progress";
 import { githubReleases, type ReleaseSource } from "../update/release-source";
 import { assetName, compareVersions } from "../update/versions";
 import { VERSION } from "../version";
+import { serverBehind } from "./sync-server";
 
 /** Everything `update` reads from the machine, injectable so tests never touch the real binary or GitHub. */
 export interface UpdateDeps {
@@ -24,17 +26,84 @@ export interface UpdateDeps {
   stopDaemon: () => Promise<boolean>;
   /** Whether stdout is a terminal, where the download draws a bar. Defaults to the real stream. */
   isTTY?: boolean;
+  /**
+   * The sync server this device installed, when it runs an older release than
+   * `version`; null when there is none, it is current, or it did not answer.
+   * Omitted: no server is checked.
+   */
+  serverBehind?: (version: string) => Promise<{ place: string; version: string } | null>;
+  /** Runs `sync server update` with the CLI now installed; resolves to its exit code. */
+  updateServer?: () => Promise<number>;
+  /** Whether stdin and stdout are a terminal, to ask about the server. Defaults to the real streams. */
+  interactive?: boolean;
+  prompter?: Prompter;
 }
 
 function realDeps(): UpdateDeps {
+  const targetPath = realpathSync(process.execPath);
   return {
     source: githubReleases(),
-    targetPath: realpathSync(process.execPath),
+    targetPath,
     asset: assetName(process.platform, process.arch),
     compiled: isCompiledBinary(),
     currentVersion: VERSION,
     stopDaemon: stopDaemonIfRunning,
+    serverBehind: (version) => serverBehind(version),
+    updateServer: () => updateServerWith(targetPath),
   };
+}
+
+/**
+ * The new binary updates the server, not this process: it is the old version,
+ * and the installer it would upload and the version it would install must be
+ * the new one's. It shows its own output and prompts on this terminal.
+ */
+async function updateServerWith(binary: string): Promise<number> {
+  const proc = Bun.spawn([binary, "sync", "server", "update"], {
+    // Keeps `ks` in the hints when the user typed `ks`.
+    argv0: process.argv0,
+    env: process.env,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  return proc.exited;
+}
+
+/**
+ * After `update` leaves this Kerstel at `version`: says when the server this
+ * device installed runs an older release, and on a terminal offers to update
+ * it (Yes by default). `--check` changes nothing, so it only says so. A server
+ * that does not answer is not mentioned. Resolves to the exit code.
+ */
+async function checkServer(version: string, deps: UpdateDeps, checkOnly: boolean): Promise<number> {
+  if (!deps.serverBehind) return 0;
+  const behind = await deps.serverBehind(version);
+  if (behind === null) return 0;
+  const cli = cliName();
+  info(`The sync server on ${behind.place} runs ${behind.version}; this Kerstel is ${version}.`);
+  const terminal = deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+  if (checkOnly || !terminal || !deps.updateServer) {
+    info(`Run ${cli} sync server update to update it.`);
+    return 0;
+  }
+  let answer: "yes" | "no";
+  try {
+    answer = await (deps.prompter ?? new ClackPrompter()).select(
+      "Update the server now?",
+      [
+        { value: "yes", label: "Yes, update it" },
+        { value: "no", label: "No, not now" },
+      ],
+      "yes",
+    );
+  } catch (error) {
+    if (error instanceof CancelledError) answer = "no";
+    else throw error;
+  }
+  if (answer !== "yes") {
+    info(`Update it later with ${cli} sync server update.`);
+    return 0;
+  }
+  return deps.updateServer();
 }
 
 /** The dim line under `--version` on a terminal. */
@@ -149,13 +218,14 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
       return 1;
     case "up-to-date":
       ok(`kerstel ${outcome.version} is up to date.`);
-      return 0;
+      // The CLI may be current while the server it installed is not.
+      return checkServer(outcome.version, deps, checkOnly);
     case "available":
       info(`kerstel ${outcome.to} is available (you have ${outcome.from}). Run ${cli} update to install it.`);
       return 0;
     case "updated":
       ok(`Updated kerstel from ${outcome.from} to ${outcome.to}.`);
       await stopOldDaemon(deps.stopDaemon, cli);
-      return 0;
+      return checkServer(outcome.to, deps, checkOnly);
   }
 }

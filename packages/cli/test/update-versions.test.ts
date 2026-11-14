@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { assetName, compareVersions, versionFromReleaseUrl } from "../src/update/versions";
+import { assetName, compareVersions, isOlderRelease, versionFromReleaseUrl } from "../src/update/versions";
 
 test("compareVersions orders by major, minor, then patch", () => {
   expect(compareVersions("0.1.0", "0.1.1")).toBe(-1);
@@ -31,4 +31,17 @@ test("assetName matches the release workflow's file names", () => {
 test("assetName is null on a platform without a release binary", () => {
   expect(assetName("win32", "x64")).toBeNull();
   expect(assetName("linux", "ia32")).toBeNull();
+});
+
+test("isOlderRelease compares releases, ignoring a -dev or pre-release suffix", () => {
+  expect(isOlderRelease("0.3.0", "0.4.0")).toBe(true);
+  expect(isOlderRelease("0.4.0", "0.4.0")).toBe(false);
+  expect(isOlderRelease("0.5.0", "0.4.0")).toBe(false);
+  expect(isOlderRelease("0.3.0", "0.4.0-dev")).toBe(true);
+  expect(isOlderRelease("0.4.0-rc.1", "0.4.0")).toBe(false);
+  expect(isOlderRelease("0.4.0", "0.4.0-dev")).toBe(false);
+  expect(isOlderRelease("v0.3.0", "0.4.0")).toBe(true);
+  // Not a version: never "older", so nothing is offered on a guess.
+  expect(isOlderRelease("test", "0.4.0")).toBe(false);
+  expect(isOlderRelease("0.3.0", "dev")).toBe(false);
 });

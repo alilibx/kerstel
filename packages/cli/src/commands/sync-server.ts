@@ -5,12 +5,15 @@ import { openContext } from "../context";
 import { ClackPrompter } from "../init/prompts";
 import { dim, fail, info, ok, yellow } from "../output";
 import { isSafeReleaseUrl } from "../update/release-source";
+import { isOlderRelease } from "../update/versions";
+import { vaultPath } from "../paths";
+import { glanceSync } from "../sync/background";
 import { cliName } from "../ui/cli-name";
 import { VERSION } from "../version";
 import { MAX_ADDRESSES, parseHostFacts, resolveIpv4, type HostFacts } from "../sync/host-facts";
 import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "../sync/install-record";
 import { manualCommand } from "../sync/installer";
-import { PIN_NEEDS_HTTPS, SyncHttpError, syncClient } from "../sync/http";
+import { PIN_NEEDS_HTTPS, SyncHttpError, syncClient, type Fetch } from "../sync/http";
 import { localHost, sshHost, type Host } from "../sync/remote";
 import { SYNC_META, isSafeServerUrl, loadSync, normaliseServerUrl, saveSync, shownAddress, type SyncConfig } from "../sync/state";
 import { isHttps, parsePin } from "../../../server/src/pin";
@@ -93,6 +96,28 @@ function whereOf(r: InstallRecord): string | null {
   if (r.route === "local") return "this machine";
   if (r.route === "ssh") return r.host;
   return null;
+}
+
+/** Where the record's server runs, for a sentence: its SSH host, this machine, or the host of its address. */
+export function serverPlace(r: InstallRecord): string {
+  const where = whereOf(r);
+  if (where !== null) return where;
+  const first = r.addresses[0];
+  if (first === undefined) return "the host you ran the install command on";
+  try {
+    return hostOfUrl(first);
+  } catch {
+    return first;
+  }
+}
+
+/**
+ * What `uninstall` and `sync off` print, so a server never goes without a
+ * device that can update it. Only an SSH host can be named for `manage`.
+ */
+export function manageLine(r: InstallRecord): string {
+  const target = r.route === "ssh" && r.host !== null ? r.host : "<ssh-host>";
+  return `The server keeps running. To manage it from another device: ${cliName()} sync server manage ${target}`;
 }
 
 function hostFor(deps: SyncServerDeps, route: "ssh" | "local", target: string | null, write?: (text: string) => void): Host {
@@ -178,6 +203,61 @@ async function healthOf(config: SyncConfig, deps: SyncServerDeps): Promise<{ add
   } catch (error) {
     return { error: (error as Error).message };
   }
+}
+
+/** How long `kerstel update` and `doctor` wait for the server's version, over every address together. */
+export const SERVER_CHECK_MS = 3_000;
+
+/**
+ * The version the server answers with, through this vault's addresses and
+ * pin, or null when none answers within `timeoutMs`. Never throws: an
+ * offline server is never an error where this is asked.
+ */
+export async function serverVersion(config: SyncConfig, deps: SyncServerDeps = {}, timeoutMs: number = SERVER_CHECK_MS): Promise<string | null> {
+  // One deadline for every request, the pinned certificate fetch included, so
+  // a server with several silent addresses still takes no longer than this.
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const base: Fetch = deps.fetch ?? ((request, init) => fetch(request, init as RequestInit));
+  const timed: Fetch = (request, init) => base(new Request(request, { signal: deadline }), init);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Also bounds a `health` hook, which no signal reaches.
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    const health = await Promise.race([healthOf(config, { ...deps, fetch: timed }), late]);
+    return health !== null && "version" in health ? health.version : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * For `kerstel update`: the server this device installed, when it runs an
+ * older release than `version`. Null when this device has no install record,
+ * sync is off here, or the server does not answer in time.
+ */
+export async function serverBehind(version: string, deps: SyncServerDeps = {}): Promise<{ place: string; version: string } | null> {
+  const record = readInstallRecord();
+  // Read-only, so a device with sync off never opens its vault for this.
+  if (record === null || !glanceSync(vaultPath()).on) return null;
+  let config: SyncConfig | null;
+  try {
+    const ctx = await (deps.context ?? (() => openContext({ warnFileKey: false })))();
+    try {
+      config = loadSync(ctx.vault, ctx.dataKey);
+    } finally {
+      ctx.vault.close();
+    }
+  } catch {
+    return null;
+  }
+  if (config === null) return null;
+  const running = await serverVersion(config, deps);
+  if (running === null || !isOlderRelease(running, version)) return null;
+  return { place: serverPlace(record), version: running };
 }
 
 // ---- update, stop, remove -----------------------------------------------------
@@ -295,6 +375,32 @@ async function remove(record: InstallRecord, deps: SyncServerDeps): Promise<numb
   removeInstallRecord();
   ok(`Removed the server from ${where}.${kept}`);
   return 0;
+}
+
+/**
+ * For `uninstall`, which has already asked: removes the server and keeps its
+ * database, without another question. A server installed by hand gets the
+ * command to run there. False when it was not removed; the caller says what
+ * that means, since the record goes with Kerstel.
+ */
+export async function removeServerKeepingData(record: InstallRecord, deps: SyncServerDeps = {}): Promise<boolean> {
+  if (record.route === "manual") {
+    const releases = releasesUrl();
+    if ("error" in releases) {
+      fail(releases.error);
+      return false;
+    }
+    printManual("removes kerstel-server and keeps its database", ["remove"], deps.version ?? VERSION);
+    return true;
+  }
+  const where = whereOf(record)!;
+  const run = await hostFor(deps, record.route, record.host).run(["remove"], { interactive: true });
+  if (run.code !== 0) {
+    fail(`The server on ${where} was not removed.`);
+    return false;
+  }
+  ok(`Removed the server from ${where}. Its database stays on the host.`);
+  return true;
 }
 
 // ---- address ------------------------------------------------------------------

@@ -5,11 +5,11 @@ import { createApp } from "../../server/src/app";
 import { openDatabase } from "../../server/src/db";
 import { formatPin } from "../../server/src/pin";
 import { syncCommand } from "../src/commands/sync";
-import { hidingReport, syncServerCommand, type SyncServerDeps } from "../src/commands/sync-server";
+import { hidingReport, serverBehind, serverVersion, syncServerCommand, type SyncServerDeps } from "../src/commands/sync-server";
 import type { CliContext } from "../src/context";
 import { ScriptedPrompter, type Choice } from "../src/init/prompts";
 import type { Fetch } from "../src/sync/http";
-import { readInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
+import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
 import { manualCommand } from "../src/sync/installer";
 import type { Host, InstallerRun } from "../src/sync/remote";
 import { loadSync } from "../src/sync/state";
@@ -610,5 +610,79 @@ describe("ks sync server manage", () => {
     const d = device();
     expect((await server(d, ["manage"])).code).toBe(2);
     expect((await server(d, ["manage", "-oProxyCommand=x"])).code).toBe(2);
+  });
+});
+
+describe("the server's version, for kerstel update and doctor", () => {
+  const answers = (version: string | null) => async () => (version === null ? null : { version });
+
+  test("serverBehind names an older server, and nothing for a current or silent one", async () => {
+    const d = device();
+    await plainSync(d, plainServer().fetch);
+    writeInstallRecord(record(), d.home);
+    const behind = (cli: string, version: string | null) => serverBehind(cli, { context: d.context, health: answers(version) });
+    expect(await behind("0.4.0", "0.3.0")).toEqual({ place: "ali@homebox", version: "0.3.0" });
+    expect(await behind("0.4.0", "0.4.0")).toBeNull();
+    expect(await behind("0.4.0-dev", "0.4.0")).toBeNull();
+    expect(await behind("0.4.0", null)).toBeNull();
+  });
+
+  test("a server on this machine, or installed by hand, is named by where it runs", async () => {
+    const d = device();
+    await plainSync(d, plainServer().fetch);
+    writeInstallRecord(record({ route: "local", host: null }), d.home);
+    expect(await serverBehind("0.4.0", { context: d.context, health: answers("0.3.0") })).toEqual({ place: "this machine", version: "0.3.0" });
+    writeInstallRecord(record({ route: "manual", host: null }), d.home);
+    expect(await serverBehind("0.4.0", { context: d.context, health: answers("0.3.0") })).toEqual({ place: "192.168.1.20", version: "0.3.0" });
+  });
+
+  test("with no record, or sync off, it opens no vault and asks no server", async () => {
+    const d = device();
+    let asked = 0;
+    const deps: SyncServerDeps = {
+      context: async () => {
+        asked += 1;
+        return d.context();
+      },
+      health: async () => {
+        asked += 1;
+        return { version: "0.0.1" };
+      },
+    };
+    writeInstallRecord(record(), d.home);
+    expect(await serverBehind("0.4.0", deps)).toBeNull();
+    removeInstallRecord(d.home);
+    await plainSync(d, plainServer().fetch);
+    expect(await serverBehind("0.4.0", deps)).toBeNull();
+    expect(asked).toBe(0);
+  });
+
+  test("a server that never answers counts as silent, within the time allowed", async () => {
+    const d = device();
+    await plainSync(d, plainServer().fetch);
+    const config = d.with((v) => loadSync(v, d.key))!;
+    const aborted: string[] = [];
+    // Answers only when the request is aborted: the deadline must reach the fetch.
+    const hanging: Fetch = (request) =>
+      new Promise((_, reject) =>
+        request.signal.addEventListener("abort", () => {
+          aborted.push(request.url);
+          reject(new Error("aborted"));
+        }),
+      );
+    const started = Date.now();
+    expect(await serverVersion(config, { fetch: hanging }, 100)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(aborted).toHaveLength(1);
+    // A health hook that ignores the deadline is cut off all the same.
+    expect(await serverVersion(config, { health: () => new Promise(() => {}) }, 100)).toBeNull();
+  });
+
+  test("serverVersion reads a pinned server's health through its pin", async () => {
+    const d = device();
+    const l = listener();
+    await pinnedSync(d, l);
+    const config = d.with((v) => loadSync(v, d.key))!;
+    expect(await serverVersion(config)).toBe("test");
   });
 });

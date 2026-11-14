@@ -61,7 +61,8 @@ import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 import { parseServerValue } from "../sync/server-value";
 import { runWizard } from "../sync/wizard";
-import { syncServerCommand } from "./sync-server";
+import { manageLine, syncServerCommand } from "./sync-server";
+import { readInstallRecord } from "../sync/install-record";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
@@ -873,6 +874,16 @@ async function devices(args: string[], deps: SyncDeps, open: () => Promise<CliCo
   }
 }
 
+/**
+ * After `sync off` on the device that installed the server: the server keeps
+ * running, and this device keeps its record, so it names how another device
+ * takes it over. Easy-sync spec §9.
+ */
+function nameManage(): void {
+  const record = readInstallRecord();
+  if (record !== null) info(manageLine(record));
+}
+
 async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
   const deleteVault = args.includes("--delete-vault");
   if (args.some((a) => a !== "--delete-vault")) {
@@ -895,6 +906,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
         "This device's sync settings could not be read, so it could not leave the vault on the server. " +
           "Sync is off here; your secrets stay here.",
       );
+      nameManage();
       return 0;
     }
     if (!sync) {
@@ -910,6 +922,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
         forgetSync(ctx.vault);
         removeTimer(deps);
         ok("This device was no longer in the synced vault. Sync is off for it; your secrets stay here.");
+        nameManage();
         return 0;
       }
       if (error instanceof SyncHttpError && error.code === "pin_mismatch") {
@@ -925,6 +938,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
             : "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
                 `Sync is off here; your secrets stay here. To sync again, run ${cliName()} sync setup and pair your other devices again.`,
         );
+        nameManage();
         return 0;
       }
       if (error instanceof SyncHttpError && error.code === "last_device") {
@@ -941,6 +955,7 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
     forgetSync(ctx.vault);
     removeTimer(deps);
     ok(deleteVault ? "Deleted the vault on the server. Sync is off; your secrets stay here." : "Sync is off for this device. Your secrets stay here.");
+    nameManage();
     return 0;
   } finally {
     ctx.vault.close();

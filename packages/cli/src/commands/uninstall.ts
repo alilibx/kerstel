@@ -12,6 +12,8 @@ import { syncTimer, type SyncTimer } from "../sync/timer";
 import { loadSync, shownAddress, SYNC_META } from "../sync/state";
 import { syncLockPath, waitForSyncLock } from "../sync/background";
 import { clientFor, LOCK_WAIT_MS } from "./sync";
+import { manageLine, removeServerKeepingData, serverPlace, type SyncServerDeps } from "./sync-server";
+import { readInstallRecord } from "../sync/install-record";
 import { fail, info, ok, yellow } from "../output";
 import { kerstelHome } from "../paths";
 import { emptyPlan, hasLoss, planUninstall, type RestoredProject, type UninstallPlan } from "../uninstall/plan";
@@ -292,8 +294,8 @@ export async function uninstallCommand(
     compiled: isCompiledBinary(),
     invokedAs: process.argv0,
   },
-  /** For tests: how the sync server is reached, the timer, and how long to wait for the sync lock. */
-  syncDeps: { fetch?: Fetch; now?: () => number; timer?: SyncTimer; lockWaitMs?: number } = {},
+  /** For tests: how the sync server is reached, the timer, how long to wait for the sync lock, and where an installed server runs. */
+  syncDeps: { fetch?: Fetch; now?: () => number; timer?: SyncTimer; lockWaitMs?: number; hostFor?: SyncServerDeps["hostFor"] } = {},
 ): Promise<number> {
   const options = parseUninstallArgs(args);
   if ("error" in options) {
@@ -339,6 +341,9 @@ export async function uninstallCommand(
     plan = emptyPlan();
   }
 
+  // The sync server this device installed, if any. Other devices may still use it.
+  const server = readInstallRecord();
+
   printPlan(plan);
   const timer = syncDeps.timer ?? syncTimer();
   let timerInstalled = false;
@@ -349,6 +354,7 @@ export async function uninstallCommand(
   }
   if (timerInstalled) info("Removes the scheduled sync pull.");
   if (synced) info(`This device leaves the synced vault on ${synced.shown} first.`);
+  if (server) info(`Asks whether to also remove the sync server on ${serverPlace(server)}.`);
   console.log("");
 
   if (options.dryRun) {
@@ -365,8 +371,9 @@ export async function uninstallCommand(
     return 1;
   }
 
-  // --yes never deletes the server's copy: that takes a person saying so.
+  // --yes never deletes the server's copy, nor removes the server: that takes a person saying so.
   let deleteRemote = false;
+  let removeServer = false;
   if (!options.yes) {
     const prompter = prompterOverride ?? (process.stdin.isTTY === true ? new ClackPrompter() : null);
     if (!prompter) {
@@ -405,6 +412,25 @@ export async function uninstallCommand(
           "no",
         );
         deleteRemote = remove === "yes";
+      } catch (error) {
+        if (error instanceof CancelledError) {
+          fail(error.message);
+          return 130;
+        }
+        throw error;
+      }
+    }
+    if (server) {
+      try {
+        const remove = await prompter.select(
+          `Also remove the sync server on ${serverPlace(server)}? Other devices may still use it.`,
+          [
+            { value: "no", label: "No, keep it running" },
+            { value: "yes", label: "Yes, remove it and keep its database" },
+          ],
+          "no",
+        );
+        removeServer = remove === "yes";
       } catch (error) {
         if (error instanceof CancelledError) {
           fail(error.message);
@@ -473,6 +499,11 @@ export async function uninstallCommand(
   }
 
   if (synced) await leaveSyncedVault(synced, deleteRemote);
+  // After leaving the vault, which needs the server. Like leaving, a failure
+  // never stops the uninstall; the record goes with the home either way.
+  if (server && !(removeServer && (await removeServerKeepingData(server, { hostFor: syncDeps.hostFor })))) {
+    info(manageLine(server));
+  }
   const home = kerstelHome();
   // A background sync installs a missing timer only under the sync lock, and
   // only while the vault is there. Held from the timer's removal until the
