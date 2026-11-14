@@ -169,6 +169,8 @@ async function server(d: Device, args: string[], deps: Partial<SyncServerDeps> &
       hostFor: () => {
         throw new Error("this test runs no host");
       },
+      // Never the real `ssh -G`.
+      sshHostname: async () => null,
       ...deps,
     }),
   );
@@ -633,6 +635,22 @@ describe("ks sync server manage", () => {
     });
     expect(taken.code).toBe(0);
     expect(readInstallRecord()).toMatchObject({ route: "ssh", host: "ali@homebox", reach: "domain", addresses: ["https://sync.example.com"], finished: true });
+  });
+
+  test("a VPS behind NAT is matched by the public address its SSH target resolves to", async () => {
+    const d = device();
+    const s = plainServer();
+    await plainSync(d, s.fetch, "https://sync.example.com");
+    // The host reports only its private address; the domain and the SSH target point at the public one.
+    const host = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.5"] }), value: null } });
+    const taken = await server(d, ["manage", "ali@vps"], {
+      hostFor: host.hostFor,
+      fetch: s.fetch,
+      sshHostname: async () => "vps.example.net",
+      resolveAll: async (name) => (name === "sync.example.com" || name === "vps.example.net" ? ["203.0.113.7"] : []),
+    });
+    expect(taken.code).toBe(0);
+    expect(readInstallRecord()).toMatchObject({ route: "ssh", host: "ali@vps", addresses: ["https://sync.example.com"] });
   });
 
   test("an unpinned server whose address matches still has to know this vault", async () => {

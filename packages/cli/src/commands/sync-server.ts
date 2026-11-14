@@ -8,11 +8,11 @@ import { vaultPath } from "../paths";
 import { glanceSync } from "../sync/background";
 import { cliName } from "../ui/cli-name";
 import { VERSION } from "../version";
-import { MAX_ADDRESSES, parseHostFacts, resolveIpv4, type HostFacts } from "../sync/host-facts";
+import { MAX_ADDRESSES, parseHostFacts, resolveIpv4, sshPublicAddress, type HostFacts } from "../sync/host-facts";
 import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "../sync/install-record";
 import { manualCommand } from "../sync/installer";
 import { PIN_NEEDS_HTTPS, SyncHttpError, syncClient, type Fetch } from "../sync/http";
-import { localHost, sshHost, type Host } from "../sync/remote";
+import { localHost, sshHost, sshHostname, type Host } from "../sync/remote";
 import { ANOTHER_DEVICES_SERVER, DOCKER_NOT_CHECKED, DOCKER_UNCHECKED, hostOfUrl, releasesUrl, warn } from "../sync/server-shared";
 import { SYNC_META, isSafeServerUrl, loadSync, normaliseServerUrl, saveSync, shownAddress, type SyncConfig } from "../sync/state";
 import { isHttps, parsePin } from "../../../server/src/pin";
@@ -33,6 +33,8 @@ export interface SyncServerDeps extends SyncDeps {
   resolveAll?: (name: string) => Promise<string[]>;
   /** For tests: the version to update to, in place of this CLI's. */
   version?: string;
+  /** What `ssh -G` says the SSH target connects to. Defaults to running it. */
+  sshHostname?: (target: string) => Promise<string | null>;
 }
 
 /** The `sync server` lines of the usage, which `ks sync --help` shows too. A function: sync.ts and this file import each other. */
@@ -613,15 +615,20 @@ function isLoopback(host: string): boolean {
  * a name that resolves to one of its IPs. A loopback address never does: on
  * this device it reaches this device, whatever the host calls itself.
  */
-async function addressesOnHost(servers: string[], facts: HostFacts, deps: SyncServerDeps): Promise<string[]> {
+async function addressesOnHost(servers: string[], facts: HostFacts, target: string, deps: SyncServerDeps): Promise<string[]> {
   const names = namesOf(facts);
-  const onHost = (ip: string) => !isLoopback(ip) && facts.ipv4.includes(ip);
+  const resolveAll = deps.resolveAll ?? resolveIpv4;
+  // A VPS behind its provider's NAT reports only private addresses; this
+  // device reaches it at the public ones the SSH target resolves to.
+  const outside = await sshPublicAddress(await (deps.sshHostname ?? sshHostname)(target), resolveAll);
+  if (outside) names.add(outside.host);
+  const onHost = (ip: string) => !isLoopback(ip) && (facts.ipv4.includes(ip) || (outside?.ips.includes(ip) ?? false));
   const found: string[] = [];
   for (const url of servers) {
     const host = hostOfUrl(url);
     if (isLoopback(host)) continue;
     if (names.has(host)) found.push(url);
-    else if (isIP(host) === 0 && (await (deps.resolveAll ?? resolveIpv4)(host)).some(onHost)) found.push(url);
+    else if (isIP(host) === 0 ? (await resolveAll(host)).some(onHost) : onHost(host)) found.push(url);
   }
   return found;
 }
@@ -715,7 +722,7 @@ async function manage(target: string, deps: SyncServerDeps, open: () => Promise<
     servers = config.servers;
     reach = "self";
   } else {
-    servers = await addressesOnHost(config.servers, found.facts, deps);
+    servers = await addressesOnHost(config.servers, found.facts, target, deps);
     if (servers.length === 0) {
       fail(
         `None of this vault's addresses (${config.servers.join(", ")}) points at ${target}, ` +

@@ -1115,11 +1115,26 @@ update_docker() {
   say "kerstel-server is now $VERSION."
 }
 
+# The version the running server reports on /v1/health, or nothing. A binary
+# replaced by an update that stopped before the restart is the new version on
+# disk while the old one still runs, so the disk alone can't say.
+running_version() {
+  case "$REACH" in
+    tailscale) url="http://127.0.0.1:$PORT/v1/health" ;;
+    *) url="https://127.0.0.1:$PORT/v1/health" ;;
+  esac
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSk --max-time 2 "$url" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --no-check-certificate -T 2 -t 1 -O - "$url" 2>/dev/null
+  fi | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'
+}
+
 update_service() {
   service_manager
   check_supported
   fetch_binary
-  if [ "$BINARY_CHANGED" = no ] && service_running; then
+  if [ "$BINARY_CHANGED" = no ] && service_running && [ "$(running_version)" = "$VERSION" ]; then
     say "kerstel-server $VERSION is already running."
     return 0
   fi
