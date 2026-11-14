@@ -17,6 +17,8 @@ export interface TlsServerOptions {
   advertise?: (served: Buffer) => Buffer | null;
   /** Answers a request before the app does, when it returns a response. */
   intercept?: (request: Request) => Response | undefined;
+  /** Makes the app refuse a vault that does not come with this enroll token. */
+  enrollToken?: string;
   /** The server's clock; real time by default. */
   now?: () => number;
 }
@@ -47,6 +49,7 @@ export function startTlsServer(options: TlsServerOptions = {}): TlsServer {
     db,
     version: "test",
     now: options.now,
+    enrollToken: options.enrollToken,
     certificate: () => (options.advertise ? options.advertise(state.certDer) : state.certDer),
   });
   const paths: string[] = [];

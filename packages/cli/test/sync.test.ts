@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { timerEnv, type EnsureResult, type SyncTimer, type TimerStatus } from "../src/sync/timer";
 import { openDatabase } from "../../server/src/db";
-import { TIMING, newId, signRequest } from "../../server/src/protocol";
+import { HEADERS, TIMING, newId, signRequest } from "../../server/src/protocol";
 import { JOIN_PIN_DOES_NOT_MATCH, PIN_DOES_NOT_MATCH, syncCommand } from "../src/commands/sync";
 import type { CliContext } from "../src/context";
 import { listBackups } from "../src/init/backup";
@@ -47,6 +47,8 @@ import {
 import { SYNC_BACKUP_SCOPE } from "../src/sync/engine";
 import { pairingClient, syncClient, type Fetch } from "../src/sync/http";
 import { loadSync, saveSync, SYNC_META, SyncSettingsError } from "../src/sync/state";
+import { readInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
+import { cliName } from "../src/ui/cli-name";
 import { encodeJoinValue, parseJoinValue, type JoinValue } from "../src/sync/join-value";
 import type { Prompter } from "../src/init/prompts";
 import { encrypt, generateDataKey } from "../src/vault/crypto";
@@ -56,11 +58,14 @@ import { captureLog } from "./helpers/capture-log";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 import { serverKey, startTlsServer, type TlsServer } from "./helpers/tls-server";
 import { formatPin, pinOfCertificate } from "../../server/src/pin";
+import { encodeServerValue, type ServerValue } from "../src/sync/server-value";
 import { selfSignedCertificate } from "../../server/src/x509";
 
 /** Sync spec §12: the client against the real server, in-process. */
 
 const SERVER = "http://127.0.0.1:8787";
+/** An address nothing answers at: every fetch to it fails, as a refused connection does. */
+const DOWN = "http://127.0.0.1:1";
 const dirs: string[] = [];
 afterEach(() => {
   restoreEnv();
@@ -150,7 +155,7 @@ async function addSecond(a: Device, b: Device, s: Server): Promise<void> {
   expect(res.status).toBe(201);
   // B opens its own sealed copy of the key, as `join` will.
   const sealed = await syncClient({
-    server: SERVER,
+    servers: [SERVER],
     vaultId: config.vaultId,
     deviceId,
     sign: keys.sign,
@@ -158,7 +163,24 @@ async function addSecond(a: Device, b: Device, s: Server): Promise<void> {
     now: () => (s.clock.t += 1),
   }).keys();
   const syncKey = openSyncKey(sealed.sealedKey, keys.enc, { vaultId: config.vaultId, deviceId, epoch: sealed.epoch });
-  b.with((v) => saveSync(v, b.key, { server: SERVER, pin: null, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
+  b.with((v) => saveSync(v, b.key, { servers: [SERVER], pin: null, vaultId: config.vaultId, deviceId, epoch: sealed.epoch, syncKey, keys, head: 0 }));
+}
+
+/** `s`, except that nothing answers at DOWN; `tried` lists the origin of every request. */
+function behindDown(s: Reach): Reach & { tried: string[] } {
+  const tried: string[] = [];
+  const fetch: Fetch = async (request) => {
+    const origin = new URL(request.url).origin;
+    tried.push(origin);
+    if (origin === DOWN) throw new Error("connection refused");
+    return s.fetch(request);
+  };
+  return { clock: s.clock, fetch, tried };
+}
+
+/** Gives `d`'s sync settings these server addresses. */
+function setServers(d: Device, servers: string[]): void {
+  d.with((v) => saveSync(v, d.key, { ...loadSync(v, d.key)!, servers }));
 }
 
 async function sync(d: Device, s: Reach, args: string[] = []): Promise<{ code: number; out: string }> {
@@ -320,6 +342,201 @@ describe("one device and the server", () => {
     const before = a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length);
     expect((await sync(a, s, ["off", "--delete-vault"])).code).toBe(0);
     expect(a.with((v) => v.listAudit({ limit: 100, events: ["device"] }).length)).toBe(before + 1);
+  });
+
+  test("sync off on the device that installed the server names manage, and keeps the record", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const installed: InstallRecord = {
+      installId: "install-id-1",
+      route: "ssh",
+      host: "ali@homebox",
+      runtime: "docker",
+      reach: "domain",
+      addresses: [SERVER],
+      version: "0.0.1",
+      finished: true,
+    };
+    writeInstallRecord(installed, a.home);
+    const { code, out } = await sync(a, s, ["off", "--delete-vault"]);
+    expect(code).toBe(0);
+    expect(out).toContain(`The server keeps running. To manage it from another device: ${cliName()} sync server manage ali@homebox`);
+    expect(readInstallRecord(a.home)).toEqual(installed);
+  });
+
+  test("sync off without a record says nothing of manage", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const { code, out } = await sync(a, s, ["off", "--delete-vault"]);
+    expect(code).toBe(0);
+    expect(out).not.toContain("sync server manage");
+  });
+});
+
+describe("a server with several addresses", () => {
+  test("the next address is tried when one can't be reached", async () => {
+    const s = server();
+    const a = device();
+    a.with((v) => v.setSecret(ref("app", "A"), "1"));
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    // No address has answered yet, so the saved order is tried.
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
+    a.with((v) => v.setSecret(ref("app", "A"), "2"));
+    const reach = behindDown(s);
+    const { code, out } = await sync(a, reach);
+    expect(code).toBe(0);
+    expect(out).toContain("Pushed 1 change.");
+    // Only the first request walks the list; everything after goes to the address that answered.
+    expect(reach.tried.filter((o) => o === DOWN)).toHaveLength(1);
+    expect(reach.tried.length).toBeGreaterThan(2);
+    expect(a.with((v) => v.getMeta(SYNC_META.lastAddress))).toBe(SERVER);
+  });
+
+  test("an answer that is an error is still an answer: the next address is not tried", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const other = "http://localhost:8787";
+    setServers(a, [SERVER, other]);
+    const tried: string[] = [];
+    const refusing: Reach = {
+      clock: s.clock,
+      fetch: async (request) => {
+        tried.push(new URL(request.url).origin);
+        return Response.json({ error: "unavailable", message: "The server is starting." }, { status: 503 });
+      },
+    };
+    const { code, out } = await sync(a, refusing);
+    expect(code).toBe(1);
+    expect(out).toContain("The server is starting.");
+    expect(tried).toEqual([SERVER]);
+  });
+
+  test("a 0.3 vault loads as one address", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // What a vault set up by 0.3 holds: sync_server alone.
+    a.with((v) => v.deleteMeta(SYNC_META.servers));
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([SERVER]);
+    expect((await sync(a, s)).code).toBe(0);
+  });
+
+  test("every address is saved, and sync_server stays the first for an older Kerstel", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    expect(a.with((v) => [v.getMeta(SYNC_META.server), v.getMeta(SYNC_META.servers)])).toEqual([DOWN, `${DOWN}\n${SERVER}`]);
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([DOWN, SERVER]);
+  });
+
+  test("addresses an older Kerstel left behind for another server are not used", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    // 0.3 does not know sync_servers: its sync off leaves the row, and its setup writes sync_server alone.
+    a.with((v) => v.setMeta(SYNC_META.servers, `${DOWN}\nhttps://old.example.com`));
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([SERVER]);
+  });
+
+  test("an empty or unsafe address list is damaged settings", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const cases: Array<[string, string]> = [
+      ["", `This vault's sync settings are damaged (${SYNC_META.servers} is empty).`],
+      [`${SERVER}\n`, `This vault's sync settings are damaged (${SYNC_META.servers} is empty).`],
+      [
+        `${SERVER}\nhttp://sync.example.com`,
+        `This vault's sync settings are damaged (${SYNC_META.servers} names a server Kerstel will not send your vault to).`,
+      ],
+    ];
+    for (const [row, thrown] of cases) {
+      a.with((v) => v.setMeta(SYNC_META.servers, row));
+      expect(() => a.with((v) => loadSync(v, a.key))).toThrow(thrown);
+      expect(() => a.with((v) => loadSync(v, a.key))).toThrow(SyncSettingsError);
+    }
+  });
+
+  test("status shows the address that answered", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
+    // None has answered yet: the first.
+    expect((await sync(a, s, ["status"])).out).toContain(`Server        ${DOWN} (also ${SERVER})`);
+    expect((await sync(a, behindDown(s))).code).toBe(0);
+    expect((await sync(a, s, ["status"])).out).toContain(`Server        ${SERVER} (also ${DOWN})`);
+    // One address: no "also".
+    setServers(a, [SERVER]);
+    const one = (await sync(a, s, ["status"])).out;
+    expect(one).toContain(`Server        ${SERVER}\n`);
+    expect(one).not.toContain("(also");
+  });
+
+  test("the address that answered last is tried first, and the saved order stays", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.setMeta(SYNC_META.lastAddress, SERVER));
+    const reach = behindDown(s);
+    expect((await sync(a, reach)).code).toBe(0);
+    expect(reach.tried.length).toBeGreaterThan(0);
+    expect(reach.tried).not.toContain(DOWN);
+    expect(a.with((v) => loadSync(v, a.key))!.servers).toEqual([DOWN, SERVER]);
+
+    // A last address that is no longer one of the server's is not tried: the saved order is.
+    a.with((v) => v.setMeta(SYNC_META.lastAddress, "http://localhost:9"));
+    const again = behindDown(s);
+    expect((await sync(a, again)).code).toBe(0);
+    expect(again.tried[0]).toBe(DOWN);
+  });
+
+  test("a request one address delivered before it failed is signed again for the next", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    const config = a.with((v) => loadSync(v, a.key))!;
+    const sent: { origin: string; timestamp: string | null; signature: string | null }[] = [];
+    // The first address delivers the request, then times out before its reply comes back.
+    const late: Fetch = async (request) => {
+      const origin = new URL(request.url).origin;
+      sent.push({ origin, timestamp: request.headers.get(HEADERS.timestamp), signature: request.headers.get(HEADERS.signature) });
+      if (origin !== DOWN) return s.fetch(request);
+      await s.fetch(new Request(request.url.replace(DOWN, SERVER), request));
+      throw new Error("The operation timed out.");
+    };
+    // A clock that stands still: the client still never stamps two requests alike.
+    const client = syncClient({
+      servers: [DOWN, SERVER],
+      vaultId: config.vaultId,
+      deviceId: config.deviceId,
+      sign: config.keys.sign,
+      fetch: late,
+      now: () => s.clock.t,
+    });
+    const { devices } = await client.devices();
+    expect(devices.map((d) => d.id)).toContain(config.deviceId);
+    expect(sent.map((r) => r.origin)).toEqual([DOWN, SERVER]);
+    expect(Number(sent[1]!.timestamp)).toBeGreaterThan(Number(sent[0]!.timestamp));
+    expect(sent[1]!.signature).not.toBe(sent[0]!.signature);
+  });
+
+  test("doctor's glance names the address that answered", async () => {
+    const s = server();
+    const a = device();
+    await setUp(a, s);
+    setServers(a, [DOWN, SERVER]);
+    a.with((v) => v.deleteMeta(SYNC_META.lastAddress));
+    expect(glanceSync(join(a.home, "vault.db")).server).toBe(DOWN);
+    expect((await sync(a, behindDown(s))).code).toBe(0);
+    expect(glanceSync(join(a.home, "vault.db")).server).toBe(SERVER);
   });
 });
 
@@ -514,7 +731,10 @@ describe("two devices", () => {
 test("without sync on, every sync command says how to turn it on", async () => {
   const s = server();
   const a = device();
-  expect((await sync(a, s)).out).toContain("Sync is off for this vault");
+  // The wizard first, then a server the person already runs.
+  expect((await sync(a, s)).out).toContain(
+    `Sync is off for this vault. Turn it on with ${cliName()} sync setup, or ${cliName()} sync setup <url> for a server you already run.`,
+  );
   expect((await sync(a, s, ["status"])).code).toBe(0);
   expect((await sync(a, s, ["nope"])).code).toBe(2);
   expect(existsSync(join(a.home, "backups"))).toBe(false);
@@ -544,7 +764,7 @@ describe("review fixes", () => {
   /** What `remove-device` will do (#82), minus the removal: device A replaces the sync key. */
   async function rotate(a: Device, s: Server): Promise<void> {
     const config = a.with((v) => loadSync(v, a.key))!;
-    const client = syncClient({ server: SERVER, vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: () => (s.clock.t += 1) });
+    const client = syncClient({ servers: [SERVER], vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: () => (s.clock.t += 1) });
     const page = await client.pull(0, true);
     const newKey = generateSyncKey();
     const epoch = config.epoch + 1;
@@ -1027,8 +1247,53 @@ describe("pairing, joining and removing devices", () => {
     expect(named).toEqual(["Joining the vault on http://127.0.0.1:1.", `Joining the vault on ${SERVER}.`]);
     // Only the first request walks the list; everything after goes to the server that answered.
     expect(tried.filter((o) => o === "http://127.0.0.1:1")).toHaveLength(1);
-    expect(b.with((v) => loadSync(v, b.key))!.server).toBe(SERVER);
+    expect(b.with((v) => loadSync(v, b.key))!.servers).toEqual(["http://127.0.0.1:1", SERVER]);
+    expect(b.with((v) => v.getMeta(SYNC_META.lastAddress))).toBe(SERVER);
+    expect(out).toContain(`Joined the vault on ${SERVER}.`);
     expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("join saves every address", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const other = "http://localhost:8787";
+    setServers(a, [SERVER, other]);
+    const b = device();
+    const { added, joined, value } = await pairUp(a, b, s);
+    expect([added, joined]).toEqual([0, 0]);
+    // add-device writes every address into the join value, in order.
+    expect(decoded(value).urls).toEqual([SERVER, other]);
+    expect(b.with((v) => loadSync(v, b.key))!.servers).toEqual([SERVER, other]);
+    expect(b.with((v) => v.getSecret(ref("app", "DB")))).toBe("db-1");
+  });
+
+  test("a pairing answer that may have arrived before an address timed out", async () => {
+    const s = server();
+    const a = await syncedDevice(s, { DB: "db-1" });
+    const config = a.with((v) => loadSync(v, a.key))!;
+    const secret = newPairingSecret();
+    await syncClient({ servers: [SERVER], vaultId: config.vaultId, deviceId: config.deviceId, sign: config.keys.sign, fetch: s.fetch, now: tick(s) }).openPairing(
+      pairingIdOf(secret),
+    );
+    const b = device();
+    // The first address delivers the answer, then times out before its reply comes back.
+    const late: Fetch = async (request) => {
+      if (new URL(request.url).origin !== DOWN) return s.fetch(request);
+      await s.fetch(new Request(request.url.replace(DOWN, SERVER), request));
+      throw new Error("The operation timed out.");
+    };
+    const { result, out } = await quiet(() =>
+      syncCommand(["join", encodeJoinValue({ urls: [DOWN, SERVER], pin: null, secret })], {
+        fetch: late,
+        context: b.context,
+        interactive: false,
+        now: tick(s),
+      }),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain("That pairing may already have been answered. On the other device, check whether this device was added.");
+    expect(out).not.toContain("expired or was already used");
+    expect(b.with((v) => loadSync(v, b.key))).toBeNull();
   });
 
   test("join schedules pulls", async () => {
@@ -1117,7 +1382,7 @@ describe("pairing, joining and removing devices", () => {
         name: "forged",
         platform: "Linux",
       });
-      await pairingClient(SERVER, s.fetch).answer(pairingIdOf(decoded(value).secret), forged);
+      await pairingClient([SERVER], s.fetch).answer(pairingIdOf(decoded(value).secret), forged);
       expect(await adding).toBe(1);
       expect(prompter.asked).toEqual([]);
       expect(log.text()).toContain("without this pairing's secret");
@@ -1392,6 +1657,160 @@ describe("pairing, joining and removing devices", () => {
       expect(status.code).toBe(0);
       expect(status.out).toContain(`Server        ${p.listener.url}\nCertificate   pinned (${p.pin})`);
       for (const text of [out, status.out]) expect(text).not.toContain("db-pinned-1");
+    });
+
+    describe("a server value on stdin", () => {
+      const TOKEN = "enroll-token-for-the-test-only";
+
+      /** A pinned server that wants `TOKEN`, and the device that reads `text` from stdin. */
+      async function setUpFromValue(text: (p: Pinned) => string, args: string[] = ["--server-value", "-"]) {
+        const clock = { t: Date.now() };
+        const listener = startTlsServer({ now: () => clock.t, enrollToken: TOKEN });
+        listeners.push(listener);
+        const requests: string[] = [];
+        const fetch: Fetch = (request, init) => {
+          requests.push(request.url);
+          return globalThis.fetch(request, init as RequestInit);
+        };
+        const p: Pinned = { clock, fetch, listener, requests, pin: formatPin(listener.pin) };
+        const a = device();
+        a.with((v) => v.setSecret(ref("app", "DB"), "db-from-value"));
+        const run = await quiet(() =>
+          syncCommand(["setup", ...args, "--yes"], {
+            fetch,
+            context: a.context,
+            interactive: false,
+            now: tick(p),
+            deviceName: "first",
+            timer: fakeTimer().timer,
+            stdin: async () => `${text(p)}\n`,
+          }),
+        );
+        return { ...run, p, a };
+      }
+      const valueOf = (p: Pinned, over: Partial<ServerValue> = {}) =>
+        encodeServerValue({ urls: [p.listener.url], pin: p.listener.pin, token: TOKEN, ...over });
+
+      test("setup reads a server value from stdin", async () => {
+        delete process.env.KERSTEL_SYNC_ENROLL_TOKEN;
+        const { result, out, p, a } = await setUpFromValue((p) => valueOf(p));
+        expect(result).toBe(0);
+        expect(out).toContain(`  Certificate  pinned (${p.pin})`);
+        expect(out).toContain("Synced 1 secret.");
+        const config = a.with((v) => loadSync(v, a.key))!;
+        expect(config.servers).toEqual([p.listener.url]);
+        expect(config.pin).toEqual(p.listener.pin);
+      });
+
+      test("the server value's token is used in place of the environment's", async () => {
+        process.env.KERSTEL_SYNC_ENROLL_TOKEN = "some-other-token";
+        const { result } = await setUpFromValue((p) => valueOf(p));
+        expect(result).toBe(0);
+      });
+
+      test("a bad server value is refused before any request", async () => {
+        const cases: Array<[(p: Pinned) => string, string]> = [
+          [() => "ks-server1-nope", "That is not a server value, or it was cut short."],
+          [() => "", "That is not a server value, or it was cut short."],
+          [() => "ks-server9-AAAA", "That server value is from a newer Kerstel."],
+          [(p) => valueOf(p, { urls: ["http://sync.example.com"], pin: null }), "is not a server Kerstel will send your vault to."],
+          [(p) => valueOf(p, { urls: ["http://127.0.0.1:8787"] }), "A pinned server must use an https:// URL."],
+        ];
+        for (const [text, message] of cases) {
+          const { result, out, p, a } = await setUpFromValue(text);
+          expect(result).toBe(2);
+          expect(out).toContain(message);
+          expect(p.requests).toEqual([]);
+          expect(p.listener.paths).toEqual([]);
+          expect(a.with((v) => loadSync(v, a.key))).toBeNull();
+        }
+      });
+
+      test("the token from a server value is never printed", async () => {
+        const good = await setUpFromValue((p) => valueOf(p));
+        expect(good.out).not.toContain(TOKEN);
+        // A server that wants another token refuses the vault; the refusal does not echo this one.
+        const refused = await setUpFromValue((p) => valueOf(p, { token: "a-wrong-token-for-the-test" }));
+        expect(refused.result).toBe(1);
+        expect(refused.out).not.toContain("a-wrong-token-for-the-test");
+        expect(refused.out).not.toContain(TOKEN);
+      });
+
+      test("on a terminal, the value is asked at a hidden prompt", async () => {
+        const clock = { t: Date.now() };
+        const listener = startTlsServer({ now: () => clock.t, enrollToken: TOKEN });
+        listeners.push(listener);
+        const p: Pinned = { clock, fetch: (r, i) => globalThis.fetch(r, i as RequestInit), listener, requests: [], pin: formatPin(listener.pin) };
+        const asked: { question: string; secret?: boolean }[] = [];
+        const value = valueOf(p);
+        const prompter = {
+          async text(question: string, o: { secret?: boolean } = {}) {
+            asked.push({ question, secret: o.secret });
+            return `${value}\n`;
+          },
+          // --yes: the upload question takes its default.
+          async select<T extends string>(_q: string, _c: unknown, d: T) {
+            return d;
+          },
+        } as unknown as Prompter;
+        const a = device();
+        const run = await quiet(() =>
+          syncCommand(["setup", "--server-value", "-", "--yes"], {
+            context: a.context,
+            interactive: false,
+            stdinIsTerminal: true,
+            prompter,
+            now: tick(p),
+            deviceName: "first",
+            timer: fakeTimer().timer,
+          }),
+        );
+        expect(run.result).toBe(0);
+        expect(asked).toEqual([{ question: "Paste the server value", secret: true }]);
+        expect(a.with((v) => loadSync(v, a.key))!.pin).toEqual(listener.pin);
+        expect(run.out).not.toContain(value);
+      });
+
+      test("a self-signed first address keeps the pin hint when a later one fails another way", async () => {
+        // The first address answers with a certificate nothing trusts; the second refuses the connection.
+        const { result, out, p } = await setUpFromValue((p) => valueOf(p, { urls: [p.listener.url, "https://127.0.0.1:1"], pin: null }));
+        expect(result).toBe(1);
+        expect(out).toContain("Could not reach https://127.0.0.1:1");
+        expect(out).toContain("If this server pins its own certificate, pass --pin with the pin kerstel-server printed (sha256/…).");
+        expect(p.listener.paths).toEqual([]);
+      });
+
+      test("a pin mismatch names the address that answered, not the first", async () => {
+        const other = pinOfCertificate(selfSignedCertificate({ key: serverKey(), names: ["localhost"] }));
+        const { result, out, p } = await setUpFromValue((p) => valueOf(p, { urls: ["https://127.0.0.1:1", p.listener.url], pin: other }));
+        expect(result).toBe(1);
+        expect(out).toContain(`Sync setup failed: ${PIN_DOES_NOT_MATCH(p.listener.url)}`);
+        expect(out).not.toContain("https://127.0.0.1:1 presented");
+      });
+
+      test("a server value is never taken from an argument, or beside a url or a pin", async () => {
+        for (const args of [
+          ["--server-value", "ks-server1-abc"],
+          ["--server-value"],
+          ["--server-value", "-", "https://sync.example.com"],
+          ["--server-value", "-", "--pin", "sha256/x"],
+        ]) {
+          const { result, out, p } = await setUpFromValue((p) => valueOf(p), args);
+          expect(result).toBe(2);
+          expect(out).toContain("Usage:");
+          expect(out).toContain("sync setup --server-value - [--yes]");
+          expect(out).not.toContain("ks-server1-");
+          expect(p.requests).toEqual([]);
+        }
+      });
+    });
+
+    test("setup with no arguments and no terminal prints the usage line", async () => {
+      const a = device();
+      const { result, out } = await quiet(() => syncCommand(["setup"], { context: a.context, interactive: false }));
+      expect(result).toBe(2);
+      expect(out).toContain("Usage: ");
+      expect(out).toContain("sync setup <url> [--pin <pin>] [--yes]");
     });
 
     test("setup refuses a bad pin before any request", async () => {

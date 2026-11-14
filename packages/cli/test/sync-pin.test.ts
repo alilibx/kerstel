@@ -25,11 +25,12 @@ function start(...args: Parameters<typeof startTlsServer>): TlsServer {
 }
 
 /** A new device and a vault for it: what `sync setup` creates. */
-function newDevice(server: string, extra: { pin?: Buffer | null; fetch?: Fetch } = {}) {
+function newDevice(server: string | string[], extra: { pin?: Buffer | null; fetch?: Fetch } = {}) {
   const vaultId = newId();
   const deviceId = newId();
   const keys = generateDeviceKeys();
-  const client = syncClient({ server, vaultId, deviceId, sign: keys.sign, ...extra });
+  const servers = typeof server === "string" ? [server] : server;
+  const client = syncClient({ servers, vaultId, deviceId, sign: keys.sign, ...extra });
   const createVault = () =>
     client.createVault(
       {
@@ -263,7 +264,8 @@ describe("a pinned client", () => {
     for (const make of [
       () => pinnedFetch("http://127.0.0.1:8787", pin),
       () => newDevice("http://127.0.0.1:8787", { pin }),
-      () => pairingClient("http://127.0.0.1:8787", undefined, pin),
+      () => pairingClient(["http://127.0.0.1:8787"], undefined, pin),
+      () => newDevice(["https://127.0.0.1:8787", "http://127.0.0.1:8787"], { pin }),
     ]) {
       let thrown: unknown;
       try {
@@ -281,10 +283,39 @@ describe("a pinned client", () => {
     const server = start();
     const { base, calls } = recordingBase();
     const other = pinOfCertificate(selfSignedCertificate({ key: serverKey(), names: ["localhost"] }));
-    expect((await failure(pairingClient(server.url, base, other).state(newId()))).code).toBe("pin_mismatch");
+    expect((await failure(pairingClient([server.url], base, other).state(newId()))).code).toBe("pin_mismatch");
     expect(calls).toHaveLength(1);
     // With the right pin it reaches the server: an unknown pairing is the server's own 404.
-    expect((await failure(pairingClient(server.url, base, server.pin).state(newId()))).status).toBe(404);
+    expect((await failure(pairingClient([server.url], base, server.pin).state(newId()))).status).toBe(404);
+  });
+
+  test("a pin mismatch never moves on", async () => {
+    const pinned = start();
+    // Another key answers at the first address: something in the server's place.
+    const impostor = start();
+    const { base, calls } = recordingBase();
+    const device = newDevice([impostor.url, pinned.url], { pin: pinned.pin, fetch: base });
+    const error = await failure(device.createVault());
+    expect(error.code).toBe("pin_mismatch");
+    expect(error.message).toBe(PIN_MISMATCH(impostor.url));
+    expect(calls.map((c) => c.url)).toEqual([`${impostor.url}/v1/certificate`]);
+    expect(pinned.paths).toEqual([]);
+    expect(device.client.address()).toBe(impostor.url);
+    // Nor on the next request: the address that answered is the one used.
+    expect((await failure(device.client.devices())).code).toBe("pin_mismatch");
+    expect(pinned.paths).toEqual([]);
+  });
+
+  test("a pinned address that can't be reached moves on to the next", async () => {
+    const pinned = start();
+    const down = "https://127.0.0.1:1";
+    const { base, calls } = recordingBase();
+    const device = newDevice([down, pinned.url], { pin: pinned.pin, fetch: base });
+    expect(device.client.address()).toBeNull();
+    await device.createVault();
+    expect(device.client.address()).toBe(pinned.url);
+    expect(calls[0]!.url).toBe(`${down}/v1/certificate`);
+    expect(pinned.paths).toEqual(["/v1/certificate", "/v1/vaults"]);
   });
 
   test("a certificate the pinned key issued for another key is refused", async () => {

@@ -133,7 +133,9 @@ CREATE TABLE sync_state (
 
 ### 7.1 Setting up and pairing
 
-**First device:**
+**First device, step by step.** `ks sync setup` with no arguments, in a terminal, asks where the server should run, installs it over SSH, on this machine, or through a command the person runs on the server, and then turns sync on for this device. The wizard and `ks sync server` are in the easy-sync spec (`2026-11-13-easy-sync-design.md`, §4, §5 and §9). Without a terminal, a script passes a server value on stdin with `ks sync setup --server-value -`.
+
+**First device, with a server you run.** `ks sync setup <url>` is the form below:
 
 ```
 $ ks sync setup https://sync.example.com
@@ -144,7 +146,7 @@ Upload the vault? (Y/n)
 ✓ Synced 214 secrets. Add another device with: ks sync add-device
 ```
 
-`setup` creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server started with an enroll token gets it from `KERSTEL_SYNC_ENROLL_TOKEN`. Without a terminal, `setup` needs `--yes` to upload. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`. A server with a certificate of its own (§9.1) is set up with `--pin sha256/…`, which meets the rule because the pin is checked on `https://` only. The client checks the server's key on every request, fetches the certificate once per process from `GET /v1/certificate` and trusts exactly that one, and never retries a mismatch without the pin or follows a redirect. A mismatch sends nothing. Before sync is on, there is no sync to turn off yet. `setup` calls it a key that does not match the pin and says to check the pin `kerstel-server` printed. `join` calls it a key that does not match the one in the join line, and says to set sync up again on the other device and run `add-device` for a new line if the server was set up again. `setup` without `--pin` against a self-signed server fails with the TLS error and a line saying to pass `--pin`, and `join <url> <code>` says to pair with the `ks1-` line instead. The pin is stored with the sync settings and carried in the `ks1-…` join value, so a joining device needs no extra step. A stored pin that does not parse is damaged settings, never read as unpinned. `ks sync off` on a device whose server shows another key, or whose sync settings can't be read, turns sync off locally and says it could not leave the server's copy. `ks sync status` shows a `Certificate` line for a pinned server.
+`setup` (either form) creates the vault ID, the device keys and the first sync key, registers with the server, and pushes every secret. A server started with an enroll token gets it from `KERSTEL_SYNC_ENROLL_TOKEN`. Without a terminal, `setup` needs `--yes` to upload. A server URL must be `https://`, except for `127.0.0.1` and `localhost`, the same rule as `KERSTEL_RELEASES_URL`. A server with a certificate of its own (§9.1) is set up with `--pin sha256/…`, which meets the rule because the pin is checked on `https://` only. The client checks the server's key on every request, fetches the certificate once per process from `GET /v1/certificate` and trusts exactly that one, and never retries a mismatch without the pin or follows a redirect. A mismatch sends nothing. Before sync is on, there is no sync to turn off yet. `setup` calls it a key that does not match the pin and says to check the pin `kerstel-server` printed. `join` calls it a key that does not match the one in the join line, and says to set sync up again on the other device and run `add-device` for a new line if the server was set up again. `setup` without `--pin` against a self-signed server fails with the TLS error and a line saying to pass `--pin`, and `join <url> <code>` says to pair with the `ks1-` line instead. The pin is stored with the sync settings and carried in the `ks1-…` join value, so a joining device needs no extra step. A stored pin that does not parse is damaged settings, never read as unpinned. `ks sync off` on a device whose server shows another key, or whose sync settings can't be read, turns sync off locally and says it could not leave the server's copy. `ks sync status` shows a `Certificate` line for a pinned server.
 
 **Adding a device.** On a device that is already in the vault:
 
@@ -257,7 +259,7 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 
 - A new package, `packages/server`, compiled with `bun build --compile` to `kerstel-server`. It is a separate binary, so the CLI that runs on developer machines still contains no listening code.
 - Released alongside the CLI, from the same tag and with the same version: binaries for Linux and macOS (x64 and arm64) in the GitHub Release, checked by the same `SHA256SUMS`, plus a `linux/amd64` and `linux/arm64` image at `ghcr.io/alilibx/kerstel-server`, tagged with the version (`0.3.0`), the minor version (`0.3`) and `latest`. A pre-release tag pushes only its own image tag.
-- Storage is one SQLite file, mode `0600`. Settings: `--db` (`KERSTEL_SERVER_DB`), `--listen` (`KERSTEL_SERVER_LISTEN`, default `127.0.0.1:8787`), `--trust-proxy` to rate limit by `X-Forwarded-For`, and an optional enroll token that `sync setup` must present to create a vault. The token comes from `--enroll-token-file` or `KERSTEL_SERVER_ENROLL_TOKEN`, never from a command-line value, where `ps` would show it. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one, and the server says so on start.
+- Storage is one SQLite file, mode `0600`. Settings: `--db` (`KERSTEL_SERVER_DB`), `--listen` (`KERSTEL_SERVER_LISTEN`, default `127.0.0.1:8787`), `--trust-proxy` to rate limit by `X-Forwarded-For`, and an optional enroll token that `sync setup` must present to create a vault. The token comes from `--enroll-token-file` (or `KERSTEL_SERVER_ENROLL_TOKEN_FILE`) or `KERSTEL_SERVER_ENROLL_TOKEN`, never from a command-line value, where `ps` would show it. `--enroll-token-file` creates the file with a new token (32 random bytes, base64url, mode `0600`) when it does not exist, and logs that it did, without the token. `kerstel-server value --url <url>…` prints a server value (`ks-server1-…`) from the token file and the TLS pin, and `kerstel-server info` prints the version, the TLS mode and the pin. Without a token, anyone who can reach the server can create a vault. That is fine on a private network and documented as unsafe on a public one, and the server says so on start.
 - The binary is compiled with `--no-compile-autoload-dotenv`, so a `.env` in its working directory cannot change its settings.
 - The log has one line per request: method, the route as a fixed label with every ID as `:id` (`(unknown)` for a path the server does not answer, so no text a caller puts in a path is logged), status and duration. No IDs, addresses or bodies.
 - Before 0.3.0, the server was published only on a nightly channel (a rolling `nightly` pre-release and `ghcr.io/alilibx/kerstel-server:nightly`). The 0.3.0 release PR moved it into `release.yml` and deleted the nightly workflow.
@@ -265,7 +267,7 @@ A value that a pull replaces or deletes, and the losing side of a conflict, go t
 - TLS has three modes, and plain HTTP behind a reverse proxy still works as before (Caddy, nginx, or a platform's load balancer; the docs give a Caddy example).
   - `--tls self` (`KERSTEL_SERVER_TLS=self`): a certificate of its own, ECDSA P-256, with no expiry (RFC 5280). Names: `localhost`, `127.0.0.1`, the `--listen` host when it is a specific address, and each `--tls-name` (`KERSTEL_SERVER_TLS_NAMES`). The server prints `Certificate pin: sha256/…` when it starts. The pin is the SHA-256 of the certificate's SubjectPublicKeyInfo, so reissuing the certificate for new names with the same key keeps the pin.
   - `--domain` (`KERSTEL_SERVER_DOMAIN`): a Let's Encrypt certificate over ACME HTTP-01, answered on `--acme-http` (default `0.0.0.0:80`) while the server listens on `0.0.0.0:443` unless `--listen` says otherwise. `--acme-directory` and `--acme-email` set the CA and a contact. It renews when fewer than 30 days remain, or a third of the certificate's lifetime if that is shorter, checking every 12 hours, and logs what to fix and retries after an hour when an order fails. A renewal restarts the HTTPS listener; if the address is still taken, it tries again up to 10 times, a second apart, then exits. Running with `--domain` agrees to the CA's terms.
-  - Tailscale: `--listen 127.0.0.1:8787` plus `tailscale serve --bg 8787`. Tailscale holds the certificate, so the client has no pin.
+  - Tailscale: `--listen 127.0.0.1:8787` plus `tailscale serve --bg 8787`. Tailscale holds the certificate, so the client has no pin. `ks sync server remove` turns off `tailscale serve` on port 443, including any other handlers set up there.
   - The files sit beside the database: `<db>.tls-key.pem` and `<db>.acme-account.pem` (mode `0600`), and `<db>.tls-cert.pem`. The key survives restarts, and a new key only comes with a new database file. A new key is written to a temporary file and hard-linked into place, so an existing key is never replaced. On a filesystem without hard links (exFAT, some NAS mounts) it is created in place with exclusive create instead.
   - `GET /v1/certificate` is unauthenticated and returns `{ "certificate": "<base64 DER>" }`, or 404 `not_found` without TLS. The certificate is public data. A pinned client fetches it with `fetch`, so `HTTPS_PROXY` and `NO_PROXY` apply as for every other request.
   - A pinned client checks the fetched certificate's key against the pin. When the certificate is self-signed, it is each request's only `ca`. When a CA issued it, requests use the normal roots. Either way `checkServerIdentity` checks the key on every connection and throws on any other key, which fails the request (Bun 1.4.2 runs it only after the certificate verifies). So a `--tls self` server can move to `--domain` with the same database, and its devices keep working.
@@ -299,7 +301,9 @@ Limits: 10,000 records, 64 KB per record and 8 MB in total per vault; 32 devices
 
 | Command | Does |
 |---|---|
+| `ks sync setup` | Set up a sync server and this device, step by step (easy-sync spec §4) |
 | `ks sync setup <url>` | Turn sync on for this vault and upload it |
+| `ks sync setup --server-value -` | Turn sync on from a server value read from stdin |
 | `ks sync add-device` | Show a one-time join line and confirm the new device |
 | `ks sync join [<value>]` | Join a synced vault from a new device |
 | `ks sync` | Pull, push, and settle conflicts |
@@ -307,10 +311,13 @@ Limits: 10,000 records, 64 KB per record and 8 MB in total per vault; 32 devices
 | `ks sync devices` | List devices |
 | `ks sync remove-device <name>` | Remove a device and rotate the sync key |
 | `ks sync off` | Stop syncing this device (removes it from the vault) |
+| `ks sync server [update \| address <url> \| manage <ssh-host> \| stop \| remove]` | Look after the server this device set up (easy-sync spec §9) |
 
 **`join` on a device whose vault already holds secrets.** The two vaults merge. Keys only one side has are added. A key both sides hold with different values is a conflict (§8.4). Nothing is overwritten without asking.
 
-`kerstel doctor` gains a Sync row: off; or the server, last successful sync, pending pushes, open conflicts, the scheduled pull and when it last ran, and a warning when the last sync is more than seven days old, when the scheduled pull is missing, or when its settings differ from the shell's.
+A device's `servers` setting holds up to four addresses. A device uses the first that answers, `ks sync status` shows which answered last, and a pin mismatch never moves on to the next address.
+
+`kerstel doctor` gains a Sync row: off; or the server, last successful sync, pending pushes, open conflicts, the scheduled pull and when it last ran, and a warning when the last sync is more than seven days old, when the scheduled pull is missing, when its settings differ from the shell's, or when the server this device installed runs an older release than this Kerstel.
 
 ## 11. Effects on existing copy
 

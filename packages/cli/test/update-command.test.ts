@@ -1,8 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { updateCommand, versionCommand, versionStatusLine } from "../src/commands/update";
+import { updateCommand, versionCommand, versionStatusLine, type UpdateDeps } from "../src/commands/update";
+import type { Prompter } from "../src/init/prompts";
+import { cliName } from "../src/ui/cli-name";
 import type { ReleaseSource } from "../src/update/release-source";
 import { isolateEnv, restoreEnv } from "./helpers/isolate-env";
 
@@ -298,4 +300,148 @@ test("version on a terminal names a refused override instead of saying it could 
   ).toBe(0);
   expect(captured).toEqual(["0.1.0"]);
   expect(errors).toEqual(["KERSTEL_RELEASES_URL must be an https:// URL."]);
+});
+
+describe("the sync server this device installed", () => {
+  const CLI = cliName();
+  const OLDER = { place: "ali@homebox", version: "0.0.9" };
+
+  /** Answers each question in turn, and keeps every question with its default. */
+  function prompter(answers: string[]) {
+    const asked: { question: string; defaultValue: string }[] = [];
+    const p = {
+      asked,
+      async select<T extends string>(question: string, _choices: unknown, defaultValue: T): Promise<T> {
+        asked.push({ question, defaultValue });
+        const answer = answers.shift();
+        if (answer === undefined) throw new Error(`unscripted question: ${question}`);
+        return answer as T;
+      },
+    };
+    return p as typeof p & Prompter;
+  }
+
+  function serverDeps(o: { behind?: typeof OLDER | null; interactive?: boolean; answers?: string[]; code?: number } = {}) {
+    const checked: string[] = [];
+    let updates = 0;
+    const p = prompter(o.answers ?? []);
+    const extra: Partial<UpdateDeps> = {
+      serverBehind: async (version) => {
+        checked.push(version);
+        return o.behind === undefined ? OLDER : o.behind;
+      },
+      updateServer: async () => {
+        updates += 1;
+        return o.code ?? 0;
+      },
+      interactive: o.interactive ?? true,
+      prompter: p,
+    };
+    return { extra, checked, prompter: p, updates: () => updates };
+  }
+
+  test("after an update, it names the older server and, on a terminal, updates it on Yes (the default)", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ answers: ["yes"] });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    const out = captured.join("\n");
+    expect(out).toContain("Updated kerstel from 0.1.0 to 0.1.1");
+    expect(out).toContain("The sync server on ali@homebox runs 0.0.9; this Kerstel is 0.1.1.");
+    expect(s.checked).toEqual(["0.1.1"]);
+    expect(s.prompter.asked).toEqual([{ question: "Update the server now?", defaultValue: "yes" }]);
+    expect(s.updates()).toBe(1);
+  });
+
+  test("No leaves the server as it is and names the command", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ answers: ["no"] });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(s.updates()).toBe(0);
+    expect(captured.join("\n")).toContain(`${CLI} sync server update`);
+  });
+
+  test("a server update that fails after kerstel updated keeps exit 0, and says what to run", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ answers: ["yes"], code: 1 });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(s.updates()).toBe(1);
+    const out = captured.join("\n");
+    expect(out).toContain("The sync server was not updated, but kerstel itself was updated to 0.1.1.");
+    expect(out).toContain(`Run ${CLI} sync server update to try the server again.`);
+  });
+
+  test("with kerstel already current, a failed server update is the exit code", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ answers: ["yes"], code: 1 });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.0", fakeBinary("0.1.0")), ...s.extra })).toBe(1);
+    expect(captured.join("\n")).not.toContain("kerstel itself was updated");
+  });
+
+  test("a server version with control characters is printed without them", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ behind: { place: "ali@homebox", version: "0.0.9\u001b[2J" }, interactive: false });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(captured.join("\n")).toContain("The sync server on ali@homebox runs 0.0.9[2J; this Kerstel is 0.1.1.");
+  });
+
+  test("without a terminal it only says to run sync server update", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ interactive: false });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    const out = captured.join("\n");
+    expect(out).toContain("The sync server on ali@homebox runs 0.0.9; this Kerstel is 0.1.1.");
+    expect(out).toContain(`Run ${CLI} sync server update to update it.`);
+    expect(s.prompter.asked).toEqual([]);
+    expect(s.updates()).toBe(0);
+  });
+
+  test("an up-to-date CLI still checks the server, which may be behind", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ answers: ["yes"] });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.0", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(captured.join("\n")).toContain("The sync server on ali@homebox runs 0.0.9; this Kerstel is 0.1.0.");
+    expect(s.checked).toEqual(["0.1.0"]);
+    expect(s.updates()).toBe(1);
+  });
+
+  test("--check reports an older server but never offers to update it", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps();
+    capture();
+    expect(await updateCommand(["--check"], { ...deps("0.1.0", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(captured.join("\n")).toContain(`Run ${CLI} sync server update to update it.`);
+    expect(s.prompter.asked).toEqual([]);
+    expect(s.updates()).toBe(0);
+
+    // A newer CLI that --check only reports is not this Kerstel yet: no server check.
+    const t = serverDeps();
+    capture();
+    expect(await updateCommand(["--check"], { ...deps("0.1.1", fakeBinary("0.1.0")), ...t.extra })).toBe(0);
+    expect(t.checked).toEqual([]);
+  });
+
+  test("a current, missing or unreachable server says nothing", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps({ behind: null });
+    capture();
+    expect(await updateCommand([], { ...deps("0.1.1", fakeBinary("0.1.0")), ...s.extra })).toBe(0);
+    expect(s.checked).toEqual(["0.1.1"]);
+    expect(captured.join("\n")).not.toContain("sync server");
+    expect(s.prompter.asked).toEqual([]);
+  });
+
+  test("an unreachable release page checks no server", async () => {
+    isolateEnv({ prefix: "update-cmd" });
+    const s = serverDeps();
+    capture();
+    expect(await updateCommand([], { ...deps(null, fakeBinary("0.1.0")), ...s.extra })).toBe(1);
+    expect(s.checked).toEqual([]);
+  });
 });

@@ -604,6 +604,40 @@ describe("Sync", () => {
     expect(exitCode(gatherChecks(allPassFacts({ sync: { ...on, conflicts: 1 }, now: NOW })))).toBe(0);
   });
 
+  describe("a server this device installed", () => {
+    const withServer = (serverVersion: string | null, state: Partial<SyncGlance> = {}) =>
+      checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, serverVersion, now: NOW })), "Sync");
+
+    test("warns when the server runs an older release than this Kerstel", () => {
+      const row = withServer("0.0.9");
+      expect(row?.status).toBe("warn");
+      expect(row?.detail).toContain("the server runs 0.0.9, older than this Kerstel");
+      expect(row?.fix).toBe("ks sync server update");
+      // A warning, not a problem: doctor still exits 0.
+      expect(exitCode(gatherChecks(allPassFacts({ sync: on, serverVersion: "0.0.9", now: NOW })))).toBe(0);
+    });
+
+    test("a current, newer, pre-release or unknown server version passes", () => {
+      expect(withServer("0.1.0")?.status).toBe("pass");
+      expect(withServer("0.2.0")?.status).toBe("pass");
+      expect(withServer("0.1.0-rc.1")?.status).toBe("pass");
+      expect(withServer("test")?.status).toBe("pass");
+      // Not gathered: no record, or the server did not answer in time.
+      expect(withServer(null)?.status).toBe("pass");
+      expect(withServer(null)?.detail).not.toContain("server runs");
+    });
+
+    test("a server version is printed without control characters", () => {
+      const row = withServer("0.0.9+\u001b[2J\u0007");
+      expect(row?.status).toBe("warn");
+      expect(row?.detail).toContain("the server runs 0.0.9+[2J, older than this Kerstel");
+    });
+
+    test("sync off says off, whatever the server runs", () => {
+      expect(withServer("0.0.9", { on: false })).toMatchObject({ status: "info", detail: "off" });
+    });
+  });
+
   describe("the pull schedule", () => {
     const withTimer = (timer: TimerStatus, state: Partial<SyncGlance> = {}) =>
       checkFor(gatherChecks(allPassFacts({ sync: { ...on, ...state }, timer, now: NOW })), "Sync");

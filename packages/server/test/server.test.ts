@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { X509Certificate, randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../src/app";
 import { openDatabase } from "../src/db";
-import { parseArgs } from "../src/index";
+import { VERSION, loadOrCreateEnrollToken, parseArgs, resolveEnrollToken } from "../src/index";
+import { formatPin, pinOfCertificate } from "../src/pin";
+import { parseServerValue, type ServerValue } from "../src/server-value";
+import { loadSelfSigned, tlsFiles } from "../src/tls";
 import { HEADERS, LIMITS, TIMING, newId, signRequest } from "../src/protocol";
 import { Device, addDevice, anonymous, blob, body, harness, vaultWithDevice, type Harness } from "./helpers";
 
@@ -731,5 +737,202 @@ describe("parseArgs: TLS", () => {
     expect(() => parseArgs(["--domain", "*.example.com"], {})).toThrow("--domain");
     expect(() => parseArgs(["--domain", "192.0.2.1"], {})).toThrow("--domain");
     expect(() => parseArgs(["--domain", "sync.example.com", "--acme-http", "80"], {})).toThrow("host:port");
+  });
+});
+
+const INDEX = join(import.meta.dir, "../src/index.ts");
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+describe("the enroll token file", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kerstel-server-token-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("a missing file is created with a new token, mode 0600, and reused on the next start", () => {
+    const file = join(dir, "enroll-token");
+    const config = parseArgs(["--enroll-token-file", file], {});
+    if (typeof config === "string") throw new Error("parseArgs gave no config");
+    // Parsing reads and writes nothing.
+    expect(existsSync(file)).toBe(false);
+
+    const logs: string[] = [];
+    const first = resolveEnrollToken(config, (line) => logs.push(line));
+    expect(existsSync(file)).toBe(true);
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+    const saved = readFileSync(file, "utf8").trim();
+    expect(TOKEN.test(saved)).toBe(true);
+    expect(first === saved).toBe(true);
+    expect(logs.length).toBe(1);
+    expect(logs[0]).toContain(`Created a new enroll token in ${file}`);
+    expect(logs[0]!.includes(saved)).toBe(false);
+
+    const second = resolveEnrollToken(config, (line) => logs.push(line));
+    expect(second === saved).toBe(true);
+    expect(logs.length).toBe(1);
+    expect(readFileSync(file, "utf8").trim() === saved).toBe(true);
+  });
+
+  test("KERSTEL_SERVER_ENROLL_TOKEN_FILE works like the flag, and the flag wins", () => {
+    const file = join(dir, "enroll-token");
+    const config = parseArgs([], { KERSTEL_SERVER_ENROLL_TOKEN_FILE: file });
+    expect(config).toMatchObject({ enrollTokenFile: file, enrollToken: null });
+    const token = resolveEnrollToken(config as Exclude<typeof config, string>, () => {});
+    expect(token === readFileSync(file, "utf8").trim()).toBe(true);
+
+    const other = join(dir, "other");
+    expect(
+      parseArgs(["--enroll-token-file", other], { KERSTEL_SERVER_ENROLL_TOKEN_FILE: file, KERSTEL_SERVER_ENROLL_TOKEN: "x" }),
+    ).toMatchObject({ enrollTokenFile: other, enrollToken: null });
+    expect(parseArgs([], { KERSTEL_SERVER_ENROLL_TOKEN: "x" })).toMatchObject({ enrollTokenFile: null, enrollToken: "x" });
+    expect(() => parseArgs([], { KERSTEL_SERVER_ENROLL_TOKEN_FILE: file, KERSTEL_SERVER_ENROLL_TOKEN: "x" })).toThrow(
+      "Set KERSTEL_SERVER_ENROLL_TOKEN or KERSTEL_SERVER_ENROLL_TOKEN_FILE, not both.",
+    );
+  });
+
+  test("an existing token is used as written, an empty file is refused, and a missing directory fails", () => {
+    const file = join(dir, "enroll-token");
+    writeFileSync(file, "tok-123\n");
+    expect(loadOrCreateEnrollToken(file)).toEqual({ token: "tok-123", created: false });
+    writeFileSync(file, "\n");
+    expect(() => loadOrCreateEnrollToken(file)).toThrow("empty");
+    const nowhere = join(dir, "missing", "enroll-token");
+    expect(() => loadOrCreateEnrollToken(nowhere)).toThrow();
+    expect(existsSync(nowhere)).toBe(false);
+  });
+
+  test("the server creates it on start and logs that it did, without the token", async () => {
+    const file = join(dir, "enroll-token");
+    const db = join(dir, "server.db");
+    const start = async (): Promise<string> => {
+      const port = 20000 + Math.floor(Math.random() * 20000);
+      const proc = Bun.spawn(
+        [process.execPath, INDEX, "--db", db, "--listen", `127.0.0.1:${port}`, "--enroll-token-file", file],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      try {
+        let res: Response | null = null;
+        for (let i = 0; i < 50 && !res; i++) {
+          res = await fetch(`http://127.0.0.1:${port}/v1/health`).catch(() => null);
+          if (!res) await Bun.sleep(100);
+        }
+        expect(res?.status).toBe(200);
+        proc.kill("SIGTERM");
+        expect(await proc.exited).toBe(0);
+        return await new Response(proc.stdout).text();
+      } finally {
+        proc.kill();
+        await proc.exited;
+      }
+    };
+
+    const first = await start();
+    const token = readFileSync(file, "utf8").trim();
+    expect(TOKEN.test(token)).toBe(true);
+    // Checked first, so no later assertion prints the token.
+    expect(first.includes(token)).toBe(false);
+    expect(first).toContain(`Created a new enroll token in ${file}`);
+    expect(first).not.toContain("No enroll token");
+
+    const second = await start();
+    expect(second.includes(token)).toBe(false);
+    expect(second).not.toContain("Created a new enroll token");
+    expect(readFileSync(file, "utf8").trim() === token).toBe(true);
+  }, 20_000);
+});
+
+describe("kerstel-server value and info", () => {
+  let dir: string;
+  let db: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kerstel-server-value-"));
+    db = join(dir, "server.db");
+    file = join(dir, "enroll-token");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const run = (...args: string[]) => {
+    const proc = Bun.spawnSync([process.execPath, INDEX, ...args], { stdout: "pipe", stderr: "pipe", env: { PATH: process.env.PATH } });
+    return { code: proc.exitCode, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
+  };
+
+  test("value prints one line holding the URLs, the pin and the token from the file", () => {
+    const { pin } = loadSelfSigned(db, ["localhost", "127.0.0.1"]);
+    const { token } = loadOrCreateEnrollToken(file);
+    const out = run("value", "--url", "https://a:8787", "--url", "https://b:8787", "--db", db, "--tls", "self", "--enroll-token-file", file);
+    expect(out.code).toBe(0);
+    expect(out.stderr.length).toBe(0);
+    const lines = out.stdout.split("\n");
+    expect(lines.length).toBe(2);
+    expect(lines[1] === "").toBe(true);
+    expect(lines[0]!.startsWith("ks-server1-")).toBe(true);
+    const parsed = parseServerValue(lines[0]!);
+    expect(typeof parsed).toBe("object");
+    const value = parsed as ServerValue;
+    expect(value.urls).toEqual(["https://a:8787", "https://b:8787"]);
+    expect(value.token === token).toBe(true);
+    expect(value.pin?.toString("hex")).toBe(pin.toString("hex"));
+    expect(value.pin?.toString("hex")).toBe(pinOfCertificate(new X509Certificate(readFileSync(tlsFiles(db).cert)).raw).toString("hex"));
+  });
+
+  test("value reads the token file from the environment, and carries no pin without --tls self", () => {
+    const { token } = loadOrCreateEnrollToken(file);
+    const proc = Bun.spawnSync([process.execPath, INDEX, "value", "--url", "https://sync.example.com", "--db", db], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { PATH: process.env.PATH, KERSTEL_SERVER_ENROLL_TOKEN_FILE: file },
+    });
+    expect(proc.exitCode).toBe(0);
+    const value = parseServerValue(proc.stdout.toString()) as ServerValue;
+    expect(value.pin).toBeNull();
+    expect(value.token === token).toBe(true);
+  });
+
+  test("value fails without a token file, and creates none", () => {
+    const none = run("value", "--url", "https://a:8787", "--db", db);
+    expect(none.code).toBe(1);
+    expect(none.stdout).toBe("");
+    expect(none.stderr).toContain("--enroll-token-file");
+
+    const missing = run("value", "--url", "https://a:8787", "--db", db, "--enroll-token-file", file);
+    expect(missing.code).toBe(1);
+    expect(missing.stdout).toBe("");
+    expect(missing.stderr).toContain(file);
+    expect(existsSync(file)).toBe(false);
+
+    // With --tls self, the key must exist: value never makes one.
+    loadOrCreateEnrollToken(file);
+    const noKey = run("value", "--url", "https://a:8787", "--db", db, "--tls", "self", "--enroll-token-file", file);
+    expect(noKey.code).toBe(1);
+    expect(noKey.stdout.length).toBe(0);
+    expect(noKey.stderr).toContain(tlsFiles(db).key);
+    expect(existsSync(tlsFiles(db).key)).toBe(false);
+  });
+
+  test("value needs at least one --url", () => {
+    loadOrCreateEnrollToken(file);
+    const out = run("value", "--db", db, "--enroll-token-file", file);
+    expect(out.code).toBe(2);
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain("--url");
+  });
+
+  test("info prints the version, the TLS mode and the pin, never the token", () => {
+    const { pin } = loadSelfSigned(db, ["localhost", "127.0.0.1"]);
+    const { token } = loadOrCreateEnrollToken(file);
+    const self = run("info", "--db", db, "--tls", "self", "--enroll-token-file", file);
+    expect((self.stdout + self.stderr).includes(token)).toBe(false);
+    expect(self.code).toBe(0);
+    expect(self.stdout).toBe(`version=${VERSION}\ntls=self\npin=${formatPin(pin)}\n`);
+
+    const off = run("info", "--db", db, "--enroll-token-file", file);
+    expect((off.stdout + off.stderr).includes(token)).toBe(false);
+    expect(off.stdout).toBe(`version=${VERSION}\ntls=off\n`);
+
+    const acme = run("info", "--db", db, "--domain", "sync.example.com", "--enroll-token-file", file);
+    expect((acme.stdout + acme.stderr).includes(token)).toBe(false);
+    expect(acme.stdout).toBe(`version=${VERSION}\ntls=acme\n`);
   });
 });

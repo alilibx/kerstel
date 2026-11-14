@@ -6,6 +6,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Added
 
+- `kerstel sync setup` with no arguments sets up a sync server and this device step by step. It installs `kerstel-server` over SSH with your own SSH setup, gives you one command to run on the server yourself, or installs it on this machine, with Docker or as a service, and picks how your devices reach it. See [Sync](https://kerstel.dev/docs/sync).
+- `kerstel sync server` shows the server this device set up, and `update`, `address`, `manage`, `stop` and `remove` look after it. `kerstel update` offers to update an older server, and `doctor` warns about one.
+- A device can hold several addresses for its server, such as a home box's `.local` name and its IP address. It tries the one that answered last first, then the others in order.
+- `kerstel-server value` prints a server value for `kerstel sync setup --server-value -`.
 - `kerstel-server` serves HTTPS itself. `--tls self` makes a certificate that your devices pin, so a server at home or on a VPS needs no domain and no proxy; it prints the pin when it starts. `--domain` gets and renews a Let's Encrypt certificate. A pinned server can move to `--domain` later with the same database, and its devices keep working. A plain HTTP server behind your own proxy works as before. See [Sync](https://kerstel.dev/docs/sync).
 - `kerstel sync setup <url> --pin sha256/…` syncs with a server that pins its certificate. The pin travels in the join value, so other devices pair as before, and every request checks the server's key. If the key changes, nothing is sent, and `kerstel sync off` still turns sync off on that device. Without `--pin`, setup against such a server says to pass the pin.
 - Pair a device by pasting one value. `kerstel sync add-device` prints one `kerstel sync join ks1-…` line and copies it to the clipboard when it can, and `kerstel sync join` takes it as an argument or, with no arguments, at a hidden prompt. The fingerprint check is unchanged. A device on an older Kerstel can't read the value, so update it first; `kerstel sync join <url> <code>` still works for pairing from an older device. See [Sync](https://kerstel.dev/docs/sync).
@@ -16,6 +20,7 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ### Changed
 
+- `kerstel-server --enroll-token-file` creates the file with a new token when it doesn't exist, instead of failing to start, and logs that it did without printing the token.
 - `kerstel run` and `exec` start a background sync when none has started in the last minute (five minutes after a failed one), instead of when none had finished in the last five.
 - `kerstel resolve` is now recorded as a reveal, not a resolve, since a person asked to see the value.
 

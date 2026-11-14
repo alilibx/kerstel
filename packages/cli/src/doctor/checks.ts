@@ -1,9 +1,10 @@
 import { LAUNCHER_FORMAT, LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
+import { printable } from "../output";
 import { STALE_SYNC_MS, type SyncGlance } from "../sync/background";
 import type { TimerStatus } from "../sync/timer";
-import { compareVersions } from "../update/versions";
+import { compareVersions, isOlderRelease } from "../update/versions";
 
 /** A path as the shell needs it pasted: unchanged when safe, single-quoted otherwise. */
 function shellQuote(path: string): string {
@@ -55,6 +56,8 @@ export interface DoctorFacts {
   timer?: TimerStatus;
   /** The time `sync` is judged against. */
   now?: number;
+  /** The version the sync server this device installed answers with. Gathered only with an install record and sync on; null when it did not answer. */
+  serverVersion?: string | null;
 }
 
 /** "macos" -> "macOS Keychain", etc. Falls back to the raw name if new. */
@@ -222,6 +225,15 @@ function syncCheck(facts: DoctorFacts): Check | null {
       label: "Sync",
       detail: `${detail} · the scheduled pull's settings differ from this shell's`,
       fix: `${fix}, to update it`,
+    };
+  }
+  if (facts.serverVersion && isOlderRelease(facts.serverVersion, facts.version)) {
+    return {
+      group: "machine",
+      status: "warn",
+      label: "Sync",
+      detail: `${detail} · the server runs ${printable(facts.serverVersion)}, older than this Kerstel`,
+      fix: `${facts.cli} sync server update`,
     };
   }
   return { group: "machine", status: "pass", label: "Sync", detail };

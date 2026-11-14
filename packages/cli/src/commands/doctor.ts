@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { openContext } from "../context";
+import { openContext, type CliContext } from "../context";
 import { isDaemonRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
 import { projectStatus } from "../init/status";
@@ -13,10 +13,13 @@ import { note, step } from "../ui/steps";
 import { renderTable } from "../ui/table";
 import { SYMBOLS, theme } from "../ui/theme";
 import { glanceSync } from "../sync/background";
+import { readInstallRecord } from "../sync/install-record";
+import { loadSync, SYNC_META, type SyncConfig } from "../sync/state";
 import { syncTimer, type TimerStatus } from "../sync/timer";
 import { githubReleases } from "../update/release-source";
 import { VERSION } from "../version";
 import { exitCode, gatherChecks, type Check, type DoctorFacts } from "../doctor/checks";
+import { SERVER_CHECK_MS, serverVersion } from "./sync-server";
 
 /**
  * A path's actual mode next to the one Kerstel intends. `null` means "not
@@ -131,6 +134,18 @@ function summaryLine(checks: Check[]): string {
   );
 }
 
+/** The version of the server this device installed, or null when its settings can't be read or it does not answer. */
+async function installedServerVersion(ctx: CliContext): Promise<string | null> {
+  let config: SyncConfig | null;
+  try {
+    config = loadSync(ctx.vault, ctx.dataKey);
+  } catch {
+    // The Sync row already reports what is wrong with sync here.
+    return null;
+  }
+  return config === null ? null : serverVersion(config, {}, SERVER_CHECK_MS, ctx.vault.getMeta(SYNC_META.lastAddress));
+}
+
 /** Where `doctor` looks for the newest release. Injectable so tests never call GitHub. */
 export interface DoctorDeps {
   latestVersion: () => Promise<string | null>;
@@ -173,6 +188,8 @@ export async function doctorCommand(
     const latestVersion = deps.latestVersion();
     const project = projectStatus(cwd, ctx.vault);
     const sync = glanceSync(ctx.vault.file);
+    // Also overlapped. It gives up after SERVER_CHECK_MS, so an offline server never holds doctor up longer.
+    const installedServer = sync.on && readInstallRecord() !== null ? installedServerVersion(ctx) : undefined;
     let timer: TimerStatus | undefined;
     if (sync.on) {
       try {
@@ -204,6 +221,7 @@ export async function doctorCommand(
       sync,
       timer,
       now: Date.now(),
+      serverVersion: await installedServer,
     };
 
     const checks = gatherChecks(facts);

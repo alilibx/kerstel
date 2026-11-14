@@ -7,6 +7,7 @@
  * pin; with `--domain`, with a Let's Encrypt certificate it gets and renews.
  * The client refuses a non-https server URL other than 127.0.0.1 and localhost.
  */
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import pkg from "../package.json";
@@ -14,13 +15,17 @@ import { createApp, type App } from "./app";
 import { openDatabase } from "./db";
 import { formatPin } from "./pin";
 import { LIMITS } from "./protocol";
+import { encodeServerValue } from "./server-value";
 import {
   AcmeManager,
   bindAgain,
   certificateName,
+  createFileOnce,
   keepCertificate,
   loadSelfSigned,
+  readSelfSignedPin,
   serveChallenges,
+  tlsFiles,
   type AcmeCertificate,
 } from "./tls";
 
@@ -34,13 +39,23 @@ const HELP = `kerstel-server ${VERSION}
 The Kerstel sync server. It stores only ciphertext: no key names, no values.
 
 Usage: kerstel-server [options]
+       kerstel-server value --url <url> [--url <url>]... [options]
+       kerstel-server info [options]
+
+Commands:
+  value                      Print the server value (ks-server1-...) that sets up a device:
+                             up to four --url addresses, the pin with --tls self, and the
+                             enroll token from --enroll-token-file. Paste it only into Kerstel.
+  info                       Print the version, the TLS mode and, with --tls self, the pin
 
 Options:
   --db <file>                SQLite database (default ./kerstel-server.db, or KERSTEL_SERVER_DB)
   --listen <host:port>       Address to listen on (default 127.0.0.1:8787, or KERSTEL_SERVER_LISTEN)
-  --enroll-token-file <file> Require the token in this file to create a vault
-                             (or KERSTEL_SERVER_ENROLL_TOKEN). Without one, anyone who
-                             can reach the server can create a vault.
+  --enroll-token-file <file> Require the token in this file to create a vault, and create the
+                             file with a new token when it does not exist (or
+                             KERSTEL_SERVER_ENROLL_TOKEN_FILE, or KERSTEL_SERVER_ENROLL_TOKEN for
+                             the token itself). Without one, anyone who can reach the server
+                             can create a vault.
   --trust-proxy              Take the client address from X-Forwarded-For (only behind a proxy)
   --tls self                 Serve HTTPS with a certificate of its own, which devices pin
                              (or KERSTEL_SERVER_TLS=self). It prints the pin when it starts.
@@ -69,7 +84,10 @@ export interface ServerConfig {
   db: string;
   hostname: string;
   port: number;
+  /** The token itself, from KERSTEL_SERVER_ENROLL_TOKEN. Null when `enrollTokenFile` is set. */
   enrollToken: string | null;
+  /** The file that holds the token, read or created by `resolveEnrollToken`. */
+  enrollTokenFile: string | null;
   trustProxy: boolean;
   tls: TlsConfig;
 }
@@ -108,6 +126,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   let db = env.KERSTEL_SERVER_DB || "kerstel-server.db";
   let listen = env.KERSTEL_SERVER_LISTEN || "127.0.0.1:8787";
   let enrollToken: string | null = env.KERSTEL_SERVER_ENROLL_TOKEN || null;
+  let enrollTokenFile: string | null = env.KERSTEL_SERVER_ENROLL_TOKEN_FILE || null;
   let trustProxy = false;
   let tls = env.KERSTEL_SERVER_TLS || null;
   let tlsFromFlag = false;
@@ -142,12 +161,11 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
         listen = value();
         listenGiven = true;
         break;
-      case "--enroll-token-file": {
-        const file = value();
-        enrollToken = readFileSync(file, "utf8").trim();
-        if (!enrollToken) throw new Error(`${file} is empty.`);
+      case "--enroll-token-file":
+        // The flag overrides both environment twins.
+        enrollTokenFile = value();
+        enrollToken = null;
         break;
-      }
       case "--trust-proxy":
         trustProxy = true;
         break;
@@ -177,6 +195,11 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
       default:
         throw new Error(`Unknown option ${arg}. Run kerstel-server --help.`);
     }
+  }
+
+  // Both from the environment: --enroll-token-file drops the token above.
+  if (enrollToken && enrollTokenFile) {
+    throw new Error("Set KERSTEL_SERVER_ENROLL_TOKEN or KERSTEL_SERVER_ENROLL_TOKEN_FILE, not both.");
   }
 
   // A flag overrides its environment twin, so a container's variables never
@@ -214,7 +237,134 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
       httpPort: http.port,
     };
   }
-  return { db, hostname, port, enrollToken, trustProxy, tls: config };
+  return { db, hostname, port, enrollToken, enrollTokenFile, trustProxy, tls: config };
+}
+
+/** The trimmed token in `file`. Throws ENOENT when there is no file, and when it is empty. */
+function readTokenFile(file: string): string {
+  const token = readFileSync(file, "utf8").trim();
+  if (!token) throw new Error(`${file} is empty.`);
+  return token;
+}
+
+/**
+ * The enroll token in `file`, or a new one (32 random bytes, base64url) that
+ * it writes there, mode `0600`, when there is no file. It never replaces a
+ * file, and uses the token of another process that wrote one first.
+ */
+export function loadOrCreateEnrollToken(file: string): { token: string; created: boolean } {
+  try {
+    return { token: readTokenFile(file), created: false };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const token = randomBytes(32).toString("base64url");
+  let created: boolean;
+  try {
+    created = createFileOnce(file, `${token}\n`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Cannot create ${file}: its directory does not exist.`);
+    throw error;
+  }
+  return created ? { token, created } : { token: readTokenFile(file), created };
+}
+
+/** The token a device needs to create a vault, or null when anyone may. `log` says when it made a token file. */
+export function resolveEnrollToken(
+  config: Pick<ServerConfig, "enrollToken" | "enrollTokenFile">,
+  log: (line: string) => void,
+): string | null {
+  if (config.enrollTokenFile === null) return config.enrollToken;
+  const { token, created } = loadOrCreateEnrollToken(config.enrollTokenFile);
+  if (created) log(`Created a new enroll token in ${config.enrollTokenFile}. A device needs it to create a vault.`);
+  return token;
+}
+
+/** A command's failure, with the exit code to leave with: 2 for a usage error, 1 otherwise. */
+class CommandError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: 1 | 2,
+  ) {
+    super(message);
+  }
+}
+
+/** `parseArgs` for a command, with its errors as usage errors. */
+function commandConfig(argv: string[], env: Record<string, string | undefined>): ReturnType<typeof parseArgs> {
+  try {
+    return parseArgs(argv, env);
+  } catch (error) {
+    throw new CommandError((error as Error).message, 2);
+  }
+}
+
+/**
+ * `kerstel-server value`: the lines to print, which are the server value
+ * alone. It reads the token file and the `--tls self` key and creates neither,
+ * so it fails until the server has started once with the same options.
+ */
+export function valueCommand(argv: string[], env: Record<string, string | undefined>): string[] {
+  const urls: string[] = [];
+  const rest: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== "--url") {
+      rest.push(argv[i]!);
+      continue;
+    }
+    const url = argv[++i];
+    if (url === undefined || url.startsWith("--")) throw new CommandError("--url needs a value.", 2);
+    urls.push(url);
+  }
+  const config = commandConfig(rest, env);
+  if (config === "help") return [HELP];
+  if (config === "version") return [VERSION];
+  if (urls.length === 0) throw new CommandError("value needs at least one --url <url>.", 2);
+
+  const file = config.enrollTokenFile;
+  if (file === null) {
+    throw new CommandError("value reads the enroll token from --enroll-token-file or KERSTEL_SERVER_ENROLL_TOKEN_FILE, and neither is set.", 1);
+  }
+  let token: string;
+  try {
+    token = readTokenFile(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    throw new CommandError(`There is no enroll token in ${file} yet. Start kerstel-server with --enroll-token-file ${file} first.`, 1);
+  }
+  let pin: Buffer | null = null;
+  if (config.tls.mode === "self") {
+    pin = readSelfSignedPin(config.db);
+    if (pin === null) {
+      throw new CommandError(`There is no TLS key in ${tlsFiles(config.db).key} yet. Start kerstel-server with --tls self first.`, 1);
+    }
+  }
+  return [encodeServerValue({ urls, pin, token })];
+}
+
+/** `kerstel-server info`: `version=`, `tls=` and, once a `--tls self` key exists, `pin=`. It never reads the token. */
+export function infoCommand(argv: string[], env: Record<string, string | undefined>): string[] {
+  const config = commandConfig(argv, env);
+  if (config === "help") return [HELP];
+  if (config === "version") return [VERSION];
+  const lines = [`version=${VERSION}`, `tls=${config.tls.mode}`];
+  if (config.tls.mode === "self") {
+    const pin = readSelfSignedPin(config.db);
+    if (pin) lines.push(`pin=${formatPin(pin)}`);
+  }
+  return lines;
+}
+
+/** Runs `value` or `info`, printing its lines, and exits non-zero on failure. */
+function runCommand(command: (argv: string[], env: Record<string, string | undefined>) => string[], argv: string[]): void {
+  let lines: string[];
+  try {
+    lines = command(argv, process.env);
+  } catch (error) {
+    console.error(`kerstel-server: ${(error as Error).message}`);
+    process.exit(error instanceof CommandError ? error.exitCode : 1);
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 function clientAddress(request: Request, direct: string, trustProxy: boolean): string {
@@ -283,9 +433,13 @@ export function certificateListener(o: {
 }
 
 function main(): void {
+  const argv = process.argv.slice(2);
+  if (argv[0] === "value") return runCommand(valueCommand, argv.slice(1));
+  if (argv[0] === "info") return runCommand(infoCommand, argv.slice(1));
+
   let config: ReturnType<typeof parseArgs>;
   try {
-    config = parseArgs(process.argv.slice(2), process.env);
+    config = parseArgs(argv, process.env);
   } catch (error) {
     console.error(`kerstel-server: ${(error as Error).message}`);
     process.exit(2);
@@ -297,6 +451,14 @@ function main(): void {
   if (config === "version") {
     console.log(VERSION);
     return;
+  }
+
+  let enrollToken: string | null;
+  try {
+    enrollToken = resolveEnrollToken(config, (line) => console.log(line));
+  } catch (error) {
+    console.error(`kerstel-server: ${(error as Error).message}`);
+    process.exit(1);
   }
 
   let self: ReturnType<typeof loadSelfSigned> | null = null;
@@ -311,7 +473,7 @@ function main(): void {
 
   const db = openDatabase(config.db);
   let certDer = self?.certDer ?? null;
-  const app = createApp({ db, version: VERSION, enrollToken: config.enrollToken, certificate: () => certDer });
+  const app = createApp({ db, version: VERSION, enrollToken, certificate: () => certDer });
   const { trustProxy } = config;
 
   const listen = listener({ app, hostname: config.hostname, trustProxy });
@@ -365,7 +527,7 @@ function main(): void {
 
   app.maintain();
   const timer = setInterval(() => app.maintain(), 10 * 60_000);
-  if (!config.enrollToken) {
+  if (!enrollToken) {
     console.log("No enroll token: anyone who can reach this server can create a vault.");
   }
 

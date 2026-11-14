@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -16,7 +16,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { keyBelongsToHome, parseUninstallArgs, removeLinks, uninstallCommand } from "../src/commands/uninstall";
 import { createBackup } from "../src/init/backup";
-import { CancelledError, ScriptedPrompter, type Prompter } from "../src/init/prompts";
+import { CancelledError, ScriptedPrompter, type Choice, type Prompter } from "../src/init/prompts";
+import { readInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
+import { manualCommand } from "../src/sync/installer";
+import type { Host } from "../src/sync/remote";
+import { cliName } from "../src/ui/cli-name";
+import { VERSION } from "../src/version";
 import { syncLockPath, tryLockSync } from "../src/sync/background";
 import type { SyncTimer } from "../src/sync/timer";
 import { loadOrCreateDataKey, selectBackend } from "../src/vault/keychain";
@@ -570,4 +575,161 @@ test("dry run keeps the timer", async () => {
   expect(timer.removed).toBe(0);
   expect(existsSync(home)).toBe(true);
   expect(output.join("\n")).toContain("Removes the scheduled sync pull.");
+});
+
+describe("the sync server this device installed", () => {
+  const QUESTION = "Also remove the sync server on ali@homebox? Other devices may still use it.";
+  const MANAGE = `The server keeps running. To manage it from another device: ${cliName()} sync server manage ali@homebox`;
+  const serverRecord = (o: Partial<InstallRecord> = {}): InstallRecord => ({
+    installId: "install-id-1",
+    route: "ssh",
+    host: "ali@homebox",
+    runtime: "docker",
+    reach: "self",
+    addresses: ["https://192.168.1.20:8787"],
+    version: "0.0.1",
+    finished: true,
+    ...o,
+  });
+
+  /** A host whose installer exits with `code`; it keeps every command it was asked to run. */
+  function fakeHost(code = 0) {
+    const calls: { route: string; target: string | null; args: string[] }[] = [];
+    const hostFor = (route: "ssh" | "local", target: string | null): Host => ({
+      label: target ?? "this machine",
+      async run(args) {
+        calls.push({ route, target, args });
+        return { code, lines: [], value: null };
+      },
+    });
+    return { calls, hostFor };
+  }
+
+  /** Answers each question in turn, and keeps every question with its default. */
+  class Recorder extends ScriptedPrompter {
+    readonly defaults = new Map<string, string>();
+    override async select<T extends string>(question: string, choices: Choice<T>[], d: T): Promise<T> {
+      this.defaults.set(question, d);
+      return super.select(question, choices, d);
+    }
+  }
+
+  test("--dry-run only lists the question", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost();
+    capture();
+    expect(await uninstallCommand(["--dry-run"], undefined, NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(output.join("\n")).toContain("Asks whether to also remove the sync server on ali@homebox.");
+    expect(host.calls).toEqual([]);
+    expect(readInstallRecord(home)).not.toBeNull();
+  });
+
+  test("Yes removes the server and keeps its database; the question defaults to No", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost();
+    const prompter = new Recorder(["yes", "yes"]);
+    capture();
+    expect(await uninstallCommand([], prompter, NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(prompter.asked[1]).toBe(QUESTION);
+    expect(prompter.defaults.get(QUESTION)).toBe("no");
+    expect(host.calls).toEqual([{ route: "ssh", target: "ali@homebox", args: ["remove", "--install-id", "install-id-1"] }]);
+    expect(output.join("\n")).toContain("Removed the server from ali@homebox. Its database stays on the host.");
+    expect(existsSync(home)).toBe(false);
+  });
+
+  test("No leaves the server running and names manage", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost();
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "no"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(host.calls).toEqual([]);
+    expect(output.join("\n")).toContain(MANAGE);
+    expect(existsSync(home)).toBe(false);
+  });
+
+  test("--yes never removes the server", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost();
+    capture();
+    expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(host.calls).toEqual([]);
+    expect(output.join("\n")).toContain(MANAGE);
+  });
+
+  test("a removal that fails never stops the uninstall", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost(1);
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "yes"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(host.calls).toHaveLength(1);
+    const out = output.join("\n");
+    expect(out).toContain("The server on ali@homebox was not removed.");
+    expect(out).toContain(MANAGE);
+    expect(existsSync(home)).toBe(false);
+  });
+
+  test("a server on this machine or installed by hand names manage with a placeholder", async () => {
+    for (const r of [serverRecord({ route: "local", host: null }), serverRecord({ route: "manual", host: null })]) {
+      const { home } = await setup();
+      writeInstallRecord(r, home);
+      capture();
+      expect(await uninstallCommand(["--yes"], undefined, NO_BINARY, { timer: fakeTimer(false), hostFor: fakeHost().hostFor })).toBe(0);
+      expect(output.join("\n")).toContain(`To manage it from another device: ${cliName()} sync server manage <ssh-host>`);
+    }
+  });
+
+  test("Yes on a server installed by hand prints the command that removes it and keeps its database", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord({ route: "manual", host: null }), home);
+    const host = fakeHost();
+    const prompter = new ScriptedPrompter(["yes", "yes"]);
+    capture();
+    expect(await uninstallCommand([], prompter, NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    expect(prompter.asked[1]).toBe("Also remove the sync server on 192.168.1.20? Other devices may still use it.");
+    expect(host.calls).toEqual([]);
+    expect(output.join("\n")).toContain("keeps its database");
+    expect(output.join("\n")).toContain(manualCommand({ version: VERSION, args: ["remove", "--install-id", "install-id-1"] }));
+    // It keeps running until that command runs there.
+    expect(output.join("\n")).toContain(`To manage it from another device: ${cliName()} sync server manage <ssh-host>`);
+  });
+
+  test("a host that runs another device's server is left alone", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost(3);
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "yes"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    const out = output.join("\n");
+    expect(out).toContain("ali@homebox runs a Kerstel server that another device set up, not the one this device did. Nothing was changed there.");
+    expect(out).toContain(MANAGE);
+    expect(existsSync(home)).toBe(false);
+  });
+
+  test("Docker that could not be checked there leaves the server, and says so", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost(4);
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "yes"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    const out = output.join("\n");
+    expect(out).toContain(
+      "Could not check Docker on ali@homebox for a Kerstel server, so nothing was changed there. Check that Docker runs there and that sudo works, then remove it from another device.",
+    );
+    expect(out).not.toContain("Removed the server");
+    expect(out).toContain(MANAGE);
+  });
+
+  test("no record, no question", async () => {
+    await setup();
+    const prompter = new ScriptedPrompter(["yes"]);
+    capture();
+    expect(await uninstallCommand([], prompter, NO_BINARY, { timer: fakeTimer(false) })).toBe(0);
+    expect(prompter.asked).toHaveLength(1);
+    expect(output.join("\n")).not.toContain("sync server");
+  });
 });
