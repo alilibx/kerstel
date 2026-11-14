@@ -6,10 +6,21 @@ import { fail, info, ok, yellow } from "../output";
 import { isSafeReleaseUrl } from "../update/release-source";
 import { cliName } from "../ui/cli-name";
 import { VERSION } from "../version";
-import { MAX_ADDRESSES, defaultAddresses, parseHostFacts, resolveIpv4, type HostFacts } from "./host-facts";
+import { serverPlace } from "../commands/sync-server";
+import { isHttps, parsePin } from "../../../server/src/pin";
+import {
+  MAX_ADDRESSES,
+  defaultAddresses,
+  isPublicIpv4,
+  parseHostFacts,
+  resolveIpv4,
+  sshPublicAddress,
+  type HostFacts,
+  type SshPublicAddress,
+} from "./host-facts";
 import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "./install-record";
 import { installerReleaseUrl, manualCommand } from "./installer";
-import { localHost, sshHost, type Host } from "./remote";
+import { localHost, sshHost, sshHostname, type Host } from "./remote";
 import { isSafeServerUrl, loadSync, normaliseServerUrl } from "./state";
 
 /**
@@ -27,6 +38,8 @@ export interface WizardDeps extends SyncDeps {
   resolveAll?: (name: string) => Promise<string[]>;
   /** Whether a release asset exists at `url`: true or false from the server's answer, null when it can't be reached. */
   releaseFound?: (url: string) => Promise<boolean | null>;
+  /** The host name `ssh` connects to for an SSH target (`ssh -G`), to tell a VPS behind NAT. */
+  sshHostname?: (target: string) => Promise<string | null>;
   /** For tests: the version installed, in place of this CLI's. */
   version?: string;
 }
@@ -76,7 +89,13 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
   let handedOver = false;
   let installing = false;
   try {
-    if (loadSync(ctx.vault, ctx.dataKey)) {
+    const config = loadSync(ctx.vault, ctx.dataKey);
+    if (config) {
+      // A setup that stopped after its server answered, and that sync now reaches, is done.
+      const record = readInstallRecord();
+      if (record?.started === true && !record.finished && record.addresses.some((url) => config.servers.includes(url))) {
+        writeInstallRecord({ ...record, finished: true });
+      }
       info(
         `Sync is already on for this vault. Run ${cliName()} sync server to see the server, or ${cliName()} sync add-device to add a device.`,
       );
@@ -169,15 +188,17 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
       }
       if (route === "local") info("A server on this machine is reachable only while this machine is on.");
 
-      const plan = await planForHost(prompter, deps, { route, target: sshTarget, label: host.label, facts, version });
+      const previous = readInstallRecord();
+      const plan = await planForHost(prompter, deps, { route, target: sshTarget, label: host.label, facts, version, record: previous });
       if (typeof plan === "number") return plan;
       record = { ...plan, route, host: sshTarget, version, finished: false };
       writeInstallRecord(record);
       installing = true;
       const run = await host.run(installArgs(plan, version, releasesUrl), { interactive: true });
       if (run.code === ANOTHER_DEVICES_SERVER) {
-        // Nothing of this device's is on the host, so there is nothing to resume.
-        removeInstallRecord();
+        // Nothing of this device's is on the host: keep what this device knew before.
+        if (previous !== null) writeInstallRecord(previous);
+        else removeInstallRecord();
         info(SOMEONE_ELSES(host.label));
         return 1;
       }
@@ -259,11 +280,23 @@ async function existingServer(prompter: Prompter): Promise<Target | null> {
     fail("That is not a server address or a server value. Use https://, or http:// to this machine.");
     return null;
   }
+  const pin = isHttps(url) ? await askPin(prompter) : null;
   const token =
     process.env.KERSTEL_SYNC_ENROLL_TOKEN ||
     (await prompter.text("Enroll token (leave empty if the server has none)", { secret: true })).trim() ||
     null;
-  return { servers: [url], pin: null, token };
+  return { servers: [url], pin, token };
+}
+
+/** The pin of a server with its own certificate (`sha256/…`), asked until it reads; null when left empty. */
+async function askPin(prompter: Prompter): Promise<Buffer | null> {
+  for (;;) {
+    const answer = (await prompter.text("Certificate pin (leave empty if the server has a CA certificate)", { secret: false })).trim();
+    if (!answer) return null;
+    const pin = parsePin(answer);
+    if (pin !== null) return pin;
+    fail("That is not a certificate pin. It looks like sha256/ followed by 43 letters, digits, - and _, as kerstel-server prints when it starts.");
+  }
 }
 
 async function askSshHost(prompter: Prompter): Promise<string> {
@@ -285,14 +318,17 @@ async function pastedValue(prompter: Prompter): Promise<Target | null> {
 }
 
 /**
- * Whether to set up a new server when this device has an unfinished one
- * elsewhere, which the new record would forget. Asks, and No is the default.
+ * Whether to set up a new server when this device already has a record of
+ * one elsewhere, which the new record would replace. Asks, and No is the default.
  */
-async function replacesUnfinished(prompter: Prompter, record: InstallRecord): Promise<boolean> {
-  const where = record.host ?? (record.route === "local" ? "This machine" : "The server you ran the install command on");
-  warn(
-    `${where} may still run the server this device started setting up. Run ${cliName()} sync server remove first, or continue to set up a new one.`,
-  );
+async function replacesRecord(prompter: Prompter, record: InstallRecord): Promise<boolean> {
+  const next = `Run ${cliName()} sync server remove first, or continue to set up a new one.`;
+  if (record.finished) {
+    warn(`This device looks after the server on ${serverPlace(record)}. A new server replaces that. ${next}`);
+  } else {
+    const where = record.host ?? (record.route === "local" ? "This machine" : "The server you ran the install command on");
+    warn(`${where} may still run the server this device started setting up. ${next}`);
+  }
   const answer = await prompter.select(
     "Set up a new server?",
     [
@@ -310,7 +346,7 @@ async function askManual(prompter: Prompter, version: string): Promise<Plan | nu
   const record = readInstallRecord();
   let installId: string;
   if (record?.route === "manual") installId = record.installId;
-  else if (record !== null && !record.finished && !(await replacesUnfinished(prompter, record))) return 1;
+  else if (record !== null && !(await replacesRecord(prompter, record))) return 1;
   else installId = newInstallId();
   const runtime = await askRuntime(prompter, "systemd or launchd", version);
   const reach = await askReach(prompter, "Tailscale (the server's name on your tailnet)");
@@ -322,14 +358,16 @@ async function askManual(prompter: Prompter, version: string): Promise<Plan | nu
   return { installId, runtime, reach, addresses: await askAddresses(prompter, [], { found: false }) };
 }
 
-/** The `ssh` and `local` routes, from what `detect` found. A number is the exit code when it stops. */
+/**
+ * The `ssh` and `local` routes, from what `detect` found and this device's
+ * install record. A number is the exit code when it stops.
+ */
 async function planForHost(
   prompter: Prompter,
   deps: WizardDeps,
-  o: { route: "ssh" | "local"; target: string | null; label: string; facts: HostFacts; version: string },
+  o: { route: "ssh" | "local"; target: string | null; label: string; facts: HostFacts; version: string; record: InstallRecord | null },
 ): Promise<Plan | number> {
-  const { label, facts } = o;
-  const record = readInstallRecord();
+  const { label, facts, record } = o;
   const ours = record !== null && facts.installId !== null && record.installId === facts.installId;
   if (facts.installed !== null && !ours) {
     info(SOMEONE_ELSES(label));
@@ -337,12 +375,16 @@ async function planForHost(
     return 1;
   }
   // `detect` can miss this device's install: it never asks for a sudo password, and Docker may need one.
-  const unfinishedHere = record !== null && !record.finished && record.route === o.route && record.host === o.target;
-  if (record !== null && (ours || unfinishedHere)) {
-    info(ours ? "Found the server this device started setting up. Continuing." : `Continuing the setup this device started on ${label}.`);
-    return resumedPlan(prompter, deps, { record, runtime: facts.installed ?? record.runtime, label, facts });
+  // So the record's own host gets its install ID again, whether or not that install finished.
+  const sameHost = record !== null && record.route === o.route && record.host === o.target;
+  if (record !== null && (ours || sameHost)) {
+    const what = record.finished ? "set up" : "started setting up";
+    if (ours) info(`Found the server this device ${what}. Continuing.`);
+    else if (record.finished) info(`Continuing with the server this device set up on ${label}.`);
+    else info(`Continuing the setup this device started on ${label}.`);
+    return resumedPlan(prompter, deps, { record, runtime: facts.installed ?? record.runtime, label, target: o.target, facts });
   }
-  if (record !== null && !record.finished && !(await replacesUnfinished(prompter, record))) return 1;
+  if (record !== null && !(await replacesRecord(prompter, record))) return 1;
 
   let runtime: Runtime = "service";
   if (facts.docker) {
@@ -353,7 +395,7 @@ async function planForHost(
   } else {
     info(`No Docker on ${label}, so the server runs as a service.`);
   }
-  const reached = await askHowReached(prompter, deps, { label, facts });
+  const reached = await askHowReached(prompter, deps, { label, target: o.target, facts });
   if (typeof reached === "number") return reached;
   return { installId: newInstallId(), runtime, ...reached };
 }
@@ -366,14 +408,14 @@ async function planForHost(
 async function resumedPlan(
   prompter: Prompter,
   deps: WizardDeps,
-  o: { record: InstallRecord; runtime: Runtime; label: string; facts: HostFacts },
+  o: { record: InstallRecord; runtime: Runtime; label: string; target: string | null; facts: HostFacts },
 ): Promise<Plan | number> {
   const { record } = o;
   const kept = { installId: record.installId, runtime: o.runtime };
   if (record.reach === "self") {
     return { ...kept, reach: "self", addresses: await askAddresses(prompter, record.addresses, { found: false }) };
   }
-  if (record.started === true) {
+  if (record.started === true && !record.finished) {
     const shown = record.addresses.map(shortAddress).join(", ");
     info(`Last time, this device could not sync through ${shown}.`);
     const next = await prompter.select(
@@ -385,7 +427,7 @@ async function resumedPlan(
       "keep",
     );
     if (next === "change") {
-      const reached = await askHowReached(prompter, deps, { label: o.label, facts: o.facts });
+      const reached = await askHowReached(prompter, deps, { label: o.label, target: o.target, facts: o.facts });
       if (typeof reached === "number") return reached;
       return { ...kept, ...reached };
     }
@@ -394,8 +436,18 @@ async function resumedPlan(
 }
 
 /** How devices reach a server on a host `detect` described. A number is the exit code when it stops. */
-async function askHowReached(prompter: Prompter, deps: WizardDeps, o: { label: string; facts: HostFacts }): Promise<Reached | number> {
+async function askHowReached(
+  prompter: Prompter,
+  deps: WizardDeps,
+  o: { label: string; target: string | null; facts: HostFacts },
+): Promise<Reached | number> {
   const { label, facts } = o;
+  const resolveAll = deps.resolveAll ?? resolveIpv4;
+  // Where this device's ssh connects: a VPS behind NAT reports only private
+  // addresses, yet is reached at a public one. Looked up once, when needed.
+  let ssh: Promise<SshPublicAddress | null> | undefined;
+  const sshPublic = () =>
+    (ssh ??= o.target === null ? Promise.resolve(null) : (deps.sshHostname ?? sshHostname)(o.target).then((name) => sshPublicAddress(name, resolveAll)));
   const tailnetName = facts.tailscale?.replace(/\.$/, "") || null;
   const reach = await askReach(prompter, tailnetName ? `Tailscale (${tailnetName}, found on this host)` : null);
   if (reach === "tailscale") {
@@ -404,8 +456,9 @@ async function askHowReached(prompter: Prompter, deps: WizardDeps, o: { label: s
   }
   if (reach === "domain") {
     const domain = await askDomain(prompter);
-    const points = await (deps.resolveAll ?? resolveIpv4)(domain);
-    if (!points.some((ip) => facts.ipv4.includes(ip))) {
+    const points = await resolveAll(domain);
+    const pointsAt = (ips: string[]) => points.some((ip) => ips.includes(ip));
+    if (!pointsAt(facts.ipv4) && !pointsAt((await sshPublic())?.ips ?? [])) {
       warn(`${domain} does not point at ${label} yet. Let's Encrypt needs it to.`);
       const go = await prompter.select(
         "Continue anyway?",
@@ -419,7 +472,8 @@ async function askHowReached(prompter: Prompter, deps: WizardDeps, o: { label: s
     }
     return { reach, addresses: [`https://${domain}`] };
   }
-  const found = await defaultAddresses(facts, { port: PORT, resolves: deps.resolves });
+  const viaSsh = facts.ipv4.some(isPublicIpv4) ? null : await sshPublic();
+  const found = await defaultAddresses(facts, { port: PORT, resolves: deps.resolves, ssh: viaSsh });
   if (found.warn && found.addresses.length > 0) warn(found.warn);
   return { reach, addresses: await askAddresses(prompter, found.addresses, { found: true }) };
 }

@@ -11,7 +11,7 @@ The easy way is `kerstel sync setup`. It installs `kerstel-server` for you, over
 To install it by hand: every [release](https://github.com/alilibx/kerstel/releases/latest) ships the server next to the CLI, with the same version: `kerstel-server-<platform>` binaries for Linux and macOS, covered by the release's `SHA256SUMS`, and an image:
 
 ```bash
-docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+docker run -d --name kerstel-server --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 ```
 
 The image is tagged with each version (`0.3.0`), each minor version (`0.3`) and `latest`.
@@ -58,7 +58,7 @@ kerstel-server --listen 0.0.0.0:8787 --tls self --tls-name 203.0.113.7
 kerstel sync setup https://203.0.113.7:8787 --pin sha256/…
 ```
 
-The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs`. To move to a domain later, start the server with `--domain` and the same database. The new certificate is for the same key, so pinned devices keep working.
+The pin travels in the join value, so other devices never type it. With Docker, set `-e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7`, and read the pin with `docker logs kerstel-server`. To move to a domain later, start the server with `--domain` and the same database. The new certificate is for the same key, so pinned devices keep working.
 
 **Your domain, with Let's Encrypt.** `--domain sync.example.com` gets and renews a certificate. TCP 80 and 443 must reach the server. Binding them needs root, or `CAP_NET_BIND_SERVICE` on Linux. It renews when fewer than 30 days remain, or a third of the certificate's lifetime if that is shorter, checking every 12 hours. Running with `--domain` agrees to the CA's terms. With Docker, publish `-p 80:80 -p 443:443` and set `KERSTEL_SERVER_LISTEN=0.0.0.0:443`, because the image sets `8787`. Add `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again after 10 tries, a second apart, the server exits, so something must start it again.
 

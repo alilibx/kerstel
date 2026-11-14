@@ -318,6 +318,166 @@ describe("reruns", () => {
   );
 });
 
+describe("a server started by hand", () => {
+  /** What the docs' own `docker run` leaves: a container from the image under Docker's name for it, and the volume. */
+  const byHand = (h: FakeHost, o: { container: boolean }) =>
+    h.seed((state) => {
+      state.images.push("ghcr.io/alilibx/kerstel-server:0.3.0");
+      state.volumes.push("kerstel-server");
+      if (o.container) {
+        state.containers.eager_turing = {
+          image: "ghcr.io/alilibx/kerstel-server:0.3.0",
+          labels: {},
+          env: [],
+          ports: ["127.0.0.1:8787:8787"],
+          volumes: ["kerstel-server:/data"],
+          restart: "unless-stopped",
+          pid: null,
+        };
+      }
+    });
+
+  test(
+    "a container from the image, or its volume, is someone else's server",
+    async () => {
+      for (const container of [true, false]) {
+        const h = host();
+        byHand(h, { container });
+        const detect = lines(await h.run(["detect"]));
+        expect(detect).toContain("installed=docker");
+        expect(detect.some((l) => l.startsWith("install-id="))).toBe(false);
+        for (const args of [
+          ["install", "--version", VERSION, "--install-id", ID, "--runtime", "docker", "--releases-url", RELEASES_URL, "--reach", "self", "--name", "box.local"],
+          ["install", "--version", VERSION, "--install-id", ID, "--runtime", "service", "--releases-url", RELEASES_URL, "--reach", "self", "--name", "box.local"],
+          ["info"],
+          ["stop"],
+          ["update", "--version", VERSION],
+          ["remove", "--delete-data"],
+        ]) {
+          const r = await h.run(args);
+          expect({ args, code: r.code }).toEqual({ args, code: 3 });
+          expect(r.stderr).toContain("kerstel-server.sh: this host already runs a Kerstel server that another device set up.\n");
+          expect(r.stdout).not.toContain("ks-server1-");
+        }
+        expect(dockerCalls(h, "run")).toEqual([]);
+        expect(dockerCalls(h, "rm")).toEqual([]);
+        expect(h.state().volumes).toEqual(["kerstel-server"]);
+        expect(Object.keys(h.state().containers)).toEqual(container ? ["eager_turing"] : []);
+        expect(existsSync(h.serverHome)).toBe(false);
+      }
+    },
+    SLOW,
+  );
+
+  test(
+    "the volume this installer made is ours, so kept data comes back",
+    async () => {
+      const h = host();
+      const first = valueOf(await install(h, ["--reach", "self", "--name", "box.local"]));
+      expect(h.state().volumeLabels["kerstel-server"]).toEqual({ "dev.kerstel.install-id": ID });
+      expectOk(await h.run(["remove"]));
+      expect(lines(await h.run(["detect"]))).toContain("installed=no");
+      // Another install, from another record: the data is still this installer's.
+      const again = await install(h, ["--reach", "self", "--name", "box.local"], { id: "install-b" });
+      expectOk(again);
+      expect(valueOf(again).token).toBe(first.token);
+    },
+    SLOW,
+  );
+});
+
+describe("--install-id on update, stop and remove", () => {
+  test(
+    "they act only on the server with that ID",
+    async () => {
+      const h = host();
+      expectOk(await install(h, ["--reach", "self", "--name", "box.local"]));
+      const [pid] = h.livePids();
+      for (const args of [["stop"], ["update", "--version", "0.4.1"], ["remove", "--delete-data"]]) {
+        const r = await h.run([...args, "--install-id", "install-b"]);
+        expect({ args, code: r.code }).toEqual({ args, code: 3 });
+        expect(r.stderr).toContain("kerstel-server.sh: this host already runs a Kerstel server that another device set up.\n");
+      }
+      expect(h.livePids()).toEqual([pid!]);
+      expect(h.state().containers["kerstel-server"]!.image).toBe(IMAGE);
+      expect(existsSync(join(h.volumeDir(), "enroll-token"))).toBe(true);
+      expectOk(await h.run(["stop", "--install-id", ID]));
+      expect(h.livePids()).toEqual([]);
+      expectOk(await h.run(["remove", "--install-id", ID]));
+      expect(h.state().containers).toEqual({});
+
+      const s = host();
+      expectOk(await install(s, ["--reach", "self", "--name", "box.local"], { runtime: "service" }));
+      for (const args of [["stop"], ["update", "--version", VERSION, "--releases-url", RELEASES_URL], ["remove"]]) {
+        expect((await s.run([...args, "--install-id", "install-b"])).code).toBe(3);
+      }
+      expect(existsSync(s.unitPath)).toBe(true);
+      expect(s.livePids()).toHaveLength(1);
+      expectOk(await s.run(["remove", "--install-id", ID]));
+      expect(existsSync(s.unitPath)).toBe(false);
+
+      // A bad ID is a usage error.
+      expect((await host().run(["stop", "--install-id", "a b"])).code).toBe(2);
+    },
+    SLOW,
+  );
+});
+
+describe("the health check", () => {
+  test(
+    "install says the server runs only once it answers on its port",
+    async () => {
+      const healthChecks = (h: FakeHost) =>
+        h.calls("curl").map((c) => c.argv.at(-1)!).filter((url) => url.endsWith("/v1/health"));
+      const self = host();
+      expectOk(await install(self, ["--reach", "self", "--name", "box.local"]));
+      expect(healthChecks(self)).toContain("https://127.0.0.1:8787/v1/health");
+
+      const tail = host({ tailscale: TAILNET });
+      expectOk(await install(tail, ["--reach", "tailscale", "--port", "9787"]));
+      expect(healthChecks(tail)).toContain("http://127.0.0.1:9787/v1/health");
+
+      const service = host();
+      expectOk(await install(service, ["--reach", "self", "--name", "box.local"], { runtime: "service" }));
+      expect(healthChecks(service)).toContain("https://127.0.0.1:8787/v1/health");
+
+      // A domain answers only at its name: the server must be running.
+      const domain = host();
+      expectOk(await install(domain, ["--reach", "domain", "--domain", "sync.example.com"]));
+      expect(healthChecks(domain)).toEqual([]);
+    },
+    SLOW,
+  );
+
+  test(
+    "a server that never answers is reported, with where to look",
+    async () => {
+      const h = host({ healthDown: true, quickSleep: true });
+      const r = await install(h, ["--reach", "self", "--name", "box.local"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("kerstel-server.sh: kerstel-server started, but it is not answering on port 8787. See: docker logs kerstel-server\n");
+      expect(r.stdout).toBe("");
+      expect(r.stderr).not.toContain("ks-server1-");
+    },
+    SLOW,
+  );
+});
+
+describe("sudo", () => {
+  test("run as root through sudo with the user's HOME, it stops and says to run it as the user", async () => {
+    const h = host({ root: true });
+    const r = await h.run(["detect"], { env: { SUDO_USER: "ali" } });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("kerstel-server.sh: Run this as ali, without sudo. It asks for sudo itself when a step needs it.\n");
+    expect(r.stderr.trimEnd().split("\n").pop()).toBe("kerstel-server.sh: Nothing on this host was changed.");
+    expect(r.stdout).toBe("");
+    expect(h.calls("docker")).toEqual([]);
+
+    // Root itself, as over `ssh root@host`, is fine.
+    expectOk(await h.run(["detect"]));
+  });
+});
+
 describe("the service", () => {
   test("the service install verifies the checksum", async () => {
     const h = new FakeHost();

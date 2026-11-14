@@ -3,11 +3,12 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { createApp } from "../../server/src/app";
 import { openDatabase } from "../../server/src/db";
+import { formatPin } from "../../server/src/pin";
 import { syncCommand } from "../src/commands/sync";
 import type { CliContext } from "../src/context";
 import { ScriptedPrompter, type Choice } from "../src/init/prompts";
 import type { Fetch } from "../src/sync/http";
-import { readInstallRecord, writeInstallRecord } from "../src/sync/install-record";
+import { readInstallRecord, writeInstallRecord, type InstallRecord } from "../src/sync/install-record";
 import type { Host, InstallerRun } from "../src/sync/remote";
 import { encodeServerValue } from "../src/sync/server-value";
 import { loadSync } from "../src/sync/state";
@@ -109,9 +110,11 @@ function fakeHost(o: { detected: string[]; value?: string; install?: () => Insta
 /** A ScriptedPrompter that also keeps every select's choices and every text's options. */
 class Recorder extends ScriptedPrompter {
   readonly choices = new Map<string, Choice<string>[]>();
+  readonly defaults = new Map<string, string>();
   readonly texts = new Map<string, { secret?: boolean; initial?: string }>();
   override async select<T extends string>(question: string, choices: Choice<T>[], d: T): Promise<T> {
     this.choices.set(question, choices);
+    this.defaults.set(question, d);
     return super.select(question, choices, d);
   }
   override async text(question: string, options: { secret?: boolean; initial?: string } = {}): Promise<string> {
@@ -146,6 +149,8 @@ async function wizard(d: Device, answers: string[], deps: Partial<WizardDeps> = 
       resolves: async () => false,
       resolveAll: async () => [],
       releaseFound: async () => true,
+      // Never the real `ssh -G`.
+      sshHostname: async () => null,
       hostFor: () => {
         throw new Error("this test runs no host");
       },
@@ -711,6 +716,166 @@ describe("the setup wizard", () => {
     const manual = await wizard(e, ["manual", "no"]);
     expect(manual.code).toBe(1);
     expect(manual.out).toContain("This machine may still run the server this device started setting up.");
+  });
+
+  /** A record of a server this device set up on ali@homebox. */
+  const homebox = (o: Partial<InstallRecord> = {}): InstallRecord => ({
+    installId: "first-install",
+    route: "ssh",
+    host: "ali@homebox",
+    runtime: "docker",
+    reach: "self",
+    addresses: ["https://192.168.1.20:8787"],
+    version: VERSION,
+    started: true,
+    finished: true,
+    ...o,
+  });
+
+  test("finished record, sync off, rerun with Docker invisible reuses the ID", async () => {
+    const d = device();
+    writeInstallRecord(homebox());
+    const s = server();
+    // Docker needs a sudo password, which detect never asks for: it reports nothing installed.
+    const host = fakeHost({ detected: facts(), value: s.value });
+    const run = await wizard(d, ["ssh", "ali@homebox", ""], { hostFor: host.hostFor });
+    expect(run.code).toBe(0);
+    expect(run.out).toContain("Continuing with the server this device set up on ali@homebox.");
+    expect(run.prompter.asked.slice(2)).toEqual(["Address your devices use"]);
+    const args = host.installs()[0]!.args;
+    expect(flag(args, "--install-id")).toBe("first-install");
+    expect(flag(args, "--runtime")).toBe("docker");
+    expect(readInstallRecord()).toMatchObject({ installId: "first-install", host: "ali@homebox", finished: true });
+
+    // A finished domain install keeps its domain without asking how devices reach it.
+    const e = device();
+    writeInstallRecord(homebox({ reach: "domain", addresses: ["https://sync.example.com"] }));
+    const again = fakeHost({ detected: facts(), value: s.value });
+    const second = await wizard(e, ["ssh", "ali@homebox"], { hostFor: again.hostFor });
+    expect(second.code).toBe(0);
+    expect(flag(again.installs()[0]!.args, "--install-id")).toBe("first-install");
+    expect(flags(again.installs()[0]!.args, "--url")).toEqual(["https://sync.example.com"]);
+  });
+
+  test("exit 3 keeps the earlier record", async () => {
+    for (const earlier of [homebox(), homebox({ started: undefined, finished: false })]) {
+      const d = device();
+      writeInstallRecord(earlier);
+      const nas = fakeHost({ detected: facts(), install: () => ({ code: 3, lines: [], value: null }) });
+      const run = await wizard(d, ["ssh", "ali@nas", "yes", "docker", "self", "192.168.1.30"], { hostFor: nas.hostFor });
+      expect(run.code).toBe(1);
+      expect(run.out).toContain(`ali@nas already runs a Kerstel server. If another device syncs with it, run ${CLI} sync add-device there instead.`);
+      expect(nas.installs()).toHaveLength(1);
+      expect(readInstallRecord()).toEqual(earlier);
+    }
+  });
+
+  test("a record for another host is not replaced without a yes", async () => {
+    const d = device();
+    const earlier = homebox();
+    writeInstallRecord(earlier);
+    const nas = fakeHost({ detected: facts() });
+    const run = await wizard(d, ["ssh", "ali@nas", "no"], { hostFor: nas.hostFor });
+    expect(run.code).toBe(1);
+    expect(run.out).toContain(
+      `This device looks after the server on ali@homebox. A new server replaces that. Run ${CLI} sync server remove first, or continue to set up a new one.`,
+    );
+    expect(run.prompter.defaults.get("Set up a new server?")).toBe("no");
+    expect(nas.installs()).toEqual([]);
+    expect(readInstallRecord()).toEqual(earlier);
+
+    // This machine, and a command run by hand, ask too.
+    const local = await wizard(d, ["local", "no"], { hostFor: nas.hostFor });
+    expect(local.code).toBe(1);
+    expect(local.prompter.asked).toContain("Set up a new server?");
+    const manual = await wizard(d, ["manual", "no"]);
+    expect(manual.code).toBe(1);
+    expect(manual.prompter.asked).toContain("Set up a new server?");
+    expect(nas.installs()).toEqual([]);
+    expect(readInstallRecord()).toEqual(earlier);
+  });
+
+  test("sync already on finishes a started setup whose addresses it syncs with", async () => {
+    const s = server();
+    const d = device();
+    expect((await wizard(d, ["existing", s.value, "yes"])).code).toBe(0);
+    writeInstallRecord(homebox({ addresses: [s.listener.url], finished: false }));
+    expect((await wizard(d, [])).code).toBe(0);
+    expect(readInstallRecord()!.finished).toBe(true);
+
+    // Another server's addresses, or a setup that never got a value, stay unfinished.
+    for (const r of [homebox({ finished: false }), homebox({ addresses: [s.listener.url], started: undefined, finished: false })]) {
+      writeInstallRecord(r);
+      expect((await wizard(d, [])).code).toBe(0);
+      expect(readInstallRecord()).toEqual(r);
+    }
+  });
+
+  test("an existing server at an https address is asked for its pin", async () => {
+    const s = server();
+    const d = device();
+    const pin = formatPin(s.listener.pin);
+    const run = await wizard(d, ["existing", s.listener.url, "sha256/nope", pin, TOKEN, "yes"]);
+    expect(run.code).toBe(0);
+    const question = "Certificate pin (leave empty if the server has a CA certificate)";
+    expect(run.prompter.asked.filter((q) => q === question)).toHaveLength(2);
+    expect(run.prompter.texts.get(question)!.secret).toBe(false);
+    expect(run.out).toContain("That is not a certificate pin.");
+    expect(run.out).toContain(`  Certificate  pinned (${pin})`);
+    expect(syncedTo(d)!.pin).toEqual(s.listener.pin);
+    expect(run.out.includes(TOKEN)).toBe(false);
+
+    // An empty answer is no pin.
+    const db = openDatabase(":memory:");
+    const app = createApp({ db, version: "test", enrollToken: TOKEN });
+    const fetch: Fetch = (request) => app.fetch(request, "127.0.0.1");
+    const e = device();
+    const plain = await wizard(e, ["existing", "https://sync.example.com", "", TOKEN, "yes"], { fetch });
+    expect(plain.code).toBe(0);
+    expect(syncedTo(e)!.pin).toBeNull();
+    db.close();
+  });
+
+  test("a host with only private addresses that ssh reaches at a public one defaults to that name", async () => {
+    const s = server();
+    const host = fakeHost({ detected: facts({ ipv4: ["10.0.0.5"] }), value: s.value });
+    const d = device();
+    const looked: string[] = [];
+    const resolveAll = async (name: string) => (name === "vps.example.com" || name === "sync.example.com" ? ["203.0.113.9"] : []);
+    const run = await wizard(d, ["ssh", "vps", "docker", "self", ""], {
+      hostFor: host.hostFor,
+      sshHostname: async (target) => (looked.push(target), "vps.example.com"),
+      resolveAll,
+    });
+    expect(run.code).toBe(0);
+    expect(looked).toEqual(["vps"]);
+    expect(run.prompter.texts.get("Address your devices use (found vps.example.com)")!.initial).toBe("vps.example.com");
+    expect(flags(host.installs()[0]!.args, "--url")).toEqual(["https://vps.example.com:8787"]);
+    expect(run.out).not.toContain("No name for this host resolves here");
+
+    // A domain that points at the address ssh reaches counts as pointing at the host.
+    const t = server();
+    const domainHost = fakeHost({ detected: facts({ ipv4: ["10.0.0.5"] }), value: t.value });
+    const e = device();
+    const domain = await wizard(e, ["ssh", "vps", "docker", "domain", "sync.example.com"], {
+      hostFor: domainHost.hostFor,
+      sshHostname: async () => "vps.example.com",
+      resolveAll,
+    });
+    expect(domain.code).toBe(0);
+    expect(domain.out).not.toContain("does not point at");
+
+    // On this machine, ssh is never asked.
+    const f = device();
+    const local = fakeHost({ detected: facts({ ipv4: ["10.0.0.5"] }), value: server().value });
+    const here = await wizard(f, ["local", "docker", "self", ""], {
+      hostFor: local.hostFor,
+      sshHostname: async () => {
+        throw new Error("no ssh for this machine");
+      },
+    });
+    expect(here.code).toBe(0);
+    expect(flags(local.installs()[0]!.args, "--url")).toEqual(["https://10.0.0.5:8787"]);
   });
 
   test("setup with no arguments on a terminal runs the wizard", async () => {

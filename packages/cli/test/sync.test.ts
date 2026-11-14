@@ -680,7 +680,10 @@ describe("two devices", () => {
 test("without sync on, every sync command says how to turn it on", async () => {
   const s = server();
   const a = device();
-  expect((await sync(a, s)).out).toContain("Sync is off for this vault");
+  // The wizard first, then a server the person already runs.
+  expect((await sync(a, s)).out).toContain(
+    `Sync is off for this vault. Turn it on with ${cliName()} sync setup, or ${cliName()} sync setup <url> for a server you already run.`,
+  );
   expect((await sync(a, s, ["status"])).code).toBe(0);
   expect((await sync(a, s, ["nope"])).code).toBe(2);
   expect(existsSync(join(a.home, "backups"))).toBe(false);
@@ -1682,6 +1685,50 @@ describe("pairing, joining and removing devices", () => {
         expect(refused.out).not.toContain(TOKEN);
       });
 
+      test("on a terminal, the value is asked at a hidden prompt", async () => {
+        const clock = { t: Date.now() };
+        const listener = startTlsServer({ now: () => clock.t, enrollToken: TOKEN });
+        listeners.push(listener);
+        const p: Pinned = { clock, fetch: (r, i) => globalThis.fetch(r, i as RequestInit), listener, requests: [], pin: formatPin(listener.pin) };
+        const asked: { question: string; secret?: boolean }[] = [];
+        const value = valueOf(p);
+        const prompter = {
+          async text(question: string, o: { secret?: boolean } = {}) {
+            asked.push({ question, secret: o.secret });
+            return `${value}\n`;
+          },
+          // --yes: the upload question takes its default.
+          async select<T extends string>(_q: string, _c: unknown, d: T) {
+            return d;
+          },
+        } as unknown as Prompter;
+        const a = device();
+        const run = await quiet(() =>
+          syncCommand(["setup", "--server-value", "-", "--yes"], {
+            context: a.context,
+            interactive: false,
+            stdinIsTerminal: true,
+            prompter,
+            now: tick(p),
+            deviceName: "first",
+            timer: fakeTimer().timer,
+          }),
+        );
+        expect(run.result).toBe(0);
+        expect(asked).toEqual([{ question: "Paste the server value", secret: true }]);
+        expect(a.with((v) => loadSync(v, a.key))!.pin).toEqual(listener.pin);
+        expect(run.out).not.toContain(value);
+      });
+
+      test("a self-signed first address keeps the pin hint when a later one fails another way", async () => {
+        // The first address answers with a certificate nothing trusts; the second refuses the connection.
+        const { result, out, p } = await setUpFromValue((p) => valueOf(p, { urls: [p.listener.url, "https://127.0.0.1:1"], pin: null }));
+        expect(result).toBe(1);
+        expect(out).toContain("Could not reach https://127.0.0.1:1");
+        expect(out).toContain("If this server pins its own certificate, pass --pin with the pin kerstel-server printed (sha256/…).");
+        expect(p.listener.paths).toEqual([]);
+      });
+
       test("a server value is never taken from an argument, or beside a url or a pin", async () => {
         for (const args of [
           ["--server-value", "ks-server1-abc"],
@@ -1692,6 +1739,7 @@ describe("pairing, joining and removing devices", () => {
           const { result, out, p } = await setUpFromValue((p) => valueOf(p), args);
           expect(result).toBe(2);
           expect(out).toContain("Usage:");
+          expect(out).toContain("sync setup --server-value - [--yes]");
           expect(out).not.toContain("ks-server1-");
           expect(p.requests).toEqual([]);
         }

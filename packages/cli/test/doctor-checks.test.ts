@@ -627,6 +627,12 @@ describe("Sync", () => {
       expect(withServer(null)?.detail).not.toContain("server runs");
     });
 
+    test("a server version is printed without control characters", () => {
+      const row = withServer("0.0.9+\u001b[2J\u0007");
+      expect(row?.status).toBe("warn");
+      expect(row?.detail).toContain("the server runs 0.0.9+[2J, older than this Kerstel");
+    });
+
     test("sync off says off, whatever the server runs", () => {
       expect(withServer("0.0.9", { on: false })).toMatchObject({ status: "info", detail: "off" });
     });

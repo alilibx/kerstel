@@ -8,9 +8,12 @@
 #        [--port <port>] [--releases-url <url>] [--url <url>]...
 #   sh kerstel-server.sh info
 #   sh kerstel-server.sh value --url <url>...
-#   sh kerstel-server.sh update --version <v> [--releases-url <url>]
-#   sh kerstel-server.sh stop
-#   sh kerstel-server.sh remove [--delete-data]
+#   sh kerstel-server.sh update --version <v> [--releases-url <url>] [--install-id <id>]
+#   sh kerstel-server.sh stop [--install-id <id>]
+#   sh kerstel-server.sh remove [--delete-data] [--install-id <id>]
+#
+# With --install-id, update, stop and remove act only on the server with that
+# install ID, and exit 3 when the host runs another.
 #
 # Kerstel runs it over SSH or on this machine, or prints a command that
 # downloads it, checks its SHA-256 and runs it. It never handles the enroll
@@ -19,7 +22,10 @@
 # argument of any process.
 #
 # Docker: container kerstel-server, volume kerstel-server mounted at /data,
-# restarted unless stopped, labelled dev.kerstel.install-id. A service keeps
+# restarted unless stopped, both labelled dev.kerstel.install-id. A
+# kerstel-server volume without that label, or a container from the image
+# that is not ours, is a server someone started by hand: nothing here touches
+# it. A service keeps
 # everything in ~/.kerstel-server and runs as this user, from
 # /etc/systemd/system/kerstel-server.service on Linux or
 # /Library/LaunchDaemons/dev.kerstel.server.plist on macOS.
@@ -32,6 +38,8 @@ umask 077
 
 ME="kerstel-server.sh"
 IMAGE_REPO="ghcr.io/alilibx/kerstel-server"
+# A container's image is from IMAGE_REPO: the name, then a tag or a digest.
+IMAGE_RE='^ghcr\.io/alilibx/kerstel-server([:@]|$)'
 CONTAINER="kerstel-server"
 VOLUME="kerstel-server"
 LABEL="dev.kerstel"
@@ -59,6 +67,8 @@ OS=""
 ARCH=""
 FOUND_RUNTIME=""
 FOUND_ID=""
+NAMED_CONTAINER=""
+EXPECT_ID=""
 VERSION=""
 INSTALL_ID=""
 RUNTIME=""
@@ -86,6 +96,12 @@ usage_error() {
   exit 2
 }
 
+# Exits 3: the server here is not one this device, as this user, may change.
+another_devices() {
+  say "this host already runs a Kerstel server that another device set up."
+  exit 3
+}
+
 on_exit() {
   code=$?
   if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
@@ -107,6 +123,15 @@ need() {
 }
 
 is_root() { [ "$(id -u)" = 0 ]; }
+
+# Run through sudo with the user's HOME, this would leave root-owned files in
+# it and a service running as root. The script asks for sudo itself.
+refuse_sudo() {
+  root_home=~root
+  if is_root && [ -n "${SUDO_USER:-}" ] && [ "$HOME" != "$root_home" ]; then
+    die "Run this as $SUDO_USER, without sudo. It asks for sudo itself when a step needs it."
+  fi
+}
 
 # Runs a command as root: directly when this is root, through sudo otherwise.
 as_root() {
@@ -255,6 +280,10 @@ ensure_image() {
 # Starts the container from image $1 with the settings in REACH, PORT, NAMES
 # and DOMAIN, which it also keeps as labels for update.
 docker_run() {
+  # Labelled, so a later install knows the data is from this installer.
+  if ! dk volume inspect "$VOLUME" >/dev/null 2>&1; then
+    dk volume create --label "$LABEL.install-id=$INSTALL_ID" "$VOLUME" >/dev/null
+  fi
   set -- run -d --name "$CONTAINER" --restart unless-stopped \
     --label "$LABEL.install-id=$INSTALL_ID" --label "$LABEL.reach=$REACH" --label "$LABEL.port=$PORT" \
     --label "$LABEL.names=$NAMES" --label "$LABEL.domain=$DOMAIN" \
@@ -501,7 +530,7 @@ fetch() {
     # wget documents --https-only for recursive mode, so the headers of every
     # hop are checked too: a redirect to plain HTTP fails the download.
     wget --help 2>&1 | grep -q -- '--https-only' || die "This wget cannot be limited to HTTPS. Install curl, then run this again."
-    wget -q -S --https-only -O "$2" "$1" 2>"$TMP/wget.headers" || return 1
+    wget -S --https-only -O "$2" "$1" 2>"$TMP/wget.headers" || return 1
     if grep -Eqi '^ *Location: *http:' "$TMP/wget.headers"; then
       rm -f "$2"
       die "A download from $1 was redirected to plain HTTP."
@@ -601,13 +630,17 @@ tailscale_unserve() {
 # ---------------------------------------------------------------------------
 # What is installed
 
-# Sets FOUND_RUNTIME (docker, service or empty) and FOUND_ID. With "ask" it
-# may use sudo to reach Docker, after saying why; with "quiet" it never asks.
-# A unit or plist without this user's install-id file is a service another
-# user set up: it counts as installed, with no ID, so nothing here touches it.
+# Sets FOUND_RUNTIME (docker, service or empty), FOUND_ID and NAMED_CONTAINER
+# (yes when the container kerstel-server exists).
+# With "ask" it may use sudo to reach Docker, after saying why; with "quiet"
+# it never asks. A unit or plist without this user's install-id file is a
+# service another user set up, and a server started by hand from the image is
+# someone else's too: each counts as installed, with no ID, so nothing here
+# touches it.
 find_install() {
   FOUND_RUNTIME=""
   FOUND_ID=""
+  NAMED_CONTAINER=""
   if [ -f "$KH/install-id" ]; then
     FOUND_RUNTIME="service"
     FOUND_ID="$(cat "$KH/install-id")"
@@ -635,8 +668,21 @@ find_install() {
   fi
   if found="$(dk container inspect --format "{{index .Config.Labels \"$LABEL.install-id\"}}" "$CONTAINER" 2>/dev/null)"; then
     FOUND_RUNTIME="docker"
+    NAMED_CONTAINER="yes"
     if [ "$found" != "<no value>" ]; then FOUND_ID="$found"; fi
+  elif docker_by_hand; then
+    FOUND_RUNTIME="docker"
   fi
+}
+
+# Whether Docker holds a server that is not in our container: a container from
+# the image under another name, or a kerstel-server volume this installer did
+# not make. The volume our remove keeps carries our label, so data kept by
+# remove comes back with the next install.
+docker_by_hand() {
+  if dk ps -a --format '{{.Image}}' 2>/dev/null | grep -Eq "$IMAGE_RE"; then return 0; fi
+  label="$(dk volume inspect --format "{{index .Labels \"$LABEL.install-id\"}}" "$VOLUME" 2>/dev/null)" || return 1
+  [ -z "$label" ] || [ "$label" = "<no value>" ]
 }
 
 detect_lines() {
@@ -657,21 +703,24 @@ detect_lines() {
 # Uses FOUND_RUNTIME and FOUND_ID from find_install.
 check_owner() {
   if [ -z "$FOUND_RUNTIME" ]; then return 0; fi
-  if [ "$FOUND_ID" != "$INSTALL_ID" ]; then
-    say "this host already runs a Kerstel server that another device set up."
-    exit 3
-  fi
+  if [ "$FOUND_ID" != "$INSTALL_ID" ]; then another_devices; fi
   if [ "$FOUND_RUNTIME" != "$RUNTIME" ]; then
     die "This host already runs the server this device set up, with $FOUND_RUNTIME. Remove it first to run it with $RUNTIME."
   fi
 }
 
-# Exits 3 when the server found here is not this user's to manage.
+# Exits 3 when the server found here is not this user's to manage, or, with
+# --install-id, not the one with that ID.
 require_own_install() {
-  if [ "$FOUND_RUNTIME" = service ] && [ ! -f "$KH/install-id" ]; then
-    say "this host already runs a Kerstel server that another device set up."
-    exit 3
-  fi
+  if [ "$FOUND_RUNTIME" = service ] && [ ! -f "$KH/install-id" ]; then another_devices; fi
+  if [ "$FOUND_RUNTIME" = docker ] && [ "$NAMED_CONTAINER" != yes ]; then another_devices; fi
+  if [ -n "$EXPECT_ID" ] && [ -n "$FOUND_RUNTIME" ] && [ "$FOUND_ID" != "$EXPECT_ID" ]; then another_devices; fi
+}
+
+# --install-id <id> for update, stop and remove.
+expect_id() {
+  matches '^[A-Za-z0-9_-]{1,64}$' "$1" || usage_error "--install-id must be letters, digits, - and _, got $1."
+  EXPECT_ID="$1"
 }
 
 require_install() {
@@ -700,11 +749,15 @@ server_value() {
 }
 
 # Waits up to 30 seconds for the server's first start, which makes the token
-# file and the TLS key that the value needs.
+# file and the TLS key that the value needs, and then, in the same 30
+# seconds, for the server to answer.
 wait_for_value() {
   tries=0
   while :; do
-    if VALUE="$(server_value 2>"$TMP/value.err")"; then return 0; fi
+    if VALUE="$(server_value 2>"$TMP/value.err")"; then
+      wait_answering
+      return 0
+    fi
     if [ "$RUNTIME" = docker ] && ! docker_running; then
       die "The container $CONTAINER stopped. See: docker logs $CONTAINER"
     fi
@@ -715,6 +768,50 @@ wait_for_value() {
         die "kerstel-server did not start within 30 seconds. See: docker logs $CONTAINER"
       fi
       die "kerstel-server did not start within 30 seconds. $(service_logs_hint)"
+    fi
+    sleep 1
+  done
+}
+
+server_running() {
+  if [ "$RUNTIME" = docker ]; then docker_running; else service_running; fi
+}
+
+logs_hint() {
+  if [ "$RUNTIME" = docker ]; then printf 'See: docker logs %s' "$CONTAINER"; else service_logs_hint; fi
+}
+
+# Whether a GET of $1 succeeds. Only to this host's loopback, so the
+# certificate is not checked: the pin is what devices check.
+answers() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSk --max-time 2 -o /dev/null "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --no-check-certificate -T 2 -O /dev/null "$1" 2>/dev/null
+  else
+    server_running
+  fi
+}
+
+# Waits, with the tries wait_for_value left, for the server to answer
+# /v1/health on its port. A server with a domain answers only at that name,
+# so there it must be running.
+wait_answering() {
+  case "$REACH" in
+    self) health="https://127.0.0.1:$PORT/v1/health" ;;
+    tailscale) health="http://127.0.0.1:$PORT/v1/health" ;;
+    *) health="" ;;
+  esac
+  while :; do
+    if [ -n "$health" ]; then
+      if answers "$health"; then return 0; fi
+    elif server_running; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    if [ "$tries" -ge 30 ]; then
+      if [ -n "$health" ]; then die "kerstel-server started, but it is not answering on port $PORT. $(logs_hint)"; fi
+      die "kerstel-server is not running. $(logs_hint)"
     fi
     sleep 1
   done
@@ -950,6 +1047,7 @@ cmd_update() {
     case "$1" in
       --version) need $# "$1"; VERSION="$2"; shift 2 ;;
       --releases-url) need $# "$1"; RELEASES_URL="$2"; shift 2 ;;
+      --install-id) need $# "$1"; expect_id "$2"; shift 2 ;;
       *) usage_error "update does not take $1." ;;
     esac
   done
@@ -995,7 +1093,12 @@ update_service() {
 }
 
 cmd_stop() {
-  if [ $# -gt 0 ]; then usage_error "stop takes no options."; fi
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --install-id) need $# "$1"; expect_id "$2"; shift 2 ;;
+      *) usage_error "stop does not take $1." ;;
+    esac
+  done
   find_install ask
   require_install
   if [ "$RUNTIME" = docker ]; then
@@ -1013,6 +1116,7 @@ cmd_remove() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --delete-data) DELETE_DATA="yes"; shift ;;
+      --install-id) need $# "$1"; expect_id "$2"; shift 2 ;;
       *) usage_error "remove does not take $1." ;;
     esac
   done
@@ -1090,6 +1194,7 @@ main() {
   command="$1"
   shift
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/kerstel-server.XXXXXX")"
+  refuse_sudo
   os_arch
   case "$command" in
     detect) cmd_detect "$@" ;;

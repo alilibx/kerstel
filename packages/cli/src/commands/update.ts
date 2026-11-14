@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { stopDaemonIfRunning } from "../daemon/client";
 import { isCompiledBinary } from "../daemon/spawn";
 import { CancelledError, ClackPrompter, type Prompter } from "../init/prompts";
-import { fail, info, ok, yellow } from "../output";
+import { fail, info, ok, printable, yellow } from "../output";
 import { SYMBOLS } from "../ui/theme";
 import { cliName } from "../ui/cli-name";
 import { interactive } from "../ui/steps";
@@ -72,14 +72,16 @@ async function updateServerWith(binary: string): Promise<number> {
  * After `update` leaves this Kerstel at `version`: says when the server this
  * device installed runs an older release, and on a terminal offers to update
  * it (Yes by default). `--check` changes nothing, so it only says so. A server
- * that does not answer is not mentioned. Resolves to the exit code.
+ * that does not answer is not mentioned. Resolves to the exit code: when this
+ * run `updated` Kerstel itself, a failed server update leaves it 0, since the
+ * update asked for did happen.
  */
-async function checkServer(version: string, deps: UpdateDeps, checkOnly: boolean): Promise<number> {
+async function checkServer(version: string, deps: UpdateDeps, checkOnly: boolean, updated = false): Promise<number> {
   if (!deps.serverBehind) return 0;
   const behind = await deps.serverBehind(version);
   if (behind === null) return 0;
   const cli = cliName();
-  info(`The sync server on ${behind.place} runs ${behind.version}; this Kerstel is ${version}.`);
+  info(`The sync server on ${behind.place} runs ${printable(behind.version)}; this Kerstel is ${version}.`);
   const terminal = deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
   if (checkOnly || !terminal || !deps.updateServer) {
     info(`Run ${cli} sync server update to update it.`);
@@ -103,7 +105,11 @@ async function checkServer(version: string, deps: UpdateDeps, checkOnly: boolean
     info(`Update it later with ${cli} sync server update.`);
     return 0;
   }
-  return deps.updateServer();
+  const code = await deps.updateServer();
+  if (code === 0 || !updated) return code;
+  console.log(`${yellow(SYMBOLS.warn)}  The sync server was not updated, but kerstel itself was updated to ${version}.`);
+  info(`Run ${cli} sync server update to try the server again.`);
+  return 0;
 }
 
 /** The dim line under `--version` on a terminal. */
@@ -226,6 +232,6 @@ export async function updateCommand(args: string[], deps: UpdateDeps = realDeps(
     case "updated":
       ok(`Updated kerstel from ${outcome.from} to ${outcome.to}.`);
       await stopOldDaemon(deps.stopDaemon, cli);
-      return checkServer(outcome.to, deps, checkOnly);
+      return checkServer(outcome.to, deps, checkOnly, true);
   }
 }

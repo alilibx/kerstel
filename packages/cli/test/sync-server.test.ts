@@ -249,6 +249,35 @@ describe("ks sync server", () => {
     expect(out).toContain("Version    9.9.9");
   });
 
+  test("a server that never answers is given the same 3 seconds as kerstel update", async () => {
+    const d = device();
+    const s = plainServer();
+    await plainSync(d, s.fetch);
+    writeInstallRecord(record({ addresses: ["http://127.0.0.1:8787"] }));
+    const hanging: Fetch = (request) => new Promise((_, reject) => request.signal.addEventListener("abort", () => reject(new Error("aborted"))));
+    const started = Date.now();
+    const { code, out } = await server(d, [], { fetch: hanging });
+    const took = Date.now() - started;
+    expect(code).toBe(0);
+    expect(out).toContain("Answers    no");
+    expect(took).toBeGreaterThanOrEqual(2_900);
+    expect(took).toBeLessThan(6_000);
+  }, 10_000);
+
+  test("a version with control characters is printed without them", async () => {
+    const d = device();
+    const l = listener();
+    await pinnedSync(d, l);
+    const shown = await server(d, [], { health: async () => ({ version: "0.4.0\u001b[2J\u0007\u202e" }) });
+    expect(shown.out.split("\n").find((line) => line.startsWith("Version"))).toBe("Version    0.4.0[2J");
+
+    const host = fakeHost({ info: { code: 0, lines: infoLines({ pin: formatPin(l.pin), version: "0.4.0\u001b]0;owned\u0007" }), value: null } });
+    const managed = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor });
+    expect(managed.out).toContain("Found kerstel-server 0.4.0]0;owned on ali@homebox");
+    expect(readInstallRecord()!.version).toBe("0.4.0]0;owned");
+    expect(await serverVersion(d.with((v) => loadSync(v, d.key))!, { health: async () => ({ version: "1.0.0\u001b[31m" }) })).toBe("1.0.0[31m");
+  });
+
   test("the usage lists all six commands, and an unknown one is refused", async () => {
     const d = device();
     const { result, out } = await captured(() => syncCommand(["help"], { context: d.context }));
@@ -277,7 +306,7 @@ describe("ks sync server update", () => {
     const { code, out } = await server(d, ["update"], { hostFor: host.hostFor });
     expect(code).toBe(0);
     expect(host.calls).toEqual([
-      { route: "ssh", target: "ali@homebox", args: ["update", "--version", VERSION, "--releases-url", RELEASES], interactive: true },
+      { route: "ssh", target: "ali@homebox", args: ["update", "--version", VERSION, "--install-id", "install-id-1", "--releases-url", RELEASES], interactive: true },
     ]);
     expect(readInstallRecord()!.version).toBe(VERSION);
     expect(out).toContain(`Updated the server on ali@homebox to ${VERSION}.`);
@@ -310,7 +339,7 @@ describe("ks sync server stop", () => {
     const host = fakeHost({ stop: done });
     const { code, out } = await server(d, ["stop"], { hostFor: host.hostFor });
     expect(code).toBe(0);
-    expect(host.calls).toEqual([{ route: "local", target: null, args: ["stop"], interactive: true }]);
+    expect(host.calls).toEqual([{ route: "local", target: null, args: ["stop", "--install-id", "install-id-1"], interactive: true }]);
     expect(readInstallRecord()).not.toBeNull();
     expect(out).toContain("Stopped the server on this machine.");
     expect(out).toContain(`${CLI} sync server update`);
@@ -335,7 +364,7 @@ describe("ks sync server remove", () => {
       "Remove the server from ali@homebox?",
       "Also delete its database? Every device keeps its secrets, but syncing stops.",
     ]);
-    expect(host.calls).toEqual([{ route: "ssh", target: "ali@homebox", args: ["remove", "--delete-data"], interactive: true }]);
+    expect(host.calls).toEqual([{ route: "ssh", target: "ali@homebox", args: ["remove", "--delete-data", "--install-id", "install-id-1"], interactive: true }]);
     expect(readInstallRecord()).toBeNull();
     expect(out).toContain("Removed the server from ali@homebox.");
   });
@@ -348,7 +377,7 @@ describe("ks sync server remove", () => {
     expect(code).toBe(0);
     expect(prompter.defaults.get("Remove the server from ali@homebox?")).toBe("no");
     expect(prompter.defaults.get("Also delete its database? Every device keeps its secrets, but syncing stops.")).toBe("keep");
-    expect(host.calls.map((c) => c.args)).toEqual([["remove"]]);
+    expect(host.calls.map((c) => c.args)).toEqual([["remove", "--install-id", "install-id-1"]]);
     expect(readInstallRecord()).toBeNull();
   });
 
@@ -385,6 +414,23 @@ describe("ks sync server remove", () => {
   });
 });
 
+describe("another device's server on the recorded host", () => {
+  test("update, stop and remove say so when the installer finds another install ID, and change nothing", async () => {
+    const d = device();
+    writeInstallRecord(record());
+    const other: InstallerRun = { code: 3, lines: [], value: null };
+    const host = fakeHost({ update: other, stop: other, remove: other });
+    const NOT_OURS = "ali@homebox runs a Kerstel server that another device set up, not the one this device did. Nothing was changed there.";
+    for (const [args, answers] of [[["update"], []], [["stop"], []], [["remove"], ["yes", "keep"]]] as const) {
+      const run = await server(d, [...args], { hostFor: host.hostFor, answers: [...answers] });
+      expect({ args, code: run.code }).toEqual({ args, code: 1 });
+      expect(run.out).toContain(NOT_OURS);
+      expect(readInstallRecord()).toEqual(record());
+    }
+    expect(host.calls.every((c) => c.args.includes("--install-id") && c.args[c.args.indexOf("--install-id") + 1] === "install-id-1")).toBe(true);
+  });
+});
+
 describe("a server installed by hand", () => {
   test("manual installs print the line to run", async () => {
     const d = device();
@@ -392,14 +438,16 @@ describe("a server installed by hand", () => {
 
     const update = await server(d, ["update"]);
     expect(update.code).toBe(0);
-    expect(update.out).toContain(manualCommand({ version: VERSION, args: ["update", "--version", VERSION, "--releases-url", RELEASES] }));
+    expect(update.out).toContain(
+      manualCommand({ version: VERSION, args: ["update", "--version", VERSION, "--install-id", "install-id-1", "--releases-url", RELEASES] }),
+    );
     expect(update.out).toContain("Run this on the server");
     // Nothing says it ran.
     expect(readInstallRecord()!.version).toBe("0.0.1");
 
     const stop = await server(d, ["stop"]);
     expect(stop.code).toBe(0);
-    expect(stop.out).toContain(manualCommand({ version: VERSION, args: ["stop"] }));
+    expect(stop.out).toContain(manualCommand({ version: VERSION, args: ["stop", "--install-id", "install-id-1"] }));
 
     // The record stays until the person says the command ran.
     const notYet = await server(d, ["remove"], { answers: ["yes", "keep", "no"] });
@@ -410,12 +458,12 @@ describe("a server installed by hand", () => {
       "Did the command finish on the server?",
     ]);
     expect(notYet.prompter.defaults.get("Did the command finish on the server?")).toBe("no");
-    expect(notYet.out).toContain(manualCommand({ version: VERSION, args: ["remove"] }));
+    expect(notYet.out).toContain(manualCommand({ version: VERSION, args: ["remove", "--install-id", "install-id-1"] }));
     expect(readInstallRecord()).not.toBeNull();
 
     const ran = await server(d, ["remove"], { answers: ["yes", "delete", "yes"] });
     expect(ran.code).toBe(0);
-    expect(ran.out).toContain(manualCommand({ version: VERSION, args: ["remove", "--delete-data"] }));
+    expect(ran.out).toContain(manualCommand({ version: VERSION, args: ["remove", "--delete-data", "--install-id", "install-id-1"] }));
     expect(readInstallRecord()).toBeNull();
   });
 });
@@ -551,33 +599,117 @@ describe("ks sync server manage", () => {
   test("an unpinned server matches on one of this vault's addresses", async () => {
     const d = device();
     const s = plainServer();
-    await plainSync(d, s.fetch, "http://localhost:8787");
+    await plainSync(d, s.fetch, "https://sync.example.com");
 
     const elsewhere = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.9"], hostname: "otherbox" }), value: null } });
     const refused = await server(d, ["manage", "ali@otherbox"], { hostFor: elsewhere.hostFor, fetch: s.fetch, resolveAll: async () => [] });
     expect(refused.code).toBe(1);
     expect(readInstallRecord()).toBeNull();
 
-    // localhost resolves to the host's address, as a domain does.
+    // The domain resolves to the host's address.
     const host = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.5"] }), value: null } });
     const taken = await server(d, ["manage", "ali@homebox"], {
       hostFor: host.hostFor,
       fetch: s.fetch,
-      resolveAll: async (name) => (name === "localhost" ? ["10.0.0.5"] : []),
+      resolveAll: async (name) => (name === "sync.example.com" ? ["10.0.0.5"] : []),
     });
     expect(taken.code).toBe(0);
-    expect(readInstallRecord()).toMatchObject({ route: "ssh", host: "ali@homebox", reach: "domain", addresses: ["http://localhost:8787"], finished: true });
+    expect(readInstallRecord()).toMatchObject({ route: "ssh", host: "ali@homebox", reach: "domain", addresses: ["https://sync.example.com"], finished: true });
   });
 
   test("an unpinned server whose address matches still has to know this vault", async () => {
     const d = device();
     const s = plainServer();
-    await plainSync(d, s.fetch);
-    const host = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["127.0.0.1"] }), value: null } });
-    const { code, out } = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor, fetch: plainServer().fetch, resolveAll: async () => [] });
+    await plainSync(d, s.fetch, "https://sync.example.com");
+    const host = fakeHost({ info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.5"] }), value: null } });
+    const { code, out } = await server(d, ["manage", "ali@homebox"], {
+      hostFor: host.hostFor,
+      fetch: plainServer().fetch,
+      resolveAll: async () => ["10.0.0.5"],
+    });
     expect(code).toBe(1);
     expect(out).toContain("does not know this vault");
     expect(readInstallRecord()).toBeNull();
+  });
+
+  test("a loopback address never points at a remote host, whatever it calls itself or resolves to", async () => {
+    for (const url of ["http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787", "https://127.0.0.2:8787", "https://sync.localhost:8787"]) {
+      const d = device();
+      const s = plainServer();
+      await plainSync(d, s.fetch, url);
+      const host = fakeHost({
+        info: { code: 0, lines: infoLines({ ipv4: ["10.0.0.5", "127.0.0.1", "127.0.0.2"], hostname: "localhost" }), value: null },
+      });
+      const { code, out } = await server(d, ["manage", "ali@homebox"], {
+        hostFor: host.hostFor,
+        fetch: s.fetch,
+        resolveAll: async () => ["10.0.0.5", "127.0.0.1"],
+      });
+      expect({ url, code }).toEqual({ url, code: 1 });
+      expect(out).toContain("points at ali@homebox");
+      expect(readInstallRecord()).toBeNull();
+    }
+  });
+
+  test("a record of another host's server is replaced only on a yes, and an unfinished one never", async () => {
+    const d = device();
+    const l = listener();
+    await pinnedSync(d, l);
+    const nas = fakeHost({ info: { code: 0, lines: infoLines({ pin: formatPin(l.pin) }), value: null } });
+
+    // Unfinished: finish or remove it first. Nothing runs.
+    const unfinished = record({ host: "ali@nas", finished: false });
+    writeInstallRecord(unfinished);
+    const refused = await server(d, ["manage", "ali@homebox"], { hostFor: nas.hostFor });
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain(
+      `This device is still setting up a server on ali@nas. Finish it with ${CLI} sync setup, or run ${CLI} sync server remove, then run this again. Nothing was saved.`,
+    );
+    expect(refused.prompter.asked).toEqual([]);
+    expect(nas.calls).toEqual([]);
+    expect(readInstallRecord()).toEqual(unfinished);
+
+    // Finished: asked, No by default.
+    const finished = record({ host: "ali@nas" });
+    writeInstallRecord(finished);
+    const no = await server(d, ["manage", "ali@homebox"], { hostFor: nas.hostFor, answers: ["no"] });
+    expect(no.code).toBe(0);
+    expect(no.out).toContain("This device manages the server on ali@nas. Managing the one on ali@homebox replaces that.");
+    expect(no.prompter.defaults.get("Manage the server on ali@homebox instead?")).toBe("no");
+    expect(nas.calls).toEqual([]);
+    expect(readInstallRecord()).toEqual(finished);
+
+    // Without a terminal it can't ask.
+    const piped = await server(d, ["manage", "ali@homebox"], { hostFor: nas.hostFor, interactive: false });
+    expect(piped.code).toBe(2);
+    expect(readInstallRecord()).toEqual(finished);
+
+    const yes = await server(d, ["manage", "ali@homebox"], { hostFor: nas.hostFor, answers: ["yes"] });
+    expect(yes.code).toBe(0);
+    expect(readInstallRecord()).toMatchObject({ host: "ali@homebox", installId: "found-install-id", finished: true });
+
+    // The same host asks nothing.
+    const same = await server(d, ["manage", "ali@homebox"], { hostFor: nas.hostFor });
+    expect(same.code).toBe(0);
+    expect(same.prompter.asked).toEqual([]);
+  });
+
+  test("a server with no install ID was started by hand, and is not taken over", async () => {
+    const d = device();
+    const l = listener();
+    await pinnedSync(d, l);
+    const lines = infoLines({ pin: formatPin(l.pin) }).filter((x) => !x.startsWith("install-id="));
+    const host = fakeHost({ info: { code: 0, lines, value: null } });
+    const { code, out } = await server(d, ["manage", "ali@homebox"], { hostFor: host.hostFor });
+    expect(code).toBe(1);
+    expect(out).toContain(`The Kerstel server on ali@homebox has no install ID: it was started by hand, so ${CLI} can't look after it. Nothing was saved.`);
+    expect(readInstallRecord()).toBeNull();
+
+    // Exit 3: another user's, or started by hand under another name.
+    const theirs = fakeHost({ info: { code: 3, lines: [], value: null } });
+    const other = await server(d, ["manage", "ali@homebox"], { hostFor: theirs.hostFor });
+    expect(other.code).toBe(1);
+    expect(other.out).toContain("was set up by another user there, or started by hand, so it can't be managed as this user. Nothing was saved.");
   });
 
   test("a host with no server is refused", async () => {

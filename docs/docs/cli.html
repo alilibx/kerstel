@@ -205,7 +205,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync setup --server-value -</code></td>
-<td>Turn sync on from a server value (<code>ks-server1-…</code>) read from stdin, for scripts. The value holds the server&#39;s enroll token, so it is never an argument.</td>
+<td>Turn sync on from a server value (<code>ks-server1-…</code>) read from stdin, for scripts. The value holds the server&#39;s enroll token, so it is never an argument. On a terminal it asks for the value at a hidden prompt instead.</td>
 </tr>
 <tr>
 <td><code>kerstel sync setup &lt;url&gt; [--pin &lt;pin&gt;] [--yes]</code></td>
@@ -253,7 +253,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync server manage &lt;ssh-host&gt;</code></td>
-<td>Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here.</td>
+<td>Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here. If this device looks after a server on another host, it asks first, and the default is no; while this device is still setting one up, it refuses.</td>
 </tr>
 <tr>
 <td><code>kerstel sync server stop</code></td>
@@ -294,7 +294,7 @@
 </tr>
 <tr>
 <td><code>kerstel update [--check]</code></td>
-<td>Install the latest release over this binary. It reads the newest version from GitHub Releases, downloads the binary for this platform and the release&#39;s <code>SHA256SUMS</code>, verifies the checksum, runs the new binary once to confirm it reports that version, and only then swaps it into place. <code>ks</code> keeps working, since it links to the same file. If a resolver daemon is running it is stopped, so the next resolution starts the new version. On a terminal it draws a progress bar while the binary downloads and names each step; piped, it prints plain lines. It says so and exits <code>0</code> when you already have the latest release, and exits <code>1</code> when GitHub cannot be reached; a failed checksum or download installs nothing. <code>--check</code> only reports whether a newer release exists. Run from source there is no binary to replace, so <code>update</code> refuses; <code>--check</code> still works. On the device that set up a sync server, it then checks the server&#39;s version. If the server is older, it says so and asks <code>Update the server now?</code> (Yes by default). Without a terminal, or with <code>--check</code>, it only says so and names <code>sync server update</code>.</td>
+<td>Install the latest release over this binary. It reads the newest version from GitHub Releases, downloads the binary for this platform and the release&#39;s <code>SHA256SUMS</code>, verifies the checksum, runs the new binary once to confirm it reports that version, and only then swaps it into place. <code>ks</code> keeps working, since it links to the same file. If a resolver daemon is running it is stopped, so the next resolution starts the new version. On a terminal it draws a progress bar while the binary downloads and names each step; piped, it prints plain lines. It says so and exits <code>0</code> when you already have the latest release, and exits <code>1</code> when GitHub cannot be reached; a failed checksum or download installs nothing. <code>--check</code> only reports whether a newer release exists. Run from source there is no binary to replace, so <code>update</code> refuses; <code>--check</code> still works. On the device that set up a sync server, it then checks the server&#39;s version. If the server is older, it says so and asks <code>Update the server now?</code> (Yes by default). If that fails after Kerstel itself was updated, it still exits <code>0</code> and names <code>sync server update</code>. Without a terminal, or with <code>--check</code>, it only says so and names <code>sync server update</code>.</td>
 </tr>
 <tr>
 <td><code>kerstel --version</code></td>

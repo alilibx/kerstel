@@ -501,8 +501,10 @@ export async function uninstallCommand(
   if (synced) await leaveSyncedVault(synced, deleteRemote);
   // After leaving the vault, which needs the server. Like leaving, a failure
   // never stops the uninstall; the record goes with the home either way.
-  if (server && !(removeServer && (await removeServerKeepingData(server, { hostFor: syncDeps.hostFor })))) {
-    info(manageLine(server));
+  if (server) {
+    const removed = removeServer && (await removeServerKeepingData(server, { hostFor: syncDeps.hostFor }));
+    // A server installed by hand keeps running until the printed command runs there.
+    if (!removed || server.route === "manual") info(manageLine(server));
   }
   const home = kerstelHome();
   // A background sync installs a missing timer only under the sync lock, and

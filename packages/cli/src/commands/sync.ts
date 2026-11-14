@@ -61,7 +61,7 @@ import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 import { parseServerValue } from "../sync/server-value";
 import { runWizard } from "../sync/wizard";
-import { manageLine, syncServerCommand } from "./sync-server";
+import { manageLine, serverUsageLines, syncServerCommand } from "./sync-server";
 import { readInstallRecord } from "../sync/install-record";
 
 /**
@@ -87,12 +87,14 @@ export interface SyncDeps {
   clipboard?: (text: string) => boolean;
   /** For tests: what `--server-value -` reads, in place of standard input. */
   stdin?: () => Promise<string>;
+  /** Whether standard input is a terminal, where `--server-value -` asks at a hidden prompt. Defaults to the real stream. */
+  stdinIsTerminal?: boolean;
 }
 
 /** How often each side of a pairing asks the server for news. The new device's polls count against a per-address limit of 30 a minute. */
 const POLL_MS = { addDevice: 2_000, join: 3_000 } as const;
 
-const USAGE = `Usage:
+const usage = () => `Usage:
   ${cliName()} sync setup <url> [--pin <pin>] [--yes]
                                        Turn sync on and upload this vault
   ${cliName()} sync setup                     Set up a server and this device, step by step
@@ -105,12 +107,7 @@ const USAGE = `Usage:
   ${cliName()} sync join [<value>]          Join a synced vault from this device
   ${cliName()} sync remove-device <name>    Remove a device and replace the sync key
   ${cliName()} sync off [--delete-vault]    Stop syncing this device
-  ${cliName()} sync server                    The server's address, whether it answers, its version
-  ${cliName()} sync server update             Update the server to this Kerstel's version
-  ${cliName()} sync server address <url>      Use the server's new address on this device
-  ${cliName()} sync server manage <ssh-host>  Look after the server from this device
-  ${cliName()} sync server stop               Stop the server and keep its data
-  ${cliName()} sync server remove             Remove the server; asks before deleting its data`;
+${serverUsageLines()}`;
 
 function thisDevice(deps: SyncDeps): { name: string; platform: string } {
   const platform = process.platform === "darwin" ? "macOS" : process.platform === "linux" ? "Linux" : process.platform;
@@ -168,10 +165,15 @@ function explainBeforeSync(error: unknown, server: string, mismatch: (server: st
 /** The codes Bun gives for a self-signed certificate that nothing trusts. */
 const SELF_SIGNED_CODES = new Set(["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN"]);
 
-/** The server's certificate is self-signed and nothing pinned it: likely `kerstel-server --tls self`. */
+/**
+ * The server's certificate is self-signed and nothing pinned it: likely
+ * `kerstel-server --tls self`. With several addresses, any one that failed so
+ * counts, even when the last failed another way.
+ */
 function isUnpinnedSelfSigned(error: unknown): boolean {
   if (!(error instanceof SyncHttpError) || error.code !== "unreachable") return false;
-  return SELF_SIGNED_CODES.has(error.tlsCode ?? "") || /self[- ]signed/i.test(error.message);
+  if ([error.tlsCode, ...error.earlierTlsCodes].some((code) => SELF_SIGNED_CODES.has(code ?? ""))) return true;
+  return /self[- ]signed/i.test(error.message);
 }
 
 const emptyReport = (): SyncReport => ({ applied: [], pushed: [], conflicts: [], backups: [] });
@@ -250,21 +252,27 @@ export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<
   if (sub === "remove-device") return removeDevice(rest, deps, open);
   if (sub === "server") return syncServerCommand(rest, deps);
   if (sub === "--help" || sub === "help") {
-    console.log(USAGE);
+    console.log(usage());
     return 0;
   }
   if (sub !== undefined && !sub.startsWith("-")) {
     fail(`Unknown sync command "${sub}".`);
-    console.log(USAGE);
+    console.log(usage());
     return 2;
   }
   return run(args, deps, open);
 }
 
-const SETUP_USAGE = () => `Usage: ${cliName()} sync setup <url> [--pin <pin>] [--yes]`;
+const SETUP_USAGE = () => `Usage: ${cliName()} sync setup <url> [--pin <pin>] [--yes], or ${cliName()} sync setup --server-value - [--yes]`;
 
-/** One line from standard input, trimmed: where a server value comes from, so it is never an argument. */
-async function readStdinLine(deps: SyncDeps): Promise<string> {
+/**
+ * A server value from standard input, trimmed: so it is never an argument.
+ * On a terminal it is asked at a hidden prompt, since it holds the enroll token.
+ */
+async function readServerValue(deps: SyncDeps): Promise<string> {
+  if (deps.stdin === undefined && (deps.stdinIsTerminal ?? process.stdin.isTTY === true)) {
+    return (await (deps.prompter ?? new ClackPrompter()).text("Paste the server value", { secret: true })).trim();
+  }
   const text = await (deps.stdin ?? (() => Bun.stdin.text()))();
   return (text.split(/\r?\n/).find((line) => line.trim() !== "") ?? "").trim();
 }
@@ -296,7 +304,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
   }
 
   if (valueFromStdin) {
-    const target = serverValueTarget(await readStdinLine(deps));
+    const target = serverValueTarget(await readServerValue(deps));
     if (target === null) return 2;
     return enableSync(await open(), { ...target, yes, deps });
   }
@@ -453,7 +461,8 @@ function contextFor(ctx: CliContext, deps: SyncDeps): SyncContext | null {
   return { vault: ctx.vault, dataKey: ctx.dataKey, config, client: clientFor(config, deps) };
 }
 
-export const notOn = () => info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup <url>.`);
+export const notOn = () =>
+  info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup, or ${cliName()} sync setup <url> for a server you already run.`);
 
 // ---- The pull timer ---------------------------------------------------------
 // Every call goes through these, so a timer that throws never fails a sync.
@@ -591,7 +600,7 @@ async function run(args: string[], deps: SyncDeps, open: () => Promise<CliContex
     else if (arg === "--keep" && (args[i + 1] === "local" || args[i + 1] === "remote")) keep = args[++i] as "local" | "remote";
     else {
       fail(`Unknown option ${arg}.`);
-      console.log(USAGE);
+      console.log(usage());
       return 2;
     }
   }

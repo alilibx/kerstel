@@ -1,6 +1,7 @@
 import { LAUNCHER_FORMAT, LAUNCHER_RELATIVE_PATH } from "../init/launcher";
 import { SKIP_REASON_TEXT } from "../init/script-shell";
 import type { ProjectStatus } from "../init/status";
+import { printable } from "../output";
 import { STALE_SYNC_MS, type SyncGlance } from "../sync/background";
 import type { TimerStatus } from "../sync/timer";
 import { compareVersions, isOlderRelease } from "../update/versions";
@@ -231,7 +232,7 @@ function syncCheck(facts: DoctorFacts): Check | null {
       group: "machine",
       status: "warn",
       label: "Sync",
-      detail: `${detail} · the server runs ${facts.serverVersion}, older than this Kerstel`,
+      detail: `${detail} · the server runs ${printable(facts.serverVersion)}, older than this Kerstel`,
       fix: `${facts.cli} sync server update`,
     };
   }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultAddresses, isPublicIpv4, parseHostFacts } from "../src/sync/host-facts";
+import { defaultAddresses, isPublicIpv4, parseHostFacts, sshPublicAddress } from "../src/sync/host-facts";
 import {
   type InstallRecord,
   readInstallRecord,
@@ -148,21 +148,54 @@ describe("defaultAddresses", () => {
     expect(out.warn).toContain("sync server address on each device.");
   });
 
-  test("a home box never offers a link-local address, and offers at most four", async () => {
-    const facts = { ...base, ipv4: ["169.254.7.7", "192.168.1.20", "10.0.0.2", "172.17.0.1", "100.100.1.1", "192.168.2.1"] };
+  test("a home box never offers a link-local, Docker bridge or Tailscale address, and offers at most four", async () => {
+    const facts = {
+      ...base,
+      ipv4: ["169.254.7.7", "192.168.1.20", "172.17.0.1", "100.100.1.1", "10.0.0.2", "192.168.2.1", "172.18.0.5", "192.168.3.1"],
+    };
     expect((await defaultAddresses(facts, { port: 8787, resolves: no })).addresses).toEqual([
       "https://192.168.1.20:8787",
       "https://10.0.0.2:8787",
-      "https://172.17.0.1:8787",
-      "https://100.100.1.1:8787",
+      "https://192.168.2.1:8787",
+      "https://172.18.0.5:8787",
     ]);
     expect((await defaultAddresses(facts, { port: 8787, resolves: yes })).addresses).toEqual([
       "https://nas.local:8787",
       "https://192.168.1.20:8787",
       "https://10.0.0.2:8787",
-      "https://172.17.0.1:8787",
+      "https://192.168.2.1:8787",
     ]);
-    expect((await defaultAddresses({ ...base, ipv4: ["169.254.7.7"] }, { port: 8787, resolves: no })).addresses).toEqual([]);
+    for (const ip of ["169.254.7.7", "172.17.0.1", "100.64.0.1", "100.127.255.254"]) {
+      expect((await defaultAddresses({ ...base, ipv4: [ip] }, { port: 8787, resolves: no })).addresses).toEqual([]);
+    }
+  });
+
+  test("a host with only private addresses that ssh reaches at a public one is a VPS", async () => {
+    const facts = { ...base, ipv4: ["10.0.0.5"] };
+    // The SSH target's host name, or its IP, as `ssh -G` reports it.
+    const byName = await sshPublicAddress("VPS.example.com.", async (name) => (name === "VPS.example.com." ? ["10.9.9.9", "203.0.113.9"] : []));
+    expect(byName).toEqual({ host: "vps.example.com", ips: ["203.0.113.9"] });
+    expect(await defaultAddresses(facts, { port: 8787, resolves: no, ssh: byName })).toEqual({
+      kind: "vps",
+      addresses: ["https://vps.example.com:8787"],
+      warn: null,
+    });
+    const byIp = await sshPublicAddress("203.0.113.9", async () => {
+      throw new Error("an IP is not looked up");
+    });
+    expect(byIp).toEqual({ host: "203.0.113.9", ips: ["203.0.113.9"] });
+    expect((await defaultAddresses(facts, { port: 8787, resolves: no, ssh: byIp })).addresses).toEqual(["https://203.0.113.9:8787"]);
+
+    // A private or unknown target, or none, leaves a home box.
+    expect(await sshPublicAddress("192.168.1.20", async () => [])).toBeNull();
+    expect(await sshPublicAddress("homebox", async () => ["192.168.1.20"])).toBeNull();
+    expect(await sshPublicAddress("::1", async () => [])).toBeNull();
+    expect(await sshPublicAddress(null, async () => ["203.0.113.9"])).toBeNull();
+    expect((await defaultAddresses(facts, { port: 8787, resolves: no, ssh: null })).kind).toBe("home");
+    // The host's own public address wins.
+    expect((await defaultAddresses({ ...base, ipv4: ["198.51.100.4"] }, { port: 8787, resolves: no, ssh: byName })).addresses).toEqual([
+      "https://198.51.100.4:8787",
+    ]);
   });
 
   test("CGNAT counts as private", async () => {

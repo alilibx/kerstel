@@ -153,12 +153,38 @@ export function sshHost(target: string, deps: HostDeps = {}): Host {
         uploaded = true;
       }
       // `-t` gives the session a terminal, so `sudo` can prompt; stdin then carries the answers.
+      // LogLevel=error drops ssh's own "Connection to … closed." when the session ends.
       const command = [`sh ${REMOTE_SCRIPT}`, ...args.map(quote)].join(" ");
       return o.interactive
-        ? runCopying(spawn, write, ssh("-t", target, command), "inherit")
+        ? runCopying(spawn, write, ssh("-t", "-o", "LogLevel=error", target, command), "inherit")
         : runCopying(spawn, write, ssh("-T", target, command), "");
     },
   };
+}
+
+/**
+ * The host name `ssh` connects to for `target`, from `ssh -G`, which reads the
+ * user's config and connects to nothing. Null when it can't tell.
+ */
+export async function sshHostname(target: string): Promise<string | null> {
+  if (!target || target.startsWith("-")) return null;
+  const config = process.env.KERSTEL_TEST_SSH_CONFIG;
+  try {
+    const proc = Bun.spawn(["ssh", ...(config ? ["-F", config] : []), "-G", target], {
+      env: process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const timer = setTimeout(() => proc.kill(), 5_000);
+    const [text, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    clearTimeout(timer);
+    if (code !== 0) return null;
+    const line = text.split("\n").find((l) => l.startsWith("hostname "));
+    return line?.slice("hostname ".length).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /** The installer on this machine, from a private temp copy deleted after each run. */

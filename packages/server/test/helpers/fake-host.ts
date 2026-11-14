@@ -14,7 +14,8 @@
  * service runs the real `packages/server/src/index.ts` in the background on a
  * free loopback port, against the temp data dir, and `docker exec … value`
  * runs the real `value` command, so the server value the installer prints is
- * real.
+ * real. A health check (`curl …/v1/health` to 127.0.0.1) reaches the real
+ * server behind the host port the installer asked for.
  */
 import { createHash } from "node:crypto";
 import {
@@ -36,7 +37,9 @@ import { join } from "node:path";
 const SERVER_ENTRY = join(import.meta.dir, "../../src/index.ts");
 const SCRIPT = join(import.meta.dir, "../../install/kerstel-server.sh");
 const FAKES = ["docker", "systemctl", "launchctl", "sudo", "tailscale", "curl", "uname", "hostname", "ip"] as const;
-type Fake = (typeof FAKES)[number];
+/** Fakes linked into a host only when its config asks for them. */
+const OPTIONAL_FAKES = ["id", "sleep"] as const;
+type Fake = (typeof FAKES)[number] | (typeof OPTIONAL_FAKES)[number];
 /** The real tools the script may run, each behind a shim that logs its argv. */
 const REAL_TOOLS = [
   "awk", "cat", "chmod", "cmp", "cp", "dirname", "grep", "head", "id", "mkdir", "mktemp", "mv", "rm",
@@ -61,6 +64,12 @@ export interface HostConfig {
   tailscale: string | null;
   tailscaleNeedsSudo: boolean;
   tailscaleHttpsOff: boolean;
+  /** `id -u` answers 0: the script runs as root. */
+  root: boolean;
+  /** Nothing answers a health check, as when a firewall drops it. */
+  healthDown: boolean;
+  /** `sleep` waits a tenth of a second, so a test of a 30-second wait is quick. */
+  quickSleep: boolean;
 }
 
 interface Container {
@@ -77,6 +86,10 @@ interface State {
   images: string[];
   containers: Record<string, Container>;
   volumes: string[];
+  /** Each volume's labels, when it was created with some. */
+  volumeLabels: Record<string, Record<string, string>>;
+  /** For each running server's PID: the host port the installer asked for, and the loopback port it really listens on. */
+  listening: Record<string, { port: number | null; real: number }>;
   serve: string[];
   systemd: { pid: number | null; enabled: boolean; reloads: number };
   launchd: { pid: number | null; loaded: boolean; disabled: boolean };
@@ -100,6 +113,8 @@ const emptyState = (): State => ({
   images: [],
   containers: {},
   volumes: [],
+  volumeLabels: {},
+  listening: {},
   serve: [],
   systemd: { pid: null, enabled: false, reloads: 0 },
   launchd: { pid: null, loaded: false, disabled: false },
@@ -131,6 +146,9 @@ export class FakeHost {
       tailscale: null,
       tailscaleNeedsSudo: false,
       tailscaleHttpsOff: false,
+      root: false,
+      healthDown: false,
+      quickSleep: false,
       ...config,
     };
     writeFileSync(join(this.dir, "config.json"), JSON.stringify(full));
@@ -141,11 +159,16 @@ export class FakeHost {
       if (tool === "docker" && !full.docker) continue;
       symlinkSync(join(tools, "fakes", tool), join(this.bin, tool));
     }
+    if (full.root) symlinkSync(join(tools, "fakes", "id"), join(this.bin, "id"));
+    if (full.quickSleep) symlinkSync(join(tools, "fakes", "sleep"), join(this.bin, "sleep"));
   }
 
-  /** Runs `sh kerstel-server.sh <args>` on this host. */
-  async run(args: string[]): Promise<RunResult> {
-    const proc = Bun.spawn(["/bin/sh", SCRIPT, ...args], {
+  /**
+   * Runs `sh kerstel-server.sh <args>` on this host. KERSTEL_TEST_SH names
+   * another shell to run it with, such as /bin/dash.
+   */
+  async run(args: string[], o: { env?: Record<string, string> } = {}): Promise<RunResult> {
+    const proc = Bun.spawn([process.env.KERSTEL_TEST_SH || "/bin/sh", SCRIPT, ...args], {
       cwd: this.home,
       env: {
         HOME: this.home,
@@ -154,6 +177,7 @@ export class FakeHost {
         TMPDIR: join(this.dir, "tmp"),
         KERSTEL_INSTALL_ROOT: this.root,
         LANG: "C",
+        ...o.env,
       },
       stdin: "ignore",
       stdout: "pipe",
@@ -181,6 +205,13 @@ export class FakeHost {
 
   state(): State {
     return readState(this.dir);
+  }
+
+  /** Changes the host's state, as something other than the installer would. */
+  seed(change: (state: State) => void): void {
+    const state = readState(this.dir);
+    change(state);
+    writeFileSync(join(this.dir, "state.json"), JSON.stringify(state));
   }
 
   /** Every fake's argv, in order. */
@@ -242,7 +273,7 @@ function sharedTools(): string {
   process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "fakes"));
   mkdirSync(join(dir, "real"));
-  for (const tool of FAKES) {
+  for (const tool of [...FAKES, ...OPTIONAL_FAKES]) {
     const wrapper = `#!/bin/sh\nexec ${q(process.execPath)} ${q(import.meta.path)} "$FAKE_HOST_DIR" ${tool} "$@"\n`;
     writeFileSync(join(dir, "fakes", tool), wrapper, { mode: 0o755 });
   }
@@ -321,9 +352,13 @@ class Tools {
     appendFileSync(join(this.dir, "argv.log"), `${JSON.stringify({ tool, argv, sudo: this.sudo })}\n`);
   }
 
-  /** Starts a server in the background on a free loopback port, never 80, 443 or 8787. */
-  async spawnServer(argv: string[], env: Record<string, string>, logFile: string): Promise<number> {
-    const sandboxed: Record<string, string> = { ...env, KERSTEL_SERVER_LISTEN: `127.0.0.1:${await freePort()}` };
+  /**
+   * Starts a server in the background on a free loopback port, never 80, 443
+   * or 8787. `port` is the host port it stands for, which a health check names.
+   */
+  async spawnServer(argv: string[], env: Record<string, string>, logFile: string, port: number | null): Promise<number> {
+    const real = await freePort();
+    const sandboxed: Record<string, string> = { ...env, KERSTEL_SERVER_LISTEN: `127.0.0.1:${real}` };
     if (sandboxed.KERSTEL_SERVER_DOMAIN) {
       // A dead loopback directory: the server makes its token, then fails to reach the CA.
       sandboxed.KERSTEL_SERVER_ACME_DIRECTORY = "http://127.0.0.1:9/directory";
@@ -337,6 +372,7 @@ class Tools {
     });
     const pid = Number(result.stdout.toString().trim());
     this.state.pids.push(pid);
+    this.state.listening[String(pid)] = { port, real };
     return pid;
   }
 
@@ -355,7 +391,14 @@ class Tools {
         case "tailscale":
           return this.tailscale(argv);
         case "curl":
-          return this.curl(argv);
+          return await this.curl(argv);
+        case "id":
+          // Only linked for a host whose config says root.
+          process.stdout.write(argv.includes("-un") || argv.includes("-n") ? "root\n" : "0\n");
+          return 0;
+        case "sleep":
+          await Bun.sleep(100);
+          return 0;
         case "uname":
           process.stdout.write(`${argv.includes("-m") ? this.config.arch : this.config.os}\n`);
           return 0;
@@ -405,14 +448,17 @@ class Tools {
   async startContainer(name: string): Promise<void> {
     const c = this.state.containers[name]!;
     if (alive(c.pid)) return;
-    c.pid = await this.spawnServer([process.execPath, SERVER_ENTRY], this.containerEnv(c), join(this.dir, `${name}.log`));
+    // `-p 8787:8787` or `-p 127.0.0.1:8787:8787`: the host port is the one before the container's.
+    const published = c.ports.map((p) => p.split(":")).find((parts) => parts.at(-1) === "8787");
+    const port = published ? Number(published.at(-2)) : null;
+    c.pid = await this.spawnServer([process.execPath, SERVER_ENTRY], this.containerEnv(c), join(this.dir, `${name}.log`), port);
   }
 
   format(template: string, c: Container): string {
     return template.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
       const label = /^index \.Config\.Labels "([^"]+)"$/.exec(expr);
       if (label) return c.labels[label[1]!] ?? "";
-      if (expr === ".Config.Image") return c.image;
+      if (expr === ".Config.Image" || expr === ".Image") return c.image;
       if (expr === ".State.Running") return String(alive(c.pid));
       throw new Error(`fake docker: no template ${expr}`);
     });
@@ -438,6 +484,13 @@ class Tools {
         if (rest[0] !== "inspect") throw new Error(`fake docker: image ${rest[0]}`);
         if (!s.images.includes(image)) fail(1, `Error response from daemon: No such image: ${image}`);
         process.stdout.write("[{}]\n");
+        return 0;
+      }
+      case "ps": {
+        // Only `ps -a --format <template>`: one line per container.
+        const at = rest.indexOf("--format");
+        if (!rest.includes("-a") || at < 0) throw new Error(`fake docker: ps ${rest.join(" ")}`);
+        for (const c of Object.values(s.containers)) process.stdout.write(`${this.format(rest[at + 1]!, c)}\n`);
         return 0;
       }
       case "pull":
@@ -514,14 +567,40 @@ class Tools {
         return result.exitCode ?? 1;
       }
       case "volume": {
-        const name = rest[1]!;
+        const name = rest[rest.length - 1]!;
+        if (rest[0] === "create") {
+          const labels: Record<string, string> = {};
+          for (let i = 1; i < rest.length - 1; i++) {
+            if (rest[i] !== "--label") throw new Error(`fake docker: volume create ${rest[i]}`);
+            const value = rest[++i]!;
+            labels[value.slice(0, value.indexOf("="))] = value.slice(value.indexOf("=") + 1);
+          }
+          if (!s.volumes.includes(name)) {
+            s.volumes.push(name);
+            s.volumeLabels[name] = labels;
+            mkdirSync(join(this.dir, "volumes", name), { recursive: true });
+          }
+          process.stdout.write(`${name}\n`);
+          return 0;
+        }
         if (!s.volumes.includes(name)) fail(1, `Error response from daemon: get ${name}: no such volume`);
-        if (rest[0] === "inspect") return 0;
+        if (rest[0] === "inspect") {
+          const at = rest.indexOf("--format");
+          if (at >= 0) {
+            const label = /^\{\{index \.Labels "([^"]+)"\}\}$/.exec(rest[at + 1]!);
+            if (!label) throw new Error(`fake docker: volume inspect --format ${rest[at + 1]}`);
+            const labels = s.volumeLabels[name];
+            // Docker prints <no value> for a volume with no labels at all.
+            process.stdout.write(`${labels === undefined || Object.keys(labels).length === 0 ? "<no value>" : (labels[label[1]!] ?? "")}\n`);
+          }
+          return 0;
+        }
         if (rest[0] !== "rm") throw new Error(`fake docker: volume ${rest[0]}`);
         if (Object.values(s.containers).some((c) => c.volumes.some((v) => v.startsWith(`${name}:`)))) {
           fail(1, `Error response from daemon: remove ${name}: volume is in use`);
         }
         s.volumes = s.volumes.filter((v) => v !== name);
+        delete s.volumeLabels[name];
         rmSync(join(this.dir, "volumes", name), { recursive: true, force: true });
         return 0;
       }
@@ -562,7 +641,7 @@ class Tools {
     if (unitName !== undefined && unitName !== SERVICE) throw new Error(`fake systemctl: unit ${unitName}`);
     const start = async () => {
       const { exec, env } = this.unit();
-      if (!alive(sd.pid)) sd.pid = await this.spawnServer([exec], env, join(this.dir, "systemd.log"));
+      if (!alive(sd.pid)) sd.pid = await this.spawnServer([exec], env, join(this.dir, "systemd.log"), listenPort(env));
     };
     switch (command) {
       case "daemon-reload":
@@ -621,7 +700,7 @@ class Tools {
     if (command !== "print" && !this.sudo) fail(1, "Operation not permitted while System Integrity Protection is engaged");
     const start = async () => {
       const { exec, env } = this.plist();
-      ld.pid = await this.spawnServer([exec], env, join(this.dir, "launchd.log"));
+      ld.pid = await this.spawnServer([exec], env, join(this.dir, "launchd.log"), listenPort(env));
     };
     switch (command) {
       case "print":
@@ -675,15 +754,17 @@ class Tools {
     throw new Error(`fake tailscale: ${argv[0]}`);
   }
 
-  curl(argv: string[]): number {
+  async curl(argv: string[]): Promise<number> {
     let out: string | null = null;
     let url: string | null = null;
     for (let i = 0; i < argv.length; i++) {
       const arg = argv[i]!;
       if (arg === "-o") out = argv[++i]!;
-      else if (arg === "--proto" || arg === "--proto-redir") i++;
+      else if (arg === "--proto" || arg === "--proto-redir" || arg === "--max-time") i++;
       else if (!arg.startsWith("-")) url = arg;
     }
+    const health = url ? /^(https?):\/\/127\.0\.0\.1:(\d+)\/v1\/health$/.exec(url) : null;
+    if (health) return this.health(health[1]!, Number(health[2]));
     const prefix = `${RELEASES_URL}/releases/download/`;
     if (!url || !out || !url.startsWith(prefix)) fail(6, `curl: (6) Could not resolve host: ${url}`);
     const file = join(this.dir, "releases", url.slice(prefix.length));
@@ -692,6 +773,27 @@ class Tools {
     chmodSync(out, 0o644);
     return 0;
   }
+
+  /** A health check to 127.0.0.1:`port`, answered by the server standing for that host port, through its real one. */
+  async health(scheme: string, port: number): Promise<number> {
+    const pid = Object.keys(this.state.listening).find((p) => this.state.listening[p]!.port === port && alive(Number(p)));
+    if (this.config.healthDown || pid === undefined) fail(7, `curl: (7) Failed to connect to 127.0.0.1 port ${port}`);
+    try {
+      const response = await fetch(`${scheme}://127.0.0.1:${this.state.listening[pid]!.real}/v1/health`, {
+        tls: { rejectUnauthorized: false },
+        signal: AbortSignal.timeout(2000),
+      } as RequestInit);
+      return response.ok ? 0 : 22;
+    } catch {
+      return 35;
+    }
+  }
+}
+
+/** The port in a service's KERSTEL_SERVER_LISTEN, which a health check names. */
+function listenPort(env: Record<string, string>): number | null {
+  const port = /:(\d+)$/.exec(env.KERSTEL_SERVER_LISTEN ?? "");
+  return port ? Number(port[1]) : null;
 }
 
 if (import.meta.main) {

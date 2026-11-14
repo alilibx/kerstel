@@ -46,6 +46,8 @@ export class SyncHttpError extends Error {
     message: string,
     /** The code `fetch` failed with when no answer came, such as a TLS one (`DEPTH_ZERO_SELF_SIGNED_CERT`). */
     readonly tlsCode?: string,
+    /** For the last of several addresses: the codes the ones tried before it failed with. */
+    readonly earlierTlsCodes: string[] = [],
   ) {
     super(message);
     this.name = "SyncHttpError";
@@ -272,6 +274,7 @@ function addresses(servers: string[], base: Fetch | undefined, pin: Buffer | nul
     address: (): string | null => (chosen === null ? null : servers[chosen]!),
     async send<T>(request: (server: string, doFetch: Fetch) => Promise<T>): Promise<T> {
       if (chosen !== null) return request(servers[chosen]!, fetches[chosen]!);
+      const earlier: string[] = [];
       for (let i = 0; ; i += 1) {
         onTry?.(servers[i]!);
         try {
@@ -281,7 +284,14 @@ function addresses(servers: string[], base: Fetch | undefined, pin: Buffer | nul
         } catch (error) {
           const unreachable = error instanceof SyncHttpError && error.code === "unreachable";
           if (!unreachable) chosen = i;
-          if (unreachable && i + 1 < servers.length) continue;
+          if (unreachable && i + 1 < servers.length) {
+            if (error.tlsCode) earlier.push(error.tlsCode);
+            continue;
+          }
+          // The last address's failure, with what the others failed with: a self-signed one there still explains it.
+          if (unreachable && earlier.length > 0) {
+            throw new SyncHttpError(error.status, error.code, error.message, error.tlsCode, [...error.earlierTlsCodes, ...earlier]);
+          }
           throw error;
         }
       }

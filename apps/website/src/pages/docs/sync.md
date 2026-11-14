@@ -31,7 +31,7 @@ Kerstel never asks for an SSH password or key. It runs your own `ssh`, so your k
 
 ### Over SSH or on this machine
 
-Kerstel asks for the SSH host, as you would type it after `ssh`, like `ali@homebox`. It connects and says what it found, such as `Linux x64, Docker found.` It supports Linux and macOS hosts, on x64 and arm64.
+Over SSH, Kerstel asks for the host, as you would type it after `ssh`, like `ali@homebox`. It connects and says what it found, such as `Linux x64, Docker found.` On this machine, it checks this machine instead. It supports Linux and macOS hosts, on x64 and arm64.
 
 Then it asks how to run the server:
 
@@ -48,9 +48,9 @@ Then it asks how your other devices will reach the server:
 | My domain, with a Let's Encrypt certificate | The server listens on 443 and answers the challenge on 80. Kerstel warns when the domain does not point at the host yet. See [Your domain, with Let's Encrypt](#your-domain-with-lets-encrypt). |
 | Tailscale | Offered when the host runs Tailscale. On a command you run yourself, it is always offered. Every device that syncs must be on your tailnet. See [Tailscale](#tailscale). |
 
-For a pinned server, it asks for the address your devices use. It starts from what it found: a host with a public IPv4 address (a VPS) gets `https://<public-ip>:8787`. A home box gets `https://<hostname>.local:8787` when this device resolves that name, and its LAN address otherwise. You can edit the answer. Give up to four addresses, separated by commas. A device uses the first one that answers, and `kerstel sync status` shows which one answered last.
+For a pinned server, it asks for the address your devices use. It starts from what it found. A host with a public IPv4 address (a VPS) gets `https://<public-ip>:8787`. A host that reports only private addresses, when your `ssh` reaches it at a public one, is a VPS behind its provider's NAT: it gets the name or IP that `ssh` connects to. A home box gets its `.local` name first, `https://<hostname>.local:8787`, when this device resolves that name, and then its LAN addresses. Docker's and Tailscale's own addresses are left out, since other devices on your LAN can't reach them. You can edit the answer. Give up to four addresses, separated by commas. A device uses the first one that answers, and `kerstel sync status` shows which one answered last.
 
-When the install finishes, Kerstel turns sync on for this device and uploads the vault. The server restarts on reboot.
+The installer says the server is running only once it answers on the host, or, with a domain, once it runs. Kerstel then turns sync on for this device and uploads the vault. The server restarts on reboot.
 
 ### A command you run yourself
 
@@ -58,7 +58,7 @@ Kerstel asks the same questions without detecting anything, then prints one comm
 
 ### A server you already have
 
-Give its address, or paste a server value. The address and the enroll token (`Enroll token (leave empty if the server has none)`) are asked at hidden prompts. `KERSTEL_SYNC_ENROLL_TOKEN` supplies the token instead. Kerstel then shows the server, how many secrets and scopes it will upload, and this device's name, and asks before uploading.
+Give its address, or paste a server value. The address and the enroll token (`Enroll token (leave empty if the server has none)`) are asked at hidden prompts. `KERSTEL_SYNC_ENROLL_TOKEN` supplies the token instead. For an `https://` address it also asks `Certificate pin (leave empty if the server has a CA certificate)`: give the `sha256/…` pin of a server that runs with its own certificate. Kerstel then shows the server, how many secrets and scopes it will upload, and this device's name, and asks before uploading.
 
 For a script, pass a server value on stdin, so it never lands in your shell history or a process list:
 
@@ -66,13 +66,13 @@ For a script, pass a server value on stdin, so it never lands in your shell hist
 printf '%s\n' "$VALUE" | kerstel sync setup --server-value - --yes
 ```
 
-Without a terminal, `kerstel sync setup` with no arguments prints its usage instead.
+On a terminal, `--server-value -` asks for the value at a hidden prompt instead of reading it. Without a terminal, `kerstel sync setup` with no arguments prints its usage instead.
 
 ### If a step fails
 
-Every step on the host checks what already exists, so run `kerstel sync setup` again and it continues where it stopped. If this device already started a server somewhere, a new run asks before setting up another. If sync is already on, `kerstel sync setup` says so and points at `kerstel sync server` and `kerstel sync add-device`.
+Every step on the host checks what already exists, so run `kerstel sync setup` again and it continues where it stopped. On the host this device set up a server on, a new run continues with that server, even after `kerstel sync off`. If this device has a server on another host, finished or not, a new run asks before setting up another, and the default is no. If sync is already on, `kerstel sync setup` says so and points at `kerstel sync server` and `kerstel sync add-device`.
 
-If the host already runs a Kerstel server that another device set up, Kerstel stops and says to run `kerstel sync add-device` on that device.
+If the host already runs a Kerstel server that another device set up, Kerstel stops and says to run `kerstel sync add-device` on that device. A server you started yourself from the image counts too, and so does a `kerstel-server` volume the installer did not make, so Kerstel never starts a second server beside it. This device keeps its record of the server it set up before.
 
 ### What the install changes on the host
 
@@ -83,7 +83,7 @@ If the host already runs a Kerstel server that another device set up, Kerstel st
 
 `kerstel-server` creates the enroll token file the first time it starts. The token never appears in a command line or in shell history. Devices need it to create a vault, not to join one.
 
-The installer asks for `sudo` only where it must, and says why before it asks:
+Run the installer as your own user, not through `sudo`: it stops when `sudo` runs it with your home folder. It asks for `sudo` only where it must, and says why before it asks:
 
 - The service install needs `sudo` once, because the unit or plist belongs to root and systemd or launchd starts it.
 - Docker needs `sudo` only when your user cannot reach the Docker daemon.
@@ -108,7 +108,9 @@ The device that set up the server keeps a record of it in `~/.kerstel/sync-serve
 
 For a server you installed with a pasted command, these print the matching command to run on the server.
 
-`kerstel update` checks the server after it installs a new Kerstel. If the server is older, it says so and asks whether to update it now. Without a terminal, or with `--check`, it only says so. `kerstel doctor` warns about a server that is behind. `kerstel uninstall` on the device that set up the server asks whether to remove it too, and the default is no, since other devices may still use it. `kerstel sync off` and `kerstel uninstall` name `kerstel sync server manage` when they leave the server running, so another device can look after it.
+`update`, `stop` and `remove` pass the server's install ID to the installer. If the host now runs a server that another device set up, they change nothing there and say so. `manage` asks before it replaces this device's record of a server on another host, and the default is no. It refuses while this device is still setting up a server elsewhere: finish it with `kerstel sync setup`, or run `kerstel sync server remove`.
+
+`kerstel update` checks the server after it installs a new Kerstel. If the server is older, it says so and asks whether to update it now. If that server update fails, `kerstel update` still succeeds, since Kerstel itself was updated, and says to run `kerstel sync server update`. Without a terminal, or with `--check`, it only says so. `kerstel doctor` warns about a server that is behind. `kerstel uninstall` on the device that set up the server asks whether to remove it too, and the default is no, since other devices may still use it. `kerstel sync off` and `kerstel uninstall` name `kerstel sync server manage` when they leave the server running, so another device can look after it.
 
 ## Run a server yourself
 
@@ -193,10 +195,10 @@ You can give the server a domain later. Start it with `--domain` and the same da
 With Docker, name the address and set the mode with environment variables, and publish the port:
 
 ```bash
-docker run -d --restart unless-stopped -p 8787:8787 -v kerstel-server:/data \
+docker run -d --name kerstel-server --restart unless-stopped -p 8787:8787 -v kerstel-server:/data \
   -e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7 \
   ghcr.io/alilibx/kerstel-server:latest
-docker logs <container> | grep 'Certificate pin'
+docker logs kerstel-server | grep 'Certificate pin'
 ```
 
 ### Your domain, with Let's Encrypt
@@ -215,7 +217,7 @@ Running with `--domain` means you agree to the ACME CA's terms of service (Let's
 With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep `--restart unless-stopped`: a renewal restarts the HTTPS listener. If it can't listen again within 10 tries, a second apart, the server exits so Docker can start it again.
 
 ```bash
-docker run -d --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \
+docker run -d --name kerstel-server --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \
   -e KERSTEL_SERVER_DOMAIN=sync.example.com \
   -e KERSTEL_SERVER_LISTEN=0.0.0.0:443 \
   ghcr.io/alilibx/kerstel-server:latest
@@ -241,7 +243,7 @@ tailscale serve --bg 8787
 With Docker, publish the port on the loopback address and run the same `tailscale serve` command on the host:
 
 ```bash
-docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+docker run -d --name kerstel-server --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 tailscale serve --bg 8787
 ```
 

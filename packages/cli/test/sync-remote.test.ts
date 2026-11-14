@@ -115,7 +115,8 @@ describe("sshHost", () => {
     expect(calls.map((c) => c.argv)).toEqual([
       ["-o", "BatchMode=no", "box", UPLOAD],
       ["-T", "box", "sh ~/.kerstel-server/kerstel-server.sh 'detect'"],
-      ["-t", "box", "sh ~/.kerstel-server/kerstel-server.sh 'install' '--x'"],
+      // LogLevel=error: no "Connection to box closed." after an interactive run.
+      ["-t", "-o", "LogLevel=error", "box", "sh ~/.kerstel-server/kerstel-server.sh 'install' '--x'"],
     ]);
     // The upload carries the script on stdin; a plain run gets an empty one.
     expect(calls[0]!.stdin).toBe(script);

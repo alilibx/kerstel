@@ -634,7 +634,7 @@ describe("the sync server this device installed", () => {
     expect(await uninstallCommand([], prompter, NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
     expect(prompter.asked[1]).toBe(QUESTION);
     expect(prompter.defaults.get(QUESTION)).toBe("no");
-    expect(host.calls).toEqual([{ route: "ssh", target: "ali@homebox", args: ["remove"] }]);
+    expect(host.calls).toEqual([{ route: "ssh", target: "ali@homebox", args: ["remove", "--install-id", "install-id-1"] }]);
     expect(output.join("\n")).toContain("Removed the server from ali@homebox. Its database stays on the host.");
     expect(existsSync(home)).toBe(false);
   });
@@ -693,7 +693,21 @@ describe("the sync server this device installed", () => {
     expect(prompter.asked[1]).toBe("Also remove the sync server on 192.168.1.20? Other devices may still use it.");
     expect(host.calls).toEqual([]);
     expect(output.join("\n")).toContain("keeps its database");
-    expect(output.join("\n")).toContain(manualCommand({ version: VERSION, args: ["remove"] }));
+    expect(output.join("\n")).toContain(manualCommand({ version: VERSION, args: ["remove", "--install-id", "install-id-1"] }));
+    // It keeps running until that command runs there.
+    expect(output.join("\n")).toContain(`To manage it from another device: ${cliName()} sync server manage <ssh-host>`);
+  });
+
+  test("a host that runs another device's server is left alone", async () => {
+    const { home } = await setup();
+    writeInstallRecord(serverRecord(), home);
+    const host = fakeHost(3);
+    capture();
+    expect(await uninstallCommand([], new ScriptedPrompter(["yes", "yes"]), NO_BINARY, { timer: fakeTimer(false), hostFor: host.hostFor })).toBe(0);
+    const out = output.join("\n");
+    expect(out).toContain("ali@homebox runs a Kerstel server that another device set up, not the one this device did. Nothing was changed there.");
+    expect(out).toContain(MANAGE);
+    expect(existsSync(home)).toBe(false);
   });
 
   test("no record, no question", async () => {
