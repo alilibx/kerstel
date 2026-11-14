@@ -253,7 +253,7 @@
 </tr>
 <tr>
 <td><code>kerstel sync server manage &lt;ssh-host&gt;</code></td>
-<td>Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here. If this device looks after a server on another host, it asks first, and the default is no; while this device is still setting one up, it refuses.</td>
+<td>Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here. If this device looks after a server on another host, it asks first, and the default is no; while this device is still setting one up, it refuses. It refuses a server started by hand, which has no install ID.</td>
 </tr>
 <tr>
 <td><code>kerstel sync server stop</code></td>

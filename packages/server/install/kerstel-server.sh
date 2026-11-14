@@ -749,8 +749,8 @@ server_value() {
 }
 
 # Waits up to 30 seconds for the server's first start, which makes the token
-# file and the TLS key that the value needs, and then, in the same 30
-# seconds, for the server to answer.
+# file and the TLS key that the value needs, and then up to 15 more for the
+# server to answer.
 wait_for_value() {
   tries=0
   while :; do
@@ -787,14 +787,13 @@ answers() {
   if command -v curl >/dev/null 2>&1; then
     curl -fsSk --max-time 2 -o /dev/null "$1" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --no-check-certificate -T 2 -O /dev/null "$1" 2>/dev/null
+    wget -q --no-check-certificate -T 2 -t 1 -O /dev/null "$1" 2>/dev/null
   else
     server_running
   fi
 }
 
-# Waits, with the tries wait_for_value left, for the server to answer
-# /v1/health on its port. A server with a domain answers only at that name,
+# Waits up to 15 seconds for the server to answer /v1/health on its port. A server with a domain answers only at that name,
 # so there it must be running.
 wait_answering() {
   case "$REACH" in
@@ -802,6 +801,7 @@ wait_answering() {
     tailscale) health="http://127.0.0.1:$PORT/v1/health" ;;
     *) health="" ;;
   esac
+  tries=0
   while :; do
     if [ -n "$health" ]; then
       if answers "$health"; then return 0; fi
@@ -809,7 +809,7 @@ wait_answering() {
       return 0
     fi
     tries=$((tries + 1))
-    if [ "$tries" -ge 30 ]; then
+    if [ "$tries" -ge 15 ]; then
       if [ -n "$health" ]; then die "kerstel-server started, but it is not answering on port $PORT. $(logs_hint)"; fi
       die "kerstel-server is not running. $(logs_hint)"
     fi

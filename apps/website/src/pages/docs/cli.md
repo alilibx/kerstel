@@ -88,7 +88,7 @@ Once sync is on, it runs in the background too. After `set`, `rm`, `init`, `move
 | `kerstel sync server` | Show the server this device set up: its address (and others, if there are several), whether it answers, its version, and how and where it was installed. On a device that did not set it up, it names `sync server manage`. |
 | `kerstel sync server update` | Update the server to this Kerstel's version. For a server set up with a pasted command, print the command to run on the server. |
 | `kerstel sync server address <url>` | Use the server's new address on this device. It keeps the pin, and saves the address only when the server there answers with the pinned key and lists this device. Run it on each device. |
-| `kerstel sync server manage <ssh-host>` | Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here. If this device looks after a server on another host, it asks first, and the default is no; while this device is still setting one up, it refuses. |
+| `kerstel sync server manage <ssh-host>` | Take over a server another device set up. Over SSH it checks that the server there is the one this vault syncs with, then saves the record here. If this device looks after a server on another host, it asks first, and the default is no; while this device is still setting one up, it refuses. It refuses a server started by hand, which has no install ID. |
 | `kerstel sync server stop` | Stop the server and keep its data. |
 | `kerstel sync server remove` | Remove the server. It asks first, and asks again before it deletes the database; the default is to keep it. Needs a terminal. |
 
