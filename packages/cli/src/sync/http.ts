@@ -337,6 +337,13 @@ async function send<T>(doFetch: Fetch, server: string, method: string, path: str
   return (text === "" ? undefined : JSON.parse(text)) as T;
 }
 
+/** What `GET /v1/health` answers. */
+export interface Health {
+  ok: boolean;
+  version: string;
+  protocol: number;
+}
+
 const encode = (body: unknown): Uint8Array | null => (body === undefined ? null : new TextEncoder().encode(JSON.stringify(body)));
 
 export function syncClient(options: ClientOptions) {
@@ -364,6 +371,10 @@ export function syncClient(options: ClientOptions) {
   return {
     /** The address that answered, or null before one has. */
     address: server.address,
+    /** `GET /v1/health`: unsigned, through the same addresses and pin. */
+    health() {
+      return server.send((url, doFetch) => send<Health>(doFetch, url, "GET", "/health", null, {}));
+    },
     createVault(body: CreateVaultBody, enrollToken: string | null) {
       return call<{ epoch: number; head: number }>("POST", "/vaults", body, enrollToken ? { [HEADERS.enrollToken]: enrollToken } : {});
     },

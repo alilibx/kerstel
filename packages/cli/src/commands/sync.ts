@@ -61,6 +61,7 @@ import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 import { parseServerValue } from "../sync/server-value";
 import { runWizard } from "../sync/wizard";
+import { syncServerCommand } from "./sync-server";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
@@ -102,7 +103,13 @@ const USAGE = `Usage:
   ${cliName()} sync add-device              Show a one-time line to pair another device
   ${cliName()} sync join [<value>]          Join a synced vault from this device
   ${cliName()} sync remove-device <name>    Remove a device and replace the sync key
-  ${cliName()} sync off [--delete-vault]    Stop syncing this device`;
+  ${cliName()} sync off [--delete-vault]    Stop syncing this device
+  ${cliName()} sync server                    The server's address, whether it answers, its version
+  ${cliName()} sync server update             Update the server to this Kerstel's version
+  ${cliName()} sync server address <url>      Use the server's new address on this device
+  ${cliName()} sync server manage <ssh-host>  Look after the server from this device
+  ${cliName()} sync server stop               Stop the server and keep its data
+  ${cliName()} sync server remove             Remove the server; asks before deleting its data`;
 
 function thisDevice(deps: SyncDeps): { name: string; platform: string } {
   const platform = process.platform === "darwin" ? "macOS" : process.platform === "linux" ? "Linux" : process.platform;
@@ -168,7 +175,7 @@ function isUnpinnedSelfSigned(error: unknown): boolean {
 
 const emptyReport = (): SyncReport => ({ applied: [], pushed: [], conflicts: [], backups: [] });
 
-const isInteractive = (deps: SyncDeps) => deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+export const isInteractive = (deps: SyncDeps) => deps.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
 
 /**
  * Asks `check` until it returns something, for as long as a pairing slot
@@ -206,7 +213,7 @@ const BACKGROUND_LOCK_WAIT_MS = 2 * 60_000;
  * background one never pull, push or rotate at the same time. Closing the
  * vault releases the lock.
  */
-function lockedOpen(open: () => Promise<CliContext>): () => Promise<CliContext> {
+export function lockedOpen(open: () => Promise<CliContext>): () => Promise<CliContext> {
   return async () => {
     const ctx = await open();
     const lock = syncLockPath(ctx.vault.file);
@@ -240,6 +247,7 @@ export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<
   if (sub === "add-device") return addDevice(rest, deps, open);
   if (sub === "join") return join(rest, deps, open);
   if (sub === "remove-device") return removeDevice(rest, deps, open);
+  if (sub === "server") return syncServerCommand(rest, deps);
   if (sub === "--help" || sub === "help") {
     console.log(USAGE);
     return 0;
@@ -444,7 +452,7 @@ function contextFor(ctx: CliContext, deps: SyncDeps): SyncContext | null {
   return { vault: ctx.vault, dataKey: ctx.dataKey, config, client: clientFor(config, deps) };
 }
 
-const notOn = () => info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup <url>.`);
+export const notOn = () => info(`Sync is off for this vault. Turn it on with ${cliName()} sync setup <url>.`);
 
 // ---- The pull timer ---------------------------------------------------------
 // Every call goes through these, so a timer that throws never fails a sync.
