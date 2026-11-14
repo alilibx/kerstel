@@ -98,6 +98,9 @@ export async function resolvesHere(name: string): Promise<boolean> {
   }
 }
 
+/** A server value, and so a device, holds at most this many addresses. */
+export const MAX_ADDRESSES = 4;
+
 export async function defaultAddresses(
   facts: HostFacts,
   o: { port: number; resolves?: (name: string) => Promise<boolean> },
@@ -106,17 +109,18 @@ export async function defaultAddresses(
   const publicIp = facts.ipv4.find(isPublicIpv4);
   if (publicIp) return { kind: "vps", addresses: [url(publicIp)], warn: null };
 
-  const lan = facts.ipv4.filter((ip) => !ip.startsWith("127.")).map(url);
+  // Link-local addresses change with every boot, so no device should store one.
+  const lan = facts.ipv4.filter((ip) => !ip.startsWith("127.") && !ip.startsWith("169.254.")).map(url);
   const label = facts.hostname.replace(/\.local$/i, "").split(".")[0] ?? "";
   if (label) {
     const name = `${label}.local`;
     if (await (o.resolves ?? resolvesHere)(name)) {
-      return { kind: "home", addresses: [url(name), ...lan], warn: null };
+      return { kind: "home", addresses: [url(name), ...lan].slice(0, MAX_ADDRESSES), warn: null };
     }
   }
   return {
     kind: "home",
-    addresses: lan,
+    addresses: lan.slice(0, MAX_ADDRESSES),
     warn: `No name for this host resolves here, so devices use its IP address. Reserve that address in your router: if it changes, run ${cliName()} sync server address on each device.`,
   };
 }

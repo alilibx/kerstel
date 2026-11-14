@@ -148,6 +148,23 @@ describe("defaultAddresses", () => {
     expect(out.warn).toContain("sync server address on each device.");
   });
 
+  test("a home box never offers a link-local address, and offers at most four", async () => {
+    const facts = { ...base, ipv4: ["169.254.7.7", "192.168.1.20", "10.0.0.2", "172.17.0.1", "100.100.1.1", "192.168.2.1"] };
+    expect((await defaultAddresses(facts, { port: 8787, resolves: no })).addresses).toEqual([
+      "https://192.168.1.20:8787",
+      "https://10.0.0.2:8787",
+      "https://172.17.0.1:8787",
+      "https://100.100.1.1:8787",
+    ]);
+    expect((await defaultAddresses(facts, { port: 8787, resolves: yes })).addresses).toEqual([
+      "https://nas.local:8787",
+      "https://192.168.1.20:8787",
+      "https://10.0.0.2:8787",
+      "https://172.17.0.1:8787",
+    ]);
+    expect((await defaultAddresses({ ...base, ipv4: ["169.254.7.7"] }, { port: 8787, resolves: no })).addresses).toEqual([]);
+  });
+
   test("CGNAT counts as private", async () => {
     const facts = { ...base, ipv4: ["100.64.0.1", "100.127.255.254"] };
     expect((await defaultAddresses(facts, { port: 8787, resolves: no })).kind).toBe("home");

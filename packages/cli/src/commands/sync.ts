@@ -60,6 +60,7 @@ import type { Vault } from "../vault/store";
 import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
 import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 import { parseServerValue } from "../sync/server-value";
+import { runWizard } from "../sync/wizard";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
@@ -278,33 +279,17 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     else if (arg.startsWith("-")) usageError = true;
     else urls.push(arg);
   }
+  // A bare `setup` on a terminal is the wizard; without one, it is the usage line.
+  if (args.length === 0 && isInteractive(deps)) return runWizard(await open(), deps);
   if (usageError || (valueFromStdin && (urls.length > 0 || pinText !== null)) || (!valueFromStdin && urls.length !== 1)) {
-    // Until the wizard lands, a bare `setup` prints the usage line, with or without a terminal.
     fail(SETUP_USAGE());
     return 2;
   }
 
   if (valueFromStdin) {
-    const value = parseServerValue(await readStdinLine(deps));
-    if (value === "newer") {
-      fail(`That server value is from a newer Kerstel. Update this device with ${cliName()} update, then run it again.`);
-      return 2;
-    }
-    if (value === "malformed") {
-      fail(`That is not a server value, or it was cut short. Copy the whole ks-server1-… value the server printed.`);
-      return 2;
-    }
-    const servers = value.urls.map(normaliseServerUrl);
-    const unsafe = servers.find((url) => !isSafeServerUrl(url));
-    if (unsafe !== undefined) {
-      fail(`${unsafe} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
-      return 2;
-    }
-    if (value.pin && !servers.every(isHttps)) {
-      fail(PIN_NEEDS_HTTPS);
-      return 2;
-    }
-    return enableSync(await open(), { servers, pin: value.pin, token: value.token, yes, deps });
+    const target = serverValueTarget(await readStdinLine(deps));
+    if (target === null) return 2;
+    return enableSync(await open(), { ...target, yes, deps });
   }
 
   const server = normaliseServerUrl(urls[0]!);
@@ -324,6 +309,33 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     return 2;
   }
   return enableSync(await open(), { servers: [server], pin, token: null, yes, deps });
+}
+
+/**
+ * The servers, pin and enroll token in a server value (`ks-server1-…`), or
+ * null after saying why it cannot be used. Never prints the value or its token.
+ */
+export function serverValueTarget(text: string): { servers: string[]; pin: Buffer | null; token: string } | null {
+  const value = parseServerValue(text);
+  if (value === "newer") {
+    fail(`That server value is from a newer Kerstel. Update this device with ${cliName()} update, then run it again.`);
+    return null;
+  }
+  if (value === "malformed") {
+    fail(`That is not a server value, or it was cut short. Copy the whole ks-server1-… value the server printed.`);
+    return null;
+  }
+  const servers = value.urls.map(normaliseServerUrl);
+  const unsafe = servers.find((url) => !isSafeServerUrl(url));
+  if (unsafe !== undefined) {
+    fail(`${unsafe} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+    return null;
+  }
+  if (value.pin && !servers.every(isHttps)) {
+    fail(PIN_NEEDS_HTTPS);
+    return null;
+  }
+  return { servers, pin: value.pin, token: value.token };
 }
 
 /**

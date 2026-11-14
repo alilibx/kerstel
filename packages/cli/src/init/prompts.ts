@@ -16,6 +16,8 @@ export interface TextOptions {
   secret?: boolean;
   /** The CLI flag that would supply this answer non-interactively. */
   flag?: string;
+  /** Text the answer starts with, for the user to keep or edit. Not for a secret. */
+  initial?: string;
 }
 
 export interface Choice<T extends string> {
@@ -97,7 +99,7 @@ export class ClackPrompter implements Prompter {
     // drawn as a mask, never echoed. Same guarantee as the old readline mute.
     const answer = options.secret
       ? await clack.password({ message: question, mask: "•" })
-      : await clack.text({ message: question });
+      : await clack.text({ message: question, initialValue: options.initial });
     return settled<string>(answer).trim();
   }
 }
