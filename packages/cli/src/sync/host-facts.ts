@@ -1,4 +1,4 @@
-import { lookup } from "node:dns/promises";
+import { lookup, resolve4 } from "node:dns/promises";
 import { cliName } from "../ui/cli-name";
 
 export interface HostFacts {
@@ -79,23 +79,29 @@ export function isPublicIpv4(ip: string): boolean {
   return true;
 }
 
-/** True when `name` resolves from this device within 2 seconds. Never throws. */
-export async function resolvesHere(name: string): Promise<boolean> {
+/** What `work` answers, or `fallback` when it fails or takes longer than `ms`. Never throws. */
+export async function resolveWithin<T>(work: () => Promise<T>, fallback: T, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const timeout = new Promise<false>((done) => {
-      timer = setTimeout(() => done(false), 2000);
+    const timeout = new Promise<T>((done) => {
+      timer = setTimeout(() => done(fallback), ms);
     });
-    const found = lookup(name).then(
-      () => true as const,
-      () => false as const,
-    );
-    return await Promise.race([found, timeout]);
+    return await Promise.race([work().catch(() => fallback), timeout]);
   } catch {
-    return false;
+    return fallback;
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** True when `name` resolves from this device within 2 seconds. Never throws. */
+export function resolvesHere(name: string): Promise<boolean> {
+  return resolveWithin(() => lookup(name).then(() => true), false, 2000);
+}
+
+/** The IPv4 addresses (A records) of `name`, or none when it does not resolve within 5 seconds. Never throws. */
+export function resolveIpv4(name: string): Promise<string[]> {
+  return resolveWithin(() => resolve4(name), [], 5000);
 }
 
 /** A server value, and so a device, holds at most this many addresses. */

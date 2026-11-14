@@ -145,6 +145,7 @@ async function wizard(d: Device, answers: string[], deps: Partial<WizardDeps> = 
       timer: fakeTimer,
       resolves: async () => false,
       resolveAll: async () => [],
+      releaseFound: async () => true,
       hostFor: () => {
         throw new Error("this test runs no host");
       },
@@ -208,7 +209,8 @@ describe("the setup wizard", () => {
 
     expect(out).toContain("Server running on ali@homebox, restarts on reboot");
     expect(out).toContain("Synced 1 secret.");
-    expect(out).toContain(`Add your other devices with:  ${CLI} sync add-device`);
+    // enableSync's own hint, once.
+    expect(out.split(`sync add-device`).length - 1).toBe(1);
     expect(record).toMatchObject({ route: "ssh", host: "ali@homebox", runtime: "docker", reach: "self", version: VERSION, finished: true });
     const config = syncedTo(d)!;
     expect(config.servers).toEqual([s.listener.url]);
@@ -385,7 +387,10 @@ describe("the setup wizard", () => {
     // A server value: its URLs, pin and token.
     const s = server();
     const a = device();
-    const byValue = await wizard(a, ["existing", s.value]);
+    const byValue = await wizard(a, ["existing", s.value, "yes"]);
+    // Today's setup: the summary, then the question before uploading.
+    expect(byValue.prompter.asked.at(-1)).toBe("Upload the vault?");
+    expect(byValue.out).toContain(`  Certificate  pinned (`);
     expect(byValue.code).toBe(0);
     expect(byValue.prompter.texts.get("Server address, or paste a server value")!.secret).toBe(true);
     expect(syncedTo(a)!.servers).toEqual([s.listener.url]);
@@ -397,7 +402,7 @@ describe("the setup wizard", () => {
     const app = createApp({ db, version: "test", enrollToken: TOKEN });
     const fetch: Fetch = (request) => app.fetch(request, "127.0.0.1");
     const b = device();
-    const byUrl = await wizard(b, ["existing", "http://127.0.0.1:8787/", TOKEN], { fetch });
+    const byUrl = await wizard(b, ["existing", "http://127.0.0.1:8787/", TOKEN, "yes"], { fetch });
     expect(byUrl.code).toBe(0);
     expect(byUrl.prompter.asked[2]).toBe("Enroll token (leave empty if the server has none)");
     expect(byUrl.prompter.texts.get("Enroll token (leave empty if the server has none)")!.secret).toBe(true);
@@ -406,10 +411,17 @@ describe("the setup wizard", () => {
     // The token from the environment, with no question.
     const c = device();
     process.env.KERSTEL_SYNC_ENROLL_TOKEN = TOKEN;
-    const fromEnv = await wizard(c, ["existing", "http://127.0.0.1:8787"], { fetch });
+    const fromEnv = await wizard(c, ["existing", "http://127.0.0.1:8787", "yes"], { fetch });
     expect(fromEnv.code).toBe(0);
-    expect(fromEnv.prompter.asked).toHaveLength(2);
+    expect(fromEnv.prompter.asked).toEqual(["Where should the sync server run?", "Server address, or paste a server value", "Upload the vault?"]);
     db.close();
+
+    // An answer that is neither stops with 1, and is not repeated.
+    const d = device();
+    const bad = await wizard(d, ["existing", "not a server at all"]);
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("That is not a server address or a server value.");
+    expect(bad.out).not.toContain("not a server at all");
   });
 
   test("a rerun resumes an unfinished install", async () => {
@@ -423,10 +435,12 @@ describe("the setup wizard", () => {
 
     // The host now runs the server the first run started.
     const host = fakeHost({ detected: facts({ installed: "docker", installId: firstId }), value: s.value });
-    const second = await wizard(d, ["ssh", "ali@homebox"], { hostFor: host.hostFor });
+    const second = await wizard(d, ["ssh", "ali@homebox", ""], { hostFor: host.hostFor });
     expect(second.code).toBe(0);
     expect(second.out).toContain("Found the server this device started setting up. Continuing.");
-    expect(second.prompter.asked).toHaveLength(2);
+    // Only the address is asked again, starting from the last one.
+    expect(second.prompter.asked.slice(2)).toEqual(["Address your devices use"]);
+    expect(second.prompter.texts.get("Address your devices use")!.initial).toBe("192.168.1.20");
     const args = host.installs()[0]!.args;
     expect(flag(args, "--install-id")).toBe(firstId);
     expect(flag(args, "--runtime")).toBe("docker");
@@ -504,7 +518,7 @@ describe("the setup wizard", () => {
   test("sync already on says so", async () => {
     const s = server();
     const d = device();
-    expect((await wizard(d, ["existing", s.value])).code).toBe(0);
+    expect((await wizard(d, ["existing", s.value, "yes"])).code).toBe(0);
     const { code, out, prompter } = await wizard(d, []);
     expect(code).toBe(0);
     expect(prompter.asked).toEqual([]);
@@ -519,7 +533,7 @@ describe("the setup wizard", () => {
     const runs = [
       await wizard(device(), ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: host.hostFor }),
       await wizard(device(), ["manual", "docker", "self", "192.168.1.20", s.value]),
-      await wizard(device(), ["existing", s.value]),
+      await wizard(device(), ["existing", s.value, "yes"]),
     ];
     for (const run of runs) {
       expect(run.code).toBe(0);
@@ -534,7 +548,7 @@ describe("the setup wizard", () => {
     }
     // A server that refuses the token does not echo it.
     const wrong = "a-wrong-token-for-the-test";
-    const refused = await wizard(device(), ["existing", encodeServerValue({ urls: [s.listener.url], pin: s.listener.pin, token: wrong })]);
+    const refused = await wizard(device(), ["existing", encodeServerValue({ urls: [s.listener.url], pin: s.listener.pin, token: wrong }), "yes"]);
     expect(refused.code).toBe(1);
     expect(refused.out.includes(wrong)).toBe(false);
   });
@@ -549,34 +563,160 @@ describe("the setup wizard", () => {
     expect(readInstallRecord()).toBeNull();
   });
 
-  test("a dev build needs a release mirror for the installer", async () => {
+  test("a version with no release stops before any change", async () => {
     const host = fakeHost({ detected: facts() });
     const d = device();
     delete process.env.KERSTEL_RELEASES_URL;
+    const checked: string[] = [];
     for (const route of ["ssh", "manual", "local"]) {
-      const { code, out } = await wizard(d, [route], { hostFor: host.hostFor, version: "0.4.0-dev" });
+      const { code, out } = await wizard(d, [route], {
+        hostFor: host.hostFor,
+        version: "0.4.0-dev",
+        releaseFound: async (url) => (checked.push(url), false),
+      });
       expect(code).toBe(1);
-      expect(out).toContain("The server installer needs a released Kerstel, or KERSTEL_RELEASES_URL pointing at a mirror.");
+      expect(out).toContain(
+        "No kerstel-server release v0.4.0-dev was found, so the server can't be installed from this build. Install a released Kerstel, or set KERSTEL_RELEASES_URL to a mirror.",
+      );
     }
+    expect(checked).toEqual(Array(3).fill("https://github.com/alilibx/kerstel/releases/download/v0.4.0-dev/kerstel-server.sh"));
     expect(host.calls).toEqual([]);
     expect(readInstallRecord()).toBeNull();
+  });
 
-    // With a mirror, it installs that version from it.
-    const s = server();
-    const ok = fakeHost({ detected: facts(), value: s.value });
+  test("a mirror is checked and used, and an unreachable one does not block", async () => {
     // A new home sets KERSTEL_RELEASES_URL to a loopback mirror.
-    const e = device();
-    const run = await wizard(e, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: ok.hostFor, version: "0.4.0-dev" });
+    const s = server();
+    const host = fakeHost({ detected: facts(), value: s.value });
+    const d = device();
+    const checked: string[] = [];
+    const run = await wizard(d, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], {
+      hostFor: host.hostFor,
+      version: "0.4.0-dev",
+      releaseFound: async (url) => (checked.push(url), null),
+    });
     expect(run.code).toBe(0);
-    const args = ok.installs()[0]!.args;
+    expect(checked).toEqual(["http://127.0.0.1:9/releases/download/v0.4.0-dev/kerstel-server.sh"]);
+    const args = host.installs()[0]!.args;
     expect(flag(args, "--version")).toBe("0.4.0-dev");
     expect(flag(args, "--releases-url")).toBe("http://127.0.0.1:9");
+  });
+
+  test("an unfinished install is resumed when detect cannot see it", async () => {
+    const s = server();
+    const d = device();
+    const broken = fakeHost({ detected: facts(), install: () => ({ code: 1, lines: [], value: null }) });
+    await wizard(d, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: broken.hostFor });
+    const firstId = readInstallRecord()!.installId;
+
+    // Docker needs a sudo password, which detect never asks for: it reports nothing installed.
+    const host = fakeHost({ detected: facts(), value: s.value });
+    const second = await wizard(d, ["ssh", "ali@homebox", ""], { hostFor: host.hostFor });
+    expect(second.code).toBe(0);
+    expect(second.out).toContain("Continuing the setup this device started on ali@homebox.");
+    expect(flag(host.installs()[0]!.args, "--install-id")).toBe(firstId);
+    expect(flag(host.installs()[0]!.args, "--runtime")).toBe("docker");
+    expect(readInstallRecord()).toMatchObject({ installId: firstId, finished: true });
+  });
+
+  test("an installer that finds another device's server says so", async () => {
+    const d = device();
+    const host = fakeHost({ detected: facts(), install: () => ({ code: 3, lines: [], value: null }) });
+    const { code, out } = await wizard(d, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: host.hostFor });
+    expect(code).toBe(1);
+    expect(out).toContain(
+      `ali@homebox already runs a Kerstel server. If another device syncs with it, run ${CLI} sync add-device there instead.`,
+    );
+    expect(out).not.toContain("The install stopped.");
+    expect(readInstallRecord()).toBeNull();
+  });
+
+  test("a rerun after a failed sync can change the address", async () => {
+    const s = server();
+    const d = device();
+    // The server is up, but this device can't sync: the token in its value is not the server's.
+    const wrong = encodeServerValue({ urls: [s.listener.url], pin: s.listener.pin, token: "a-wrong-token-for-the-test" });
+    const first = fakeHost({ detected: facts(), value: wrong });
+    expect((await wizard(d, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: first.hostFor })).code).toBe(1);
+    const id = readInstallRecord()!.installId;
+    expect(readInstallRecord()).toMatchObject({ started: true, finished: false });
+
+    const host = fakeHost({ detected: facts({ installed: "docker", installId: id }), value: s.value });
+    const second = await wizard(d, ["ssh", "ali@homebox", "homebox.lan"], { hostFor: host.hostFor });
+    expect(second.code).toBe(0);
+    const args = host.installs()[0]!.args;
+    expect(flag(args, "--install-id")).toBe(id);
+    expect(flags(args, "--url")).toEqual(["https://homebox.lan:8787"]);
+    expect(flags(args, "--name")).toEqual(["homebox.lan"]);
+  });
+
+  test("a rerun after a failed sync through a domain offers to change how devices reach it", async () => {
+    const s = server();
+    const d = device();
+    const wrong = encodeServerValue({ urls: [s.listener.url], pin: s.listener.pin, token: "a-wrong-token-for-the-test" });
+    const detected = facts({ ipv4: ["203.0.113.5"] });
+    const first = fakeHost({ detected, value: wrong });
+    const resolveAll = async () => ["203.0.113.5"];
+    await wizard(d, ["ssh", "ali@homebox", "docker", "domain", "sync.example.com"], { hostFor: first.hostFor, resolveAll });
+    const id = readInstallRecord()!.installId;
+
+    const host = fakeHost({ detected: facts({ ipv4: ["203.0.113.5"], installed: "docker", installId: id }), value: s.value });
+    const second = await wizard(d, ["ssh", "ali@homebox", "change", "self", "203.0.113.5"], { hostFor: host.hostFor, resolveAll });
+    expect(second.code).toBe(0);
+    expect(second.prompter.choices.get("Reach it the same way?")!.map((c) => c.label)).toEqual([
+      `Yes, keep ${s.listener.url.replace("https://", "")}`,
+      "Change how devices reach it",
+    ]);
+    const args = host.installs()[0]!.args;
+    expect(flag(args, "--install-id")).toBe(id);
+    expect(flag(args, "--reach")).toBe("self");
+    expect(flags(args, "--url")).toEqual(["https://203.0.113.5:8787"]);
+
+    // A domain install that never started keeps its domain without asking.
+    const e = device();
+    const broken = fakeHost({ detected, install: () => ({ code: 1, lines: [], value: null }) });
+    await wizard(e, ["ssh", "ali@homebox", "docker", "domain", "sync.example.com"], { hostFor: broken.hostFor, resolveAll });
+    const again = fakeHost({ detected, value: s.value });
+    const third = await wizard(e, ["ssh", "ali@homebox"], { hostFor: again.hostFor });
+    expect(third.code).toBe(0);
+    expect(flags(again.installs()[0]!.args, "--url")).toEqual(["https://sync.example.com"]);
+  });
+
+  test("an unfinished install elsewhere is replaced only when the person says so", async () => {
+    const d = device();
+    const broken = fakeHost({ detected: facts(), install: () => ({ code: 1, lines: [], value: null }) });
+    await wizard(d, ["ssh", "ali@homebox", "docker", "self", "192.168.1.20"], { hostFor: broken.hostFor });
+    const oldId = readInstallRecord()!.installId;
+
+    const other = fakeHost({ detected: facts() });
+    const stopped = await wizard(d, ["ssh", "ali@nas", "no"], { hostFor: other.hostFor });
+    expect(stopped.code).toBe(1);
+    expect(stopped.out).toContain(
+      `ali@homebox may still run the server this device started setting up. Run ${CLI} sync server remove first, or continue to set up a new one.`,
+    );
+    expect(stopped.prompter.choices.get("Set up a new server?")!.map((c) => c.value)).toEqual(["no", "yes"]);
+    expect(other.installs()).toEqual([]);
+    expect(readInstallRecord()!.installId).toBe(oldId);
+
+    const s = server();
+    const nas = fakeHost({ detected: facts(), value: s.value });
+    const replaced = await wizard(d, ["ssh", "ali@nas", "yes", "docker", "self", "192.168.1.30"], { hostFor: nas.hostFor });
+    expect(replaced.code).toBe(0);
+    expect(flag(nas.installs()[0]!.args, "--install-id")).not.toBe(oldId);
+    expect(readInstallRecord()).toMatchObject({ host: "ali@nas", finished: true });
+
+    // The manual route asks too.
+    const e = device();
+    await wizard(e, ["local", "docker", "self", "192.168.1.20"], { hostFor: broken.hostFor });
+    const manual = await wizard(e, ["manual", "no"]);
+    expect(manual.code).toBe(1);
+    expect(manual.out).toContain("This machine may still run the server this device started setting up.");
   });
 
   test("setup with no arguments on a terminal runs the wizard", async () => {
     const s = server();
     const d = device();
-    const prompter = new ScriptedPrompter(["existing", s.value]);
+    const prompter = new ScriptedPrompter(["existing", s.value, "yes"]);
     const printed: string[] = [];
     const realLog = console.log;
     console.log = (...args: unknown[]) => void printed.push(args.map(String).join(" "));

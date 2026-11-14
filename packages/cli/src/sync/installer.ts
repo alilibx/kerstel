@@ -56,18 +56,26 @@ export function manualCommandFor(o: ManualCommandFor): string {
   );
 }
 
+/**
+ * Where the release matching `version` publishes `kerstel-server.sh`: under
+ * `releasesUrl`, else `KERSTEL_RELEASES_URL`, else the Kerstel repository.
+ */
+export function installerReleaseUrl(version: string, releasesUrl?: string): string {
+  const base = (releasesUrl ?? process.env.KERSTEL_RELEASES_URL ?? KERSTEL_REPO_URL).replace(/\/$/, "");
+  if (!isSafeReleaseUrl(base)) {
+    throw new Error("The release URL must be https://, or http:// to this machine.");
+  }
+  return `${base}/releases/download/v${version}/kerstel-server.sh`;
+}
+
 /** The paste-able command for the release matching `version`. */
 export function manualCommand(o: {
   version: string;
   args: string[];
   releasesUrl?: string;
 }): string {
-  const base = (o.releasesUrl ?? process.env.KERSTEL_RELEASES_URL ?? KERSTEL_REPO_URL).replace(/\/$/, "");
-  if (!isSafeReleaseUrl(base)) {
-    throw new Error("The release URL must be https://, or http:// to this machine.");
-  }
   return manualCommandFor({
-    url: `${base}/releases/download/v${o.version}/kerstel-server.sh`,
+    url: installerReleaseUrl(o.version, o.releasesUrl),
     sha256: installerSha256(),
     args: o.args,
   });

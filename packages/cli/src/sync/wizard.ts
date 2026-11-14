@@ -1,15 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { resolve4 } from "node:dns/promises";
 import type { CliContext } from "../context";
 import { enableSync, serverValueTarget, type SyncDeps } from "../commands/sync";
-import { CancelledError, ClackPrompter, DefaultsPrompter, type Choice, type Prompter } from "../init/prompts";
+import { CancelledError, ClackPrompter, type Choice, DefaultsPrompter, type Prompter } from "../init/prompts";
 import { fail, info, ok, yellow } from "../output";
 import { isSafeReleaseUrl } from "../update/release-source";
 import { cliName } from "../ui/cli-name";
 import { VERSION } from "../version";
-import { MAX_ADDRESSES, defaultAddresses, parseHostFacts, type HostFacts } from "./host-facts";
-import { readInstallRecord, writeInstallRecord, type InstallRecord } from "./install-record";
-import { manualCommand } from "./installer";
+import { MAX_ADDRESSES, defaultAddresses, parseHostFacts, resolveIpv4, type HostFacts } from "./host-facts";
+import { readInstallRecord, removeInstallRecord, writeInstallRecord, type InstallRecord } from "./install-record";
+import { installerReleaseUrl, manualCommand } from "./installer";
 import { localHost, sshHost, type Host } from "./remote";
 import { isSafeServerUrl, loadSync, normaliseServerUrl } from "./state";
 
@@ -26,6 +25,8 @@ export interface WizardDeps extends SyncDeps {
   resolves?: (name: string) => Promise<boolean>;
   /** A name's IPv4 addresses (A records), for the domain check. */
   resolveAll?: (name: string) => Promise<string[]>;
+  /** Whether a release asset exists at `url`: true or false from the server's answer, null when it can't be reached. */
+  releaseFound?: (url: string) => Promise<boolean | null>;
   /** For tests: the version installed, in place of this CLI's. */
   version?: string;
 }
@@ -34,13 +35,17 @@ type Route = "ssh" | "manual" | "local";
 type Runtime = InstallRecord["runtime"];
 type Reach = InstallRecord["reach"];
 
-/** What the person chose: everything the install needs but its version. */
-interface Plan {
-  installId: string;
-  runtime: Runtime;
+/** How devices reach the server. */
+interface Reached {
   reach: Reach;
   /** The addresses devices use. Empty for Tailscale on the manual route: the installer finds the name. */
   addresses: string[];
+}
+
+/** What the person chose: everything the install needs but its version. */
+interface Plan extends Reached {
+  installId: string;
+  runtime: Runtime;
 }
 
 /** Where a device sends its vault: from a server value, or an address and token. */
@@ -53,7 +58,16 @@ interface Target {
 /** The port a pinned or Tailscale server listens on. A domain uses 443. */
 const PORT = 8787;
 
+/** `https://…`, `http://…`: a URL rather than a bare name. */
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/** The installer's exit code when the host runs a server another device set up. */
+const ANOTHER_DEVICES_SERVER = 3;
+
 const STOPPED = () => `The install stopped. Run ${cliName()} sync setup again to continue.`;
+
+const SOMEONE_ELSES = (label: string) =>
+  `${capitalised(label)} already runs a Kerstel server. If another device syncs with it, run ${cliName()} sync add-device there instead.`;
 
 const warn = (message: string) => console.log(yellow(`!  ${message}`));
 
@@ -82,9 +96,10 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
 
     if (route === "existing") {
       const target = await existingServer(prompter);
-      if (target === null) return 2;
+      if (target === null) return 1;
       handedOver = true;
-      return await enableSync(ctx, { ...target, yes: true, deps: withoutQuestions(deps) });
+      // Today's `setup`: the summary, and the question before uploading.
+      return await enableSync(ctx, { ...target, yes: false, deps: { ...deps, prompter } });
     }
 
     const version = deps.version ?? VERSION;
@@ -93,9 +108,13 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
       fail("KERSTEL_RELEASES_URL must be https://, or http:// to this machine.");
       return 1;
     }
-    // A dev build has no published image or binary to install.
-    if (releasesUrl === null && version.includes("-dev")) {
-      fail("The server installer needs a released Kerstel, or KERSTEL_RELEASES_URL pointing at a mirror.");
+    // The installer fetches this version's image or binary: a build with no release has none.
+    // A release source that can't be reached at all doesn't stop it: the install fails later if it must.
+    if ((await (deps.releaseFound ?? releaseFound)(installerReleaseUrl(version))) === false) {
+      fail(
+        `No kerstel-server release v${version} was found, so the server can't be installed from this build. ` +
+          "Install a released Kerstel, or set KERSTEL_RELEASES_URL to a mirror.",
+      );
       return 1;
     }
 
@@ -103,6 +122,7 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
     let record: InstallRecord;
     if (route === "manual") {
       const plan = await askManual(prompter, version);
+      if (typeof plan === "number") return plan;
       record = { ...plan, route, host: null, version, finished: false };
       writeInstallRecord(record);
       installing = true;
@@ -116,6 +136,7 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
         return 1;
       }
       target = pasted;
+      record = started(record, target);
       ok("Server running, restarts on reboot");
     } else {
       // The installer's output is held back while it only reports what it found.
@@ -148,29 +169,35 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
       }
       if (route === "local") info("A server on this machine is reachable only while this machine is on.");
 
-      const plan = await planForHost(prompter, deps, { label: host.label, facts, version });
+      const plan = await planForHost(prompter, deps, { route, target: sshTarget, label: host.label, facts, version });
       if (typeof plan === "number") return plan;
       record = { ...plan, route, host: sshTarget, version, finished: false };
       writeInstallRecord(record);
       installing = true;
       const run = await host.run(installArgs(plan, version, releasesUrl), { interactive: true });
+      if (run.code === ANOTHER_DEVICES_SERVER) {
+        // Nothing of this device's is on the host, so there is nothing to resume.
+        removeInstallRecord();
+        info(SOMEONE_ELSES(host.label));
+        return 1;
+      }
       const value = run.code === 0 && run.value !== null ? serverValueTarget(run.value) : null;
       if (value === null) {
         fail(STOPPED());
         return 1;
       }
       target = value;
+      record = started(record, target);
       ok(`Server running on ${host.label}, restarts on reboot`);
     }
 
     handedOver = true;
-    const code = await enableSync(ctx, { ...target, yes: true, deps: withoutQuestions(deps) });
+    const code = await enableSync(ctx, { ...target, yes: true, deps: { ...deps, prompter: new DefaultsPrompter() } });
     if (code !== 0) {
       info(`Run ${cliName()} sync setup again to continue.`);
       return code;
     }
-    writeInstallRecord({ ...record, addresses: target.servers, finished: true });
-    console.log(`Add your other devices with:  ${cliName()} sync add-device`);
+    writeInstallRecord({ ...record, finished: true });
     return 0;
   } catch (error) {
     if (error instanceof CancelledError) {
@@ -183,9 +210,21 @@ export async function runWizard(ctx: CliContext, deps: WizardDeps): Promise<numb
   }
 }
 
-/** The person already chose to set up, so `enableSync` asks nothing. */
-function withoutQuestions(deps: SyncDeps): SyncDeps {
-  return { ...deps, prompter: new DefaultsPrompter() };
+/** Records that the server answered with its value: a failure from here on is this device's sync. */
+function started(record: InstallRecord, target: Target): InstallRecord {
+  const next = { ...record, addresses: target.servers, started: true };
+  writeInstallRecord(next);
+  return next;
+}
+
+/** HEAD on the release asset, for 5 seconds. Null when nothing answers. */
+async function releaseFound(url: string): Promise<boolean | null> {
+  try {
+    const response = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(5000) });
+    return response.ok;
+  } catch {
+    return null;
+  }
 }
 
 // ---- The installer's command line -------------------------------------------
@@ -214,7 +253,7 @@ const newInstallId = () => randomBytes(16).toString("base64url");
 async function existingServer(prompter: Prompter): Promise<Target | null> {
   const answer = (await prompter.text("Server address, or paste a server value", { secret: true })).trim();
   if (answer.startsWith("ks-server")) return serverValueTarget(answer);
-  const url = normaliseServerUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(answer) ? answer : `https://${answer}`);
+  const url = normaliseServerUrl(HAS_SCHEME.test(answer) ? answer : `https://${answer}`);
   // The answer is never repeated: it was typed at a hidden prompt, and may be a secret pasted by mistake.
   if (!answer || !isSafeServerUrl(url)) {
     fail("That is not a server address or a server value. Use https://, or http:// to this machine.");
@@ -245,11 +284,34 @@ async function pastedValue(prompter: Prompter): Promise<Target | null> {
   }
 }
 
-/** The manual route: every question detection would have answered. */
-async function askManual(prompter: Prompter, version: string): Promise<Plan> {
+/**
+ * Whether to set up a new server when this device has an unfinished one
+ * elsewhere, which the new record would forget. Asks, and No is the default.
+ */
+async function replacesUnfinished(prompter: Prompter, record: InstallRecord): Promise<boolean> {
+  const where = record.host ?? (record.route === "local" ? "This machine" : "The server you ran the install command on");
+  warn(
+    `${where} may still run the server this device started setting up. Run ${cliName()} sync server remove first, or continue to set up a new one.`,
+  );
+  const answer = await prompter.select(
+    "Set up a new server?",
+    [
+      { value: "no", label: "No, stop without changes" },
+      { value: "yes", label: "Yes, set up a new one" },
+    ],
+    "no",
+  );
+  return answer === "yes";
+}
+
+/** The manual route: every question detection would have answered. A number is the exit code when it stops. */
+async function askManual(prompter: Prompter, version: string): Promise<Plan | number> {
   // A rerun prints the same install ID, so the installer on the server continues the first run.
   const record = readInstallRecord();
-  const installId = record?.route === "manual" ? record.installId : newInstallId();
+  let installId: string;
+  if (record?.route === "manual") installId = record.installId;
+  else if (record !== null && !record.finished && !(await replacesUnfinished(prompter, record))) return 1;
+  else installId = newInstallId();
   const runtime = await askRuntime(prompter, "systemd or launchd", version);
   const reach = await askReach(prompter, "Tailscale (the server's name on your tailnet)");
   if (reach === "domain") return { installId, runtime, reach, addresses: [`https://${await askDomain(prompter)}`] };
@@ -257,45 +319,88 @@ async function askManual(prompter: Prompter, version: string): Promise<Plan> {
     info("Every device that syncs must be on your tailnet.");
     return { installId, runtime, reach, addresses: [] };
   }
-  return { installId, runtime, reach, addresses: await askAddresses(prompter, []) };
+  return { installId, runtime, reach, addresses: await askAddresses(prompter, [], { found: false }) };
 }
 
 /** The `ssh` and `local` routes, from what `detect` found. A number is the exit code when it stops. */
 async function planForHost(
   prompter: Prompter,
   deps: WizardDeps,
-  o: { label: string; facts: HostFacts; version: string },
+  o: { route: "ssh" | "local"; target: string | null; label: string; facts: HostFacts; version: string },
 ): Promise<Plan | number> {
-  const { label, facts, version } = o;
-  if (facts.installed !== null) {
-    const record = readInstallRecord();
-    if (record !== null && facts.installId !== null && record.installId === facts.installId) {
-      info("Found the server this device started setting up. Continuing.");
-      return { installId: record.installId, runtime: facts.installed, reach: record.reach, addresses: record.addresses };
-    }
-    info(
-      `${capitalised(label)} already runs a Kerstel server. If another device syncs with it, run ${cliName()} sync add-device there instead.`,
-    );
+  const { label, facts } = o;
+  const record = readInstallRecord();
+  const ours = record !== null && facts.installId !== null && record.installId === facts.installId;
+  if (facts.installed !== null && !ours) {
+    info(SOMEONE_ELSES(label));
     await prompter.select("What next?", [{ value: "stop", label: "Stop without changes" }], "stop");
     return 1;
   }
+  // `detect` can miss this device's install: it never asks for a sudo password, and Docker may need one.
+  const unfinishedHere = record !== null && !record.finished && record.route === o.route && record.host === o.target;
+  if (record !== null && (ours || unfinishedHere)) {
+    info(ours ? "Found the server this device started setting up. Continuing." : `Continuing the setup this device started on ${label}.`);
+    return resumedPlan(prompter, deps, { record, runtime: facts.installed ?? record.runtime, label, facts });
+  }
+  if (record !== null && !record.finished && !(await replacesUnfinished(prompter, record))) return 1;
 
   let runtime: Runtime = "service";
   if (facts.docker) {
-    runtime = await askRuntime(prompter, facts.os === "darwin" ? "launchd" : "systemd", version);
+    runtime = await askRuntime(prompter, facts.os === "darwin" ? "launchd" : "systemd", o.version);
   } else if (facts.os === "linux" && !facts.systemd) {
     fail(`${capitalised(label)} has neither Docker nor systemd, so kerstel-server cannot run there. Install Docker, then run ${cliName()} sync setup again.`);
     return 1;
   } else {
     info(`No Docker on ${label}, so the server runs as a service.`);
   }
+  const reached = await askHowReached(prompter, deps, { label, facts });
+  if (typeof reached === "number") return reached;
+  return { installId: newInstallId(), runtime, ...reached };
+}
 
+/**
+ * A rerun of the install this device started, with its install ID. A pinned
+ * server's addresses are asked again, starting from the last ones. A domain or
+ * Tailscale stays as it was, unless this device could not sync through it.
+ */
+async function resumedPlan(
+  prompter: Prompter,
+  deps: WizardDeps,
+  o: { record: InstallRecord; runtime: Runtime; label: string; facts: HostFacts },
+): Promise<Plan | number> {
+  const { record } = o;
+  const kept = { installId: record.installId, runtime: o.runtime };
+  if (record.reach === "self") {
+    return { ...kept, reach: "self", addresses: await askAddresses(prompter, record.addresses, { found: false }) };
+  }
+  if (record.started === true) {
+    const shown = record.addresses.map(shortAddress).join(", ");
+    info(`Last time, this device could not sync through ${shown}.`);
+    const next = await prompter.select(
+      "Reach it the same way?",
+      [
+        { value: "keep", label: `Yes, keep ${shown}` },
+        { value: "change", label: "Change how devices reach it" },
+      ],
+      "keep",
+    );
+    if (next === "change") {
+      const reached = await askHowReached(prompter, deps, { label: o.label, facts: o.facts });
+      if (typeof reached === "number") return reached;
+      return { ...kept, ...reached };
+    }
+  }
+  return { ...kept, reach: record.reach, addresses: record.addresses };
+}
+
+/** How devices reach a server on a host `detect` described. A number is the exit code when it stops. */
+async function askHowReached(prompter: Prompter, deps: WizardDeps, o: { label: string; facts: HostFacts }): Promise<Reached | number> {
+  const { label, facts } = o;
   const tailnetName = facts.tailscale?.replace(/\.$/, "") || null;
   const reach = await askReach(prompter, tailnetName ? `Tailscale (${tailnetName}, found on this host)` : null);
-  const installId = newInstallId();
   if (reach === "tailscale") {
     info("Every device that syncs must be on your tailnet.");
-    return { installId, runtime, reach, addresses: [`https://${tailnetName}`] };
+    return { reach, addresses: [`https://${tailnetName}`] };
   }
   if (reach === "domain") {
     const domain = await askDomain(prompter);
@@ -312,11 +417,11 @@ async function planForHost(
       );
       if (go !== "continue") return 1;
     }
-    return { installId, runtime, reach, addresses: [`https://${domain}`] };
+    return { reach, addresses: [`https://${domain}`] };
   }
   const found = await defaultAddresses(facts, { port: PORT, resolves: deps.resolves });
   if (found.warn && found.addresses.length > 0) warn(found.warn);
-  return { installId, runtime, reach, addresses: await askAddresses(prompter, found.addresses) };
+  return { reach, addresses: await askAddresses(prompter, found.addresses, { found: true }) };
 }
 
 // ---- Questions ----------------------------------------------------------------
@@ -351,17 +456,17 @@ async function askDomain(prompter: Prompter): Promise<string> {
 }
 
 /**
- * The addresses devices use, comma-separated. With `found`, the question
- * shows them, starts from them, and an empty answer keeps them. Without, an
- * empty answer is asked again.
+ * The addresses devices use, comma-separated. With `defaults`, the answer
+ * starts from them and an empty answer keeps them; the question names them
+ * when they were `found` on the host. Without, an empty answer is asked again.
  */
-async function askAddresses(prompter: Prompter, found: string[]): Promise<string[]> {
-  const shown = found.map(shortAddress).join(", ");
-  const question = found.length > 0 ? `Address your devices use (found ${shown})` : "Address your devices use";
+async function askAddresses(prompter: Prompter, defaults: string[], o: { found: boolean }): Promise<string[]> {
+  const shown = defaults.map(shortAddress).join(", ");
+  const question = o.found && defaults.length > 0 ? `Address your devices use (found ${shown})` : "Address your devices use";
   for (;;) {
-    const answer = (await prompter.text(question, found.length > 0 ? { initial: shown } : {})).trim();
+    const answer = (await prompter.text(question, defaults.length > 0 ? { initial: shown } : {})).trim();
     if (!answer) {
-      if (found.length > 0) return found;
+      if (defaults.length > 0) return defaults;
       fail("Your devices need an address to reach the server, like 192.168.1.20.");
       continue;
     }
@@ -382,7 +487,7 @@ async function askAddresses(prompter: Prompter, found: string[]): Promise<string
 
 /** `https://<host>:8787` for a bare name or IP; an https:// URL as typed. Null for anything else. */
 function addressUrl(text: string): string | null {
-  const bare = !/^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+  const bare = !HAS_SCHEME.test(text);
   let url: URL;
   try {
     url = new URL(bare ? `https://${text}` : text);
@@ -413,17 +518,4 @@ function isSupported(facts: HostFacts): boolean {
 /** A host's label to start a sentence: "This machine", or an SSH target exactly as typed. */
 function capitalised(label: string): string {
   return label === "this machine" ? "This machine" : label;
-}
-
-/** A name's A records, or none when it does not resolve within 5 seconds. Never throws. */
-async function resolveIpv4(name: string): Promise<string[]> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeout = new Promise<string[]>((done) => {
-      timer = setTimeout(() => done([]), 5000);
-    });
-    return await Promise.race([resolve4(name).catch(() => [] as string[]), timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }

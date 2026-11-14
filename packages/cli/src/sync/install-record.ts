@@ -11,6 +11,8 @@ export interface InstallRecord {
   reach: "self" | "domain" | "tailscale";
   addresses: string[];
   version: string;
+  /** The server answered with its value, so a failure after it was this device's sync, not the install. */
+  started?: boolean;
   finished: boolean;
 }
 
@@ -39,6 +41,7 @@ function parseRecord(value: unknown): InstallRecord | null {
     reach: r.reach,
     addresses: [...(r.addresses as string[])],
     version: r.version,
+    ...(r.started === true ? { started: true } : {}),
     finished: r.finished,
   };
 }
