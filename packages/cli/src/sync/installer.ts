@@ -17,7 +17,7 @@ export function installerSha256(): string {
 }
 
 /** `'…'`, with each embedded `'` written as `'\''`. */
-function quote(value: string): string {
+export function quote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
