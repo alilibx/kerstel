@@ -34,7 +34,7 @@ import {
   type SyncReport,
 } from "../sync/engine";
 import { leaveSyncNotice, syncLockPath, tryLockSync, waitForSyncLock } from "../sync/background";
-import { SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
+import { PIN_NEEDS_HTTPS, SyncHttpError, pairingClient, syncClient, type Fetch } from "../sync/http";
 import { encodeJoinValue, parseJoinInput } from "../sync/join-value";
 import { copyToClipboard } from "../clipboard";
 import {
@@ -47,6 +47,7 @@ import {
   saveSync,
   setFullPull,
   SYNC_META,
+  SyncSettingsError,
   writeSync,
   type SyncConfig,
 } from "../sync/state";
@@ -56,6 +57,7 @@ import { vaultPath } from "../paths";
 import { cliName } from "../ui/cli-name";
 import type { Vault } from "../vault/store";
 import { TIMING, isId, isPublicKey, newId } from "../../../server/src/protocol";
+import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
 
 /**
  * `ks sync`: end-to-end encrypted sync of the vault between your own
@@ -84,7 +86,8 @@ export interface SyncDeps {
 const POLL_MS = { addDevice: 2_000, join: 3_000 } as const;
 
 const USAGE = `Usage:
-  ${cliName()} sync setup <url> [--yes]      Turn sync on and upload this vault
+  ${cliName()} sync setup <url> [--pin <pin>] [--yes]
+                                       Turn sync on and upload this vault
   ${cliName()} sync [--keep local|remote] [--reveal]
                                        Pull, push, and settle conflicts
   ${cliName()} sync status                  Server, pending changes, conflicts, last sync
@@ -122,6 +125,38 @@ function explain(error: unknown): string {
     );
   }
   return (error as Error).message;
+}
+
+/**
+ * A pin mismatch before sync is on: the pin given is not this server's, or
+ * something answers in its place. Unlike `PIN_MISMATCH`, there is no sync to turn off.
+ */
+export const PIN_DOES_NOT_MATCH = (server: string): string =>
+  `${server} presented a key that does not match the pin. Check the pin kerstel-server printed when it started (sha256/…). ` +
+  "Otherwise, something between you and the server is answering in its place.";
+
+/**
+ * A pin mismatch while joining: the pin came in the join line, so the person
+ * never saw it. The server may have been set up again since the line was made.
+ */
+export const JOIN_PIN_DOES_NOT_MATCH = (server: string): string =>
+  `${server} presented a key that does not match the one in this join line. If the server was set up again, ` +
+  "set sync up again on the other device and run sync add-device there for a new line. " +
+  "Otherwise, something between you and the server is answering in its place.";
+
+/** `explain`, for `setup` and `join` before they turn sync on; `mismatch` words a pin mismatch. */
+function explainBeforeSync(error: unknown, server: string, mismatch: (server: string) => string = PIN_DOES_NOT_MATCH): string {
+  if (error instanceof SyncHttpError && error.code === "pin_mismatch") return mismatch(server);
+  return explain(error);
+}
+
+/** The codes Bun gives for a self-signed certificate that nothing trusts. */
+const SELF_SIGNED_CODES = new Set(["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN"]);
+
+/** The server's certificate is self-signed and nothing pinned it: likely `kerstel-server --tls self`. */
+function isUnpinnedSelfSigned(error: unknown): boolean {
+  if (!(error instanceof SyncHttpError) || error.code !== "unreachable") return false;
+  return SELF_SIGNED_CODES.has(error.tlsCode ?? "") || /self[- ]signed/i.test(error.message);
 }
 
 const emptyReport = (): SyncReport => ({ applied: [], pushed: [], conflicts: [], backups: [] });
@@ -211,16 +246,36 @@ export async function syncCommand(args: string[], deps: SyncDeps = {}): Promise<
 }
 
 async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
-  const yes = args.includes("--yes");
-  const urls = args.filter((a) => !a.startsWith("-"));
-  const unknown = args.filter((a) => a.startsWith("-") && a !== "--yes");
-  if (urls.length !== 1 || unknown.length > 0) {
-    fail(`Usage: ${cliName()} sync setup <url> [--yes]`);
+  let yes = false;
+  let pinText: string | null = null;
+  const urls: string[] = [];
+  let usageError = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--yes") yes = true;
+    // `--pin --yes` is a missing pin, not a pin spelled "--yes".
+    else if (arg === "--pin" && pinText === null && args[i + 1] !== undefined && !args[i + 1]!.startsWith("-")) pinText = args[++i]!;
+    else if (arg.startsWith("-")) usageError = true;
+    else urls.push(arg);
+  }
+  if (urls.length !== 1 || usageError) {
+    fail(`Usage: ${cliName()} sync setup <url> [--pin <pin>] [--yes]`);
     return 2;
   }
   const server = normaliseServerUrl(urls[0]!);
   if (!isSafeServerUrl(server)) {
     fail(`${urls[0]} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
+    return 2;
+  }
+  const pin = pinText === null ? null : parsePin(pinText);
+  if (pinText !== null && pin === null) {
+    fail(
+      "That is not a certificate pin. It looks like sha256/ followed by 43 letters, digits, - and _, as kerstel-server prints when it starts.",
+    );
+    return 2;
+  }
+  if (pin && !isHttps(server)) {
+    fail(PIN_NEEDS_HTTPS);
     return 2;
   }
 
@@ -235,6 +290,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     const device = thisDevice(deps);
     console.log("Kerstel sync, end-to-end encrypted. The server stores ciphertext only.");
     console.log(`  Server       ${server}`);
+    if (pin) console.log(`  Certificate  pinned (${formatPin(pin)})`);
     console.log(`  Vault        new, ${plural(secrets.length, "secret")} in ${plural(scopes.size, "scope")}`);
     console.log(`  This device  ${device.name} ${dim("(the name is sealed; the server never sees it)")}`);
 
@@ -260,7 +316,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     const deviceId = newId();
     const keys = generateDeviceKeys();
     const syncKey = generateSyncKey();
-    const client = syncClient({ server, vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now });
+    const client = syncClient({ server, vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
     await client.createVault(
       {
         vaultId,
@@ -279,7 +335,7 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
       process.env.KERSTEL_SYNC_ENROLL_TOKEN || null,
     );
 
-    const config = { server, vaultId, deviceId, epoch: 1, syncKey, keys, head: 0 };
+    const config: SyncConfig = { server, pin, vaultId, deviceId, epoch: 1, syncKey, keys, head: 0 };
     saveSync(ctx.vault, ctx.dataKey, config);
     ctx.vault.sync.trackAll();
     const report = emptyReport();
@@ -289,7 +345,10 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
     schedule(ctx.vault, deps);
     return 0;
   } catch (error) {
-    fail(`Sync setup failed: ${explain(error)}`);
+    fail(`Sync setup failed: ${explainBeforeSync(error, server)}`);
+    if (!pin && isUnpinnedSelfSigned(error)) {
+      info("If this server pins its own certificate, pass --pin with the pin kerstel-server printed (sha256/…).");
+    }
     return 1;
   } finally {
     ctx.vault.close();
@@ -305,6 +364,7 @@ export function clientFor(config: SyncConfig, deps: Pick<SyncDeps, "fetch" | "no
     sign: config.keys.sign,
     fetch: deps.fetch,
     now: deps.now,
+    pin: config.pin,
   });
 }
 
@@ -682,6 +742,7 @@ async function status(args: string[], deps: SyncDeps, open: () => Promise<CliCon
     const conflicts = rows.filter((r) => r.conflict).length;
     const { lastOk, lastError } = lastResult(ctx.vault);
     console.log(`Server        ${config.server}`);
+    if (config.pin) console.log(`Certificate   pinned (${formatPin(config.pin)})`);
     console.log(`Last sync     ${when(lastOk)}`);
     console.log(`Pulls         ${pullsLine(ctx.vault, deps)}`);
     console.log(`Pending       ${plural(pending, "change")} to push`);
@@ -740,7 +801,22 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
   }
   const ctx = await open();
   try {
-    const sync = contextFor(ctx, deps);
+    let sync: SyncContext | null;
+    try {
+      sync = contextFor(ctx, deps);
+    } catch (error) {
+      // Any other failure, reading the vault say, leaves sync as it is.
+      if (!(error instanceof SyncSettingsError)) throw error;
+      // Damaged settings name no server or key to leave with. Every other
+      // sync command says to run this one, so it must still turn sync off.
+      forgetSync(ctx.vault);
+      removeTimer(deps);
+      info(
+        "This device's sync settings could not be read, so it could not leave the vault on the server. " +
+          "Sync is off here; your secrets stay here.",
+      );
+      return 0;
+    }
     if (!sync) {
       notOn();
       return 0;
@@ -754,6 +830,21 @@ async function off(args: string[], deps: SyncDeps, open: () => Promise<CliContex
         forgetSync(ctx.vault);
         removeTimer(deps);
         ok("This device was no longer in the synced vault. Sync is off for it; your secrets stay here.");
+        return 0;
+      }
+      if (error instanceof SyncHttpError && error.code === "pin_mismatch") {
+        // Another key answers at the server's address: a server that started again with
+        // new data, or something in its place. Neither can take this device out of the
+        // vault, so leaving waits for nothing.
+        forgetSync(ctx.vault);
+        removeTimer(deps);
+        info(
+          deleteVault
+            ? "The server answered with a key this device does not trust, so the vault on the server was not deleted. " +
+                "Sync is off here; your secrets stay here."
+            : "The server answered with a key this device does not trust, so this device could not remove itself from the vault there. " +
+                `Sync is off here; your secrets stay here. To sync again, run ${cliName()} sync setup and pair your other devices again.`,
+        );
         return 0;
       }
       if (error instanceof SyncHttpError && error.code === "last_device") {
@@ -817,7 +908,7 @@ async function addDevice(args: string[], deps: SyncDeps, open: () => Promise<Cli
     try {
       // The value is a secret while the slot is open: it goes to the terminal
       // and the clipboard's stdin, never to a log or another command's argv.
-      const line = `${cliName()} sync join ${encodeJoinValue({ urls: [sync.config.server], pin: null, secret })}`;
+      const line = `${cliName()} sync join ${encodeJoinValue({ urls: [sync.config.server], pin: sync.config.pin, secret })}`;
       console.log("On the new device, run:");
       console.log("");
       console.log(`  ${line}`);
@@ -958,18 +1049,19 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     }
     return 2;
   }
-  if (input.pin !== null) {
-    // #112 checks the pin; until then a value that carries one is refused, never accepted and then ignored.
-    fail(`That server pins its certificate, which this version of Kerstel can't check. Update this device with ${cliName()} update.`);
-    return 2;
-  }
   const servers = input.urls.map(normaliseServerUrl);
   const unsafe = servers.find((url) => !isSafeServerUrl(url));
   if (unsafe !== undefined) {
     fail(`${unsafe} is not a server Kerstel will send your vault to. Use https://, or http:// to this machine.`);
     return 2;
   }
-  const secret = input.secret;
+  // The older `<url> <code>` form carries no pin. A `ks1-` value may be wrapped over several words.
+  const { pin, secret } = input;
+  const codeForm = !words.some((word) => /^ks\d/i.test(word));
+  if (pin && !servers.every(isHttps)) {
+    fail(PIN_NEEDS_HTTPS);
+    return 2;
+  }
 
   const ctx = await open();
   try {
@@ -987,10 +1079,10 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     // that can't be reached moves on to the next; the first that answers is
     // the one this device polls, joins through and keeps.
     let server = "";
-    let pairing = pairingClient(servers[0]!, deps.fetch);
+    let pairing = pairingClient(servers[0]!, deps.fetch, pin);
     for (const [i, url] of servers.entries()) {
       server = url;
-      pairing = pairingClient(url, deps.fetch);
+      pairing = pairingClient(url, deps.fetch, pin);
       // Named before the request, so the person sees which server each attempt goes to.
       console.log(`Joining the vault on ${url}.`);
       try {
@@ -1001,7 +1093,10 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         if (error instanceof SyncHttpError && (error.code === "not_found" || error.code === "pairing_used")) {
           fail(`That pairing expired or was already used. Run ${cliName()} sync add-device on the other device for a new one.`);
         } else {
-          fail(`Could not join: ${explain(error)}`);
+          fail(`Could not join: ${explainBeforeSync(error, url, JOIN_PIN_DOES_NOT_MATCH)}`);
+          if (codeForm && isUnpinnedSelfSigned(error)) {
+            info(`If this server pins its own certificate, pair with the ks1- line from ${cliName()} sync add-device instead.`);
+          }
         }
         return 1;
       }
@@ -1020,7 +1115,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
         deps,
       );
     } catch (error) {
-      fail(`Could not join: ${explain(error)}`);
+      fail(`Could not join: ${explainBeforeSync(error, server, JOIN_PIN_DOES_NOT_MATCH)}`);
       return 1;
     }
     if (!accepted) {
@@ -1028,12 +1123,12 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
       return 1;
     }
 
-    const client = syncClient({ server, vaultId: accepted.vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now });
+    const client = syncClient({ server, vaultId: accepted.vaultId, deviceId, sign: keys.sign, fetch: deps.fetch, now: deps.now, pin });
     let sealed;
     try {
       sealed = await client.keys();
     } catch (error) {
-      fail(`Could not join: ${explain(error)}`);
+      fail(`Could not join: ${explainBeforeSync(error, server, JOIN_PIN_DOES_NOT_MATCH)}`);
       return 1;
     }
     // The other device made this HMAC with the pairing's secret over the key it
@@ -1054,6 +1149,7 @@ async function join(args: string[], deps: SyncDeps, open: () => Promise<CliConte
     }
     const config: SyncConfig = {
       server,
+      pin,
       vaultId: accepted.vaultId,
       deviceId,
       epoch: sealed.epoch,

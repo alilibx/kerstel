@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+import { createApp } from "../src/app";
+import { openDatabase } from "../src/db";
+import { parseArgs } from "../src/index";
 import { HEADERS, LIMITS, TIMING, newId, signRequest } from "../src/protocol";
 import { Device, addDevice, anonymous, blob, body, harness, vaultWithDevice, type Harness } from "./helpers";
 
@@ -572,5 +576,160 @@ describe("access log labels", () => {
     expect(h.app.routeLabel("GET", "/v1/vaults/not-an-id/records")).toBe("(unknown)");
     expect(h.app.routeLabel("PATCH", `/v1/vaults/${id}/records`)).toBe("(unknown)");
     expect(h.app.routeLabel("GET", "/secret/path")).toBe("(unknown)");
+  });
+});
+
+describe("the certificate route", () => {
+  test("GET /v1/certificate returns the certificate when the server has one", async () => {
+    const der = randomBytes(300);
+    const db = openDatabase(":memory:");
+    try {
+      const app = createApp({ db, version: "test", certificate: () => der });
+      const res = await app.fetch(new Request("http://server/v1/certificate"), "10.0.0.2");
+      expect(res.status).toBe(200);
+      expect(await body(res)).toEqual({ certificate: der.toString("base64") });
+      expect(app.routeLabel("GET", "/v1/certificate")).toBe("/v1/certificate");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("is 404 not_found without one", async () => {
+    const res = await anonymous(h, "GET", "/v1/certificate");
+    expect(res.status).toBe(404);
+    expect((await body(res)).error).toBe("not_found");
+    const db = openDatabase(":memory:");
+    try {
+      const app = createApp({ db, version: "test", certificate: () => null });
+      expect((await app.fetch(new Request("http://server/v1/certificate"), "10.0.0.2")).status).toBe(404);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("parseArgs: TLS", () => {
+  const LE = "https://acme-v02.api.letsencrypt.org/directory";
+
+  test("plain HTTP by default", () => {
+    expect(parseArgs([], {})).toMatchObject({ hostname: "127.0.0.1", port: 8787, tls: { mode: "off" } });
+  });
+
+  test("--tls self names localhost, 127.0.0.1, the listen host and each --tls-name", () => {
+    expect(parseArgs(["--tls", "self"], {})).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1"] } });
+    expect(parseArgs([], { KERSTEL_SERVER_TLS: "self" })).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1"] } });
+    expect(
+      parseArgs(["--tls", "self", "--listen", "192.168.1.20:8787", "--tls-name", "homebox.local", "--tls-name", "10.0.0.5"], {}),
+    ).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1", "192.168.1.20", "homebox.local", "10.0.0.5"] } });
+    expect(
+      parseArgs([], { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_TLS_NAMES: "homebox.local, *.home.arpa ,10.0.0.5" }),
+    ).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1", "homebox.local", "*.home.arpa", "10.0.0.5"] } });
+    // A flag replaces the environment's list.
+    expect(
+      parseArgs(["--tls-name", "nas.local"], { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_TLS_NAMES: "homebox.local" }),
+    ).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1", "nas.local"] } });
+  });
+
+  test("a wildcard or already listed listen host is not added twice, and IPv6 is written one way", () => {
+    for (const listen of ["0.0.0.0:8787", "[::]:8787", "127.0.0.1:8787", "localhost:8787"]) {
+      expect(parseArgs(["--tls", "self", "--listen", listen], {})).toMatchObject({
+        tls: { mode: "self", names: ["localhost", "127.0.0.1"] },
+      });
+    }
+    expect(
+      parseArgs(["--tls", "self", "--listen", "[0:0:0:0:0:0:0:1]:8787", "--tls-name", "::1", "--tls-name", "LOCALHOST"], {}),
+    ).toMatchObject({ hostname: "0:0:0:0:0:0:0:1", tls: { mode: "self", names: ["localhost", "127.0.0.1", "::1"] } });
+  });
+
+  test("--domain and the ACME options, each with its environment twin", () => {
+    expect(parseArgs(["--domain", "sync.example.com"], {})).toMatchObject({
+      hostname: "0.0.0.0",
+      port: 443,
+      tls: { mode: "acme", domain: "sync.example.com", directory: LE, email: null, httpHostname: "0.0.0.0", httpPort: 80 },
+    });
+    expect(
+      parseArgs(
+        [
+          "--domain",
+          "sync.example.com",
+          "--acme-directory",
+          "https://localhost:14000/dir",
+          "--acme-email",
+          "me@example.com",
+          "--acme-http",
+          "127.0.0.1:5002",
+          "--listen",
+          "127.0.0.1:5001",
+        ],
+        {},
+      ),
+    ).toMatchObject({
+      hostname: "127.0.0.1",
+      port: 5001,
+      tls: {
+        mode: "acme",
+        domain: "sync.example.com",
+        directory: "https://localhost:14000/dir",
+        email: "me@example.com",
+        httpHostname: "127.0.0.1",
+        httpPort: 5002,
+      },
+    });
+    expect(
+      parseArgs([], {
+        KERSTEL_SERVER_DOMAIN: "sync.example.com",
+        KERSTEL_SERVER_ACME_DIRECTORY: "https://localhost:14000/dir",
+        KERSTEL_SERVER_ACME_EMAIL: "me@example.com",
+        KERSTEL_SERVER_ACME_HTTP: "[::]:5002",
+      }),
+    ).toMatchObject({
+      hostname: "0.0.0.0",
+      port: 443,
+      tls: {
+        mode: "acme",
+        domain: "sync.example.com",
+        directory: "https://localhost:14000/dir",
+        email: "me@example.com",
+        httpHostname: "::",
+        httpPort: 5002,
+      },
+    });
+    // KERSTEL_SERVER_LISTEN wins over the 443 default.
+    expect(parseArgs(["--domain", "sync.example.com"], { KERSTEL_SERVER_LISTEN: "127.0.0.1:8443" })).toMatchObject({
+      hostname: "127.0.0.1",
+      port: 8443,
+    });
+  });
+
+  test("a flag overrides its environment twin", () => {
+    const env = { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_TLS_NAMES: "homebox.local", KERSTEL_SERVER_DOMAIN: "old.example.com" };
+    expect(parseArgs(["--domain", "sync.example.com"], env)).toMatchObject({ tls: { mode: "acme", domain: "sync.example.com" } });
+    expect(parseArgs(["--domain", "sync.example.com"], { KERSTEL_SERVER_TLS: "self" })).toMatchObject({ tls: { mode: "acme" } });
+    expect(parseArgs(["--tls", "self"], { KERSTEL_SERVER_DOMAIN: "sync.example.com" })).toMatchObject({
+      hostname: "127.0.0.1",
+      port: 8787,
+      tls: { mode: "self", names: ["localhost", "127.0.0.1"] },
+    });
+    expect(parseArgs(["--tls", "self"], env)).toMatchObject({ tls: { mode: "self", names: ["localhost", "127.0.0.1", "homebox.local"] } });
+  });
+
+  test("rejects conflicting or malformed TLS options", () => {
+    expect(() => parseArgs(["--tls", "self", "--domain", "sync.example.com"], {})).toThrow("--domain");
+    expect(() => parseArgs(["--tls-name", "homebox.local"], {})).toThrow("--tls-name needs --tls self.");
+    // A conflict that comes only from the environment names the variables.
+    expect(() => parseArgs([], { KERSTEL_SERVER_TLS: "self", KERSTEL_SERVER_DOMAIN: "sync.example.com" })).toThrow(
+      "Set KERSTEL_SERVER_TLS=self or KERSTEL_SERVER_DOMAIN, not both.",
+    );
+    expect(() => parseArgs([], { KERSTEL_SERVER_TLS_NAMES: "homebox.local" })).toThrow(
+      "KERSTEL_SERVER_TLS_NAMES needs --tls self (or KERSTEL_SERVER_TLS=self).",
+    );
+    expect(() => parseArgs(["--tls", "acme"], {})).toThrow("--tls takes only self");
+    expect(() => parseArgs([], { KERSTEL_SERVER_TLS: "on" })).toThrow("--tls takes only self");
+    for (const name of ["fe80::1%en0", "home_box", "-", "a..b", "foo.*", "*", "bad name", "ünï.example", "a.b.", "192.168.1.256", "127.1", "1.2.3.4.5", "010.0.0.1"]) {
+      expect(() => parseArgs(["--tls", "self", "--tls-name", name], {})).toThrow("--tls-name");
+    }
+    expect(() => parseArgs(["--domain", "*.example.com"], {})).toThrow("--domain");
+    expect(() => parseArgs(["--domain", "192.0.2.1"], {})).toThrow("--domain");
+    expect(() => parseArgs(["--domain", "sync.example.com", "--acme-http", "80"], {})).toThrow("host:port");
   });
 });

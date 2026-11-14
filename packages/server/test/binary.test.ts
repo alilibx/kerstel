@@ -6,7 +6,14 @@ import { parseArgs } from "../src/index";
 
 describe("parseArgs", () => {
   test("defaults, then environment, then flags", () => {
-    expect(parseArgs([], {})).toEqual({ db: "kerstel-server.db", hostname: "127.0.0.1", port: 8787, enrollToken: null, trustProxy: false });
+    expect(parseArgs([], {})).toEqual({
+      db: "kerstel-server.db",
+      hostname: "127.0.0.1",
+      port: 8787,
+      enrollToken: null,
+      trustProxy: false,
+      tls: { mode: "off" },
+    });
     expect(parseArgs([], { KERSTEL_SERVER_LISTEN: "0.0.0.0:9000", KERSTEL_SERVER_DB: "/data/x.db" })).toMatchObject({
       hostname: "0.0.0.0",
       port: 9000,

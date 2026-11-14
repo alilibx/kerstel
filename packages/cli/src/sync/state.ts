@@ -1,3 +1,5 @@
+import { formatPin, isHttps, parsePin } from "../../../server/src/pin";
+import { cliName } from "../ui/cli-name";
 import { decrypt, encrypt } from "../vault/crypto";
 import { SYNC_VAULT_META, type Vault } from "../vault/store";
 import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
@@ -11,6 +13,8 @@ import { exportPrivateKey, importPrivateKey, type DeviceKeys } from "./crypto";
 export const SYNC_META = {
   vaultId: SYNC_VAULT_META,
   server: "sync_server",
+  /** The server's key pin (#112), as `formatPin` writes it. No row: the server is not pinned. */
+  pin: "sync_pin",
   deviceId: "sync_device_id",
   epoch: "sync_epoch",
   syncKey: "sync_key",
@@ -31,6 +35,8 @@ export const SYNC_META = {
 
 export interface SyncConfig {
   server: string;
+  /** The SHA-256 of the server's public key, when this device pins it (#112). */
+  pin: Buffer | null;
   vaultId: string;
   deviceId: string;
   epoch: number;
@@ -50,24 +56,56 @@ function unsealed(value: string, dataKey: Buffer): string {
   return decrypt({ nonce: Buffer.from(nonce ?? "", "base64"), ciphertext: Buffer.from(ciphertext ?? "", "base64") }, dataKey);
 }
 
+/**
+ * This vault's sync settings are incomplete or cannot be read. Every sync
+ * command says to run `sync off`, which turns sync off on this one alone.
+ */
+export class SyncSettingsError extends Error {
+  constructor(problem: string) {
+    super(`This vault's sync settings are ${problem}. Run ${cliName()} sync off, then set sync up again.`);
+    this.name = "SyncSettingsError";
+  }
+}
+
+/**
+ * The sync settings, or null when sync is off. Settings that are missing or
+ * can't be read throw a SyncSettingsError; an error reading the vault itself
+ * is thrown as it is.
+ */
 export function loadSync(vault: Vault, dataKey: Buffer): SyncConfig | null {
   const get = (k: string) => vault.getMeta(k);
   const vaultId = get(SYNC_META.vaultId);
   if (vaultId === null) return null;
   const need = (k: string): string => {
     const v = get(k);
-    if (v === null) throw new Error(`This vault's sync settings are incomplete (${k} is missing). Run ks sync off, then set sync up again.`);
+    if (v === null) throw new SyncSettingsError(`incomplete (${k} is missing)`);
     return v;
   };
+  /** The sealed setting `k`, opened and read with `read`. */
+  const open = <T>(k: string, read: (text: string) => T): T => {
+    const text = need(k);
+    try {
+      return read(unsealed(text, dataKey));
+    } catch {
+      throw new SyncSettingsError(`damaged (${k} cannot be read)`);
+    }
+  };
+  const pinText = get(SYNC_META.pin);
+  const pin = pinText === null ? null : parsePin(pinText);
+  // Never read as unpinned: that would drop the pin's protection without a word.
+  if (pinText !== null && pin === null) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is not a pin)`);
+  const server = need(SYNC_META.server);
+  if (pin && !isHttps(server)) throw new SyncSettingsError(`damaged (${SYNC_META.pin} is set for an http:// server)`);
   return {
-    server: need(SYNC_META.server),
+    server,
+    pin,
     vaultId,
     deviceId: need(SYNC_META.deviceId),
     epoch: Number(need(SYNC_META.epoch)),
-    syncKey: Buffer.from(unsealed(need(SYNC_META.syncKey), dataKey), "base64"),
+    syncKey: open(SYNC_META.syncKey, (text) => Buffer.from(text, "base64")),
     keys: {
-      sign: importPrivateKey(unsealed(need(SYNC_META.signKey), dataKey)),
-      enc: importPrivateKey(unsealed(need(SYNC_META.encKey), dataKey)),
+      sign: open(SYNC_META.signKey, importPrivateKey),
+      enc: open(SYNC_META.encKey, importPrivateKey),
     },
     head: Number(get(SYNC_META.head) ?? "0"),
   };
@@ -84,6 +122,8 @@ export function saveSync(vault: Vault, dataKey: Buffer, config: SyncConfig): voi
 /** `saveSync` without its own transaction, for a caller that holds one. */
 export function writeSync(vault: Vault, dataKey: Buffer, config: SyncConfig): void {
   vault.setMeta(SYNC_META.server, config.server);
+  if (config.pin) vault.setMeta(SYNC_META.pin, formatPin(config.pin));
+  else vault.deleteMeta(SYNC_META.pin);
   vault.setMeta(SYNC_META.deviceId, config.deviceId);
   vault.setMeta(SYNC_META.epoch, String(config.epoch));
   vault.setMeta(SYNC_META.syncKey, sealed(config.syncKey.toString("base64"), dataKey));

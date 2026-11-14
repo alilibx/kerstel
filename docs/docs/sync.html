@@ -36,8 +36,33 @@
 <p class="lede">Keep one vault on your laptop and your desktop. Values are encrypted on your device with a key the server never holds.</p><p>Sync is optional and off until you turn it on. It is for one person&#39;s devices. A team still commits references and fills each teammate&#39;s vault, as in <a href="/docs/teams">Working with a team</a>, until shared vaults ship.</p>
 <h2>Run a server</h2>
 <p><code>kerstel-server</code> stores ciphertext and nothing else. It never sees a scope name, a key name, a value, a project path or a device name, so you can run it anywhere you can reach from your devices. Every release ships it next to the CLI, with the same version.</p>
-<p>With Docker:</p>
-<pre><code class="language-bash">docker run -d -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+<p>Kerstel sends a vault only to an <code>https://</code> URL, or <code>http://</code> to this machine. The server can serve HTTPS itself, in three ways. Pick the one that fits where it runs. Each has its own section below.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>You have</th>
+<th>Read the section</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A server at home or on a VPS, with no domain</td>
+<td>Its own certificate, pinned</td>
+</tr>
+<tr>
+<td>A domain that points at the server</td>
+<td>Your domain, with Let&#39;s Encrypt</td>
+</tr>
+<tr>
+<td>A Tailscale network</td>
+<td>Tailscale</td>
+</tr>
+<tr>
+<td>A proxy or load balancer that already terminates TLS</td>
+<td>Behind your own proxy</td>
+</tr>
+</tbody></table>
+</div><p>First get the server. With Docker, the examples below use this image:</p>
+<pre><code>ghcr.io/alilibx/kerstel-server:latest
 </code></pre>
 <p>The image has no shell, runs as a non-root user, and keeps its database in the <code>/data</code> volume. Pin a version (<code>:0.3.0</code>) rather than <code>latest</code> if you upgrade on your own schedule. The options below work as environment variables with <code>docker run -e</code>.</p>
 <p>Or download the binary for your platform (<code>linux-x64</code>, <code>linux-arm64</code>, <code>darwin-arm64</code> or <code>darwin-x64</code>) from the <a href="https://github.com/alilibx/kerstel/releases/latest">latest release</a>, and check it against the release&#39;s <code>SHA256SUMS</code>:</p>
@@ -45,7 +70,6 @@
 curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 chmod +x kerstel-server-linux-x64
-./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db --listen 127.0.0.1:8787
 </code></pre>
 <div class="table-wrap"><table>
 <thead>
@@ -63,7 +87,7 @@ chmod +x kerstel-server-linux-x64
 <tr>
 <td><code>--listen &lt;host:port&gt;</code></td>
 <td><code>KERSTEL_SERVER_LISTEN</code></td>
-<td><code>127.0.0.1:8787</code></td>
+<td><code>127.0.0.1:8787</code>, or <code>0.0.0.0:443</code> with <code>--domain</code> when neither this flag nor the variable is set</td>
 </tr>
 <tr>
 <td><code>--enroll-token-file &lt;file&gt;</code></td>
@@ -75,18 +99,101 @@ chmod +x kerstel-server-linux-x64
 <td></td>
 <td>off: rate limits use the socket address, not <code>X-Forwarded-For</code></td>
 </tr>
+<tr>
+<td><code>--tls self</code></td>
+<td><code>KERSTEL_SERVER_TLS</code></td>
+<td>off: plain HTTP</td>
+</tr>
+<tr>
+<td><code>--tls-name &lt;name&gt;</code></td>
+<td><code>KERSTEL_SERVER_TLS_NAMES</code></td>
+<td>none. Repeat the flag, or comma-separate the variable.</td>
+</tr>
+<tr>
+<td><code>--domain &lt;name&gt;</code></td>
+<td><code>KERSTEL_SERVER_DOMAIN</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>--acme-email &lt;address&gt;</code></td>
+<td><code>KERSTEL_SERVER_ACME_EMAIL</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>--acme-http &lt;host:port&gt;</code></td>
+<td><code>KERSTEL_SERVER_ACME_HTTP</code></td>
+<td><code>0.0.0.0:80</code></td>
+</tr>
+<tr>
+<td><code>--acme-directory &lt;url&gt;</code></td>
+<td><code>KERSTEL_SERVER_ACME_DIRECTORY</code></td>
+<td>Let&#39;s Encrypt</td>
+</tr>
 </tbody></table>
-</div><p>The server speaks plain HTTP, and Kerstel sends a vault only to an <code>https://</code> URL, or <code>http://</code> to this machine. Put the server behind a proxy that terminates TLS, and start it with <code>--trust-proxy</code> so rate limits apply to each client rather than to the proxy. With Caddy:</p>
+</div><p>A flag wins over its variable. <code>--domain</code> ignores <code>KERSTEL_SERVER_TLS</code> and <code>KERSTEL_SERVER_TLS_NAMES</code>, and <code>--tls self</code> ignores <code>KERSTEL_SERVER_DOMAIN</code>.</p>
+<p>With an enroll token, only a device that has it can create a vault: set <code>KERSTEL_SYNC_ENROLL_TOKEN</code> when you run <code>sync setup</code>. Joining an existing vault never needs it.</p>
+<h3>Its own certificate, pinned</h3>
+<p>This needs no domain and no proxy. The server makes a certificate for itself, and your devices trust exactly that one. Start it on an address your devices can reach, and name that address:</p>
+<pre><code class="language-bash">./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
+  --listen 0.0.0.0:8787 --tls self --tls-name 203.0.113.7
+</code></pre>
+<p><code>--tls-name</code> adds a DNS name or an IP address to the certificate. Repeat it for more. The certificate always covers <code>localhost</code> and <code>127.0.0.1</code>, and the <code>--listen</code> host when it is a specific address. If you add a name later, the server reissues the certificate with the same key, so devices that already pin it keep working.</p>
+<p>When it starts, the server prints the pin of its certificate:</p>
+<pre><code>Certificate pin: sha256/…
+</code></pre>
+<p>Give that pin to <code>sync setup</code>:</p>
+<pre><code class="language-bash">kerstel sync setup https://203.0.113.7:8787 --pin sha256/…
+</code></pre>
+<p>Kerstel checks the server&#39;s key on every request. If the key changes, it sends nothing and says so. The pin travels inside the line that <code>add-device</code> prints, so your other devices pair as before and never type it.</p>
+<p>The server keeps its key and certificate beside its database, as <code>&lt;db&gt;.tls-key.pem</code> and <code>&lt;db&gt;.tls-cert.pem</code>. The key stays the same across restarts, so the pin does too. A new database file means a new key and a new pin.</p>
+<p>You can give the server a domain later. Start it with <code>--domain</code> and the same database file. Its Let&#39;s Encrypt certificate is for the same key, so devices that pin it keep working.</p>
+<p>With Docker, name the address and set the mode with environment variables, and publish the port:</p>
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 8787:8787 -v kerstel-server:/data \
+  -e KERSTEL_SERVER_TLS=self -e KERSTEL_SERVER_TLS_NAMES=203.0.113.7 \
+  ghcr.io/alilibx/kerstel-server:latest
+docker logs &lt;container&gt; | grep &#39;Certificate pin&#39;
+</code></pre>
+<h3>Your domain, with Let&#39;s Encrypt</h3>
+<p>Point a DNS record for your domain at the server, and let traffic reach it on TCP 80 and 443. The server answers Let&#39;s Encrypt&#39;s challenge on port 80 and serves HTTPS on port 443. It gets the certificate when it starts and renews it when fewer than 30 days remain, checking every 12 hours. A certificate that lasts less than 90 days is renewed when a third of its time remains.</p>
+<pre><code class="language-bash">sudo ./kerstel-server-linux-x64 --db /var/lib/kerstel/server.db \
+  --domain sync.example.com --acme-email you@example.com
+</code></pre>
+<p>Listening on 80 and 443 needs root, as <code>sudo</code> gives here, or <code>CAP_NET_BIND_SERVICE</code> on Linux.</p>
+<p>Running with <code>--domain</code> means you agree to the ACME CA&#39;s terms of service (Let&#39;s Encrypt by default). <code>--acme-email</code> is optional. If the server can&#39;t get a certificate, it says what to fix, prints <code>No certificate yet. Trying again in an hour.</code>, and retries. The ACME account key lives beside the database as <code>&lt;db&gt;.acme-account.pem</code>.</p>
+<p>With Docker, the image listens on 8787 unless you say otherwise, so set the listen address to 443. Keep <code>--restart unless-stopped</code>: a renewal restarts the HTTPS listener. If it can&#39;t listen again within 10 tries, a second apart, the server exits so Docker can start it again.</p>
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 80:80 -p 443:443 -v kerstel-server:/data \
+  -e KERSTEL_SERVER_DOMAIN=sync.example.com \
+  -e KERSTEL_SERVER_LISTEN=0.0.0.0:443 \
+  ghcr.io/alilibx/kerstel-server:latest
+</code></pre>
+<p>Then, on your first device:</p>
+<pre><code class="language-bash">kerstel sync setup https://sync.example.com
+</code></pre>
+<p>No pin is needed: the certificate is one every device already trusts.</p>
+<h3>Tailscale</h3>
+<p>If all your devices are on a Tailscale network, let Tailscale serve HTTPS. Start the server on this machine only, then publish it to your tailnet:</p>
+<pre><code class="language-bash">kerstel-server --listen 127.0.0.1:8787
+tailscale serve --bg 8787
+</code></pre>
+<p>With Docker, publish the port on the loopback address and run the same <code>tailscale serve</code> command on the host:</p>
+<pre><code class="language-bash">docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
+tailscale serve --bg 8787
+</code></pre>
+<p>Turn on HTTPS certificates for your tailnet first: in the Tailscale admin console, open DNS and enable MagicDNS and HTTPS Certificates. Every device that syncs must be on the tailnet. The address is <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>, with no pin:</p>
+<pre><code class="language-bash">kerstel sync setup https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net
+</code></pre>
+<h3>Behind your own proxy</h3>
+<p>Without <code>--tls</code> or <code>--domain</code>, the server speaks plain HTTP. Put it behind a proxy that terminates TLS, and start it with <code>--trust-proxy</code> so rate limits apply to each client rather than to the proxy. With Caddy:</p>
 <pre><code>sync.example.com {
 	reverse_proxy 127.0.0.1:8787
 }
 </code></pre>
-<p>With an enroll token, only a device that has it can create a vault: set <code>KERSTEL_SYNC_ENROLL_TOKEN</code> when you run <code>sync setup</code>. Joining an existing vault never needs it.</p>
 <h2>Turn it on</h2>
 <p>On the device that holds your vault:</p>
 <pre><code class="language-bash">kerstel sync setup https://sync.example.com
 </code></pre>
-<p>It shows the server, how many secrets and scopes it will upload, and this device&#39;s name, then asks before uploading. The device name is sealed, so the server never sees it.</p>
+<p>For a server with its own certificate, add the pin the server printed: <code>kerstel sync setup https://203.0.113.7:8787 --pin sha256/…</code>. <code>--pin</code> works only with an <code>https://</code> URL. Without it, <code>sync setup</code> can&#39;t check that server&#39;s certificate, and says to pass <code>--pin</code>. A pin that is not the server&#39;s fails, and nothing is sent.</p>
+<p>It shows the server, whether its certificate is pinned, how many secrets and scopes it will upload, and this device&#39;s name, then asks before uploading. The device name is sealed, so the server never sees it.</p>
 <h2>Add a device</h2>
 <p>On the device that is already syncing:</p>
 <pre><code class="language-bash">kerstel sync add-device
@@ -94,12 +201,12 @@ chmod +x kerstel-server-linux-x64
 <p>It prints one line to run on the new device, and copies it to the clipboard when it can (with <code>pbcopy</code>, <code>wl-copy</code>, <code>xclip</code> or <code>xsel</code>; over SSH on a Mac it skips <code>pbcopy</code>, which would fill the other Mac&#39;s clipboard):</p>
 <pre><code class="language-bash">kerstel sync join ks1-…
 </code></pre>
-<p>On the new device, paste the line as a command. Or run <code>kerstel sync join</code> on its own and paste the value at the hidden prompt, which keeps it out of your shell history. <code>join</code> prints the server it is joining before you confirm anything. The value holds the server address and the pairing secret, so treat it as a secret until it expires. It works once and expires in 10 minutes. A device older than 0.4.0 can&#39;t read it: update that device first with <code>kerstel update</code>. To pair from a device on 0.3, run <code>kerstel sync join &lt;url&gt; &lt;code&gt;</code> instead. When the new device answers, both devices show the new device&#39;s key fingerprint. Check that they match, then say yes on the first device. The new device checks that the sync key it receives is the one you confirmed, so a server cannot slip in a key of its own.</p>
+<p>On the new device, paste the line as a command. Or run <code>kerstel sync join</code> on its own and paste the value at the hidden prompt, which keeps it out of your shell history. <code>join</code> prints the server it is joining before you confirm anything. The value holds the server address, the certificate pin when the server has one, and the pairing secret, so treat it as a secret until it expires. It works once and expires in 10 minutes. A device older than 0.4.0 can&#39;t read it: update that device first with <code>kerstel update</code>. To pair from a device on 0.3, run <code>kerstel sync join &lt;url&gt; &lt;code&gt;</code> instead. When the new device answers, both devices show the new device&#39;s key fingerprint. Check that they match, then say yes on the first device. The new device checks that the sync key it receives is the one you confirmed, so a server cannot slip in a key of its own.</p>
 <p>A new device that already holds secrets merges them in. A key only it holds is uploaded. A key both vaults hold with different values becomes a conflict for you to settle, and nothing is overwritten.</p>
 <h2>Day to day</h2>
 <p>You don&#39;t need to run anything. Every synced device pulls changes every five minutes on its own, through a launchd agent on macOS or a systemd user timer on Linux. <code>sync setup</code> and <code>sync join</code> install it, and a device that already syncs gets it on its next sync. It pulls while you are logged in: a device that was logged out catches up within five minutes of the next login. Kerstel never turns on systemd lingering and never unlocks your keyring. Where pulls can&#39;t be scheduled, on Linux with no systemd user session or on a Mac nobody is logged in to (over SSH, for example), <code>sync setup</code>, <code>sync join</code> and every <code>kerstel sync</code> you run say so, and pulls still happen on <code>run</code>, <code>exec</code> and every write. On macOS, the first time the pull is scheduled, the system shows a &quot;Background Items Added&quot; notification, and turning Kerstel off under Login Items in System Settings stops the pulls.</p>
 <p>After a command that writes the vault (<code>set</code>, <code>rm</code>, <code>init</code>, <code>move</code>, or <code>ui</code>), Kerstel pushes the change in the background at once. <code>run</code> and <code>exec</code> start a background sync when none has started in the last minute, or five minutes after a failed one. Neither one waits for the network, and an unreachable server never fails the command. A value pulled after an app starts reaches it the next time it starts.</p>
-<p><code>kerstel sync status</code> and <code>kerstel doctor</code> show the server, the last successful sync, when the scheduled pull last ran, changes still waiting to be pushed, open conflicts, and the last error. <code>doctor</code> warns after seven days without a successful sync, and when the scheduled pull is missing or its settings differ from your shell&#39;s. <code>kerstel sync off</code> and <code>kerstel uninstall</code> remove the scheduled pull. A scheduled pull that finds no vault, as when <code>KERSTEL_HOME</code> is on a drive that isn&#39;t mounted yet, does nothing and runs again five minutes later. You need <code>kerstel sync</code> itself only to settle a conflict or to see what changed.</p>
+<p><code>kerstel sync status</code> and <code>kerstel doctor</code> show the server, the last successful sync, when the scheduled pull last ran, changes still waiting to be pushed, open conflicts, and the last error. For a pinned server, <code>sync status</code> also shows a <code>Certificate</code> line with its pin. <code>doctor</code> warns after seven days without a successful sync, and when the scheduled pull is missing or its settings differ from your shell&#39;s. <code>kerstel sync off</code> and <code>kerstel uninstall</code> remove the scheduled pull. A scheduled pull that finds no vault, as when <code>KERSTEL_HOME</code> is on a drive that isn&#39;t mounted yet, does nothing and runs again five minutes later. You need <code>kerstel sync</code> itself only to settle a conflict or to see what changed.</p>
 <p>The daemon never syncs and never opens a network connection.</p>
 <h2>Conflicts</h2>
 <p>A key changed on two devices before either synced is a conflict. Kerstel never picks a side. A background sync keeps this device&#39;s value, stops pushing that key, and every command prints one line on stderr until you settle it:</p>
@@ -111,7 +218,7 @@ chmod +x kerstel-server-linux-x64
 kerstel sync remove-device old-laptop
 </code></pre>
 <p>Removing a device replaces the sync key. Every record is encrypted again under a new key that only the remaining devices receive, and the server refuses the removed device&#39;s requests. The removed device already had every value, so rotate any secret it should no longer hold, at its provider.</p>
-<p>To stop syncing the device you are on, run <code>kerstel sync off</code>. Its secrets stay on it. <code>kerstel uninstall</code> leaves the vault first.</p>
+<p>To stop syncing the device you are on, run <code>kerstel sync off</code>. Its secrets stay on it. If this device&#39;s sync settings are damaged, <code>sync off</code> still turns sync off here, but can&#39;t leave the vault on the server. <code>kerstel uninstall</code> leaves the vault first.</p>
 <h2>What the server sees</h2>
 <div class="table-wrap"><table>
 <thead>
