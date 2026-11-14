@@ -318,6 +318,17 @@ function stop(pid: number | null): void {
   } catch {
     // Already gone.
   }
+  // Like `docker stop` and `systemctl stop`, return only once it has exited:
+  // Linux can take a moment to reap it, and a caller may check right away.
+  for (let waited = 0; alive(pid) && waited < 5_000; waited += 20) Bun.sleepSync(20);
+  if (alive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Gone between the check and the kill.
+    }
+    for (let waited = 0; alive(pid) && waited < 2_000; waited += 20) Bun.sleepSync(20);
+  }
 }
 
 function readState(dir: string): State {
