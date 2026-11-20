@@ -6,6 +6,9 @@ import { parseServerValue } from "../src/server-value";
 import { readSelfSignedPin } from "../src/tls";
 import { FakeHost, RELEASES_URL, type HostConfig, type RunResult } from "./helpers/fake-host";
 
+/** The version a source build reports: this package's, as a dev build. */
+const DEV_VERSION = `${(JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version}-dev`;
+
 const VERSION = "0.4.0";
 const ID = "install-a";
 const IMAGE = `ghcr.io/alilibx/kerstel-server:${VERSION}`;
@@ -714,7 +717,7 @@ describe("stop, remove and update", () => {
       const h = host();
       const first = valueOf(await install(h, ["--reach", "self", "--name", "box.local"]));
       const info = lines(await h.run(["info"]));
-      expect(info).toEqual(expect.arrayContaining(["installed=docker", `install-id=${ID}`, "running=yes", "version=0.3.0-dev"]));
+      expect(info).toEqual(expect.arrayContaining(["installed=docker", `install-id=${ID}`, "running=yes", `version=${DEV_VERSION}`]));
       expect(info.find((l) => l.startsWith("pin="))).toMatch(/^pin=sha256\//);
 
       expectOk(await h.run(["stop"]));

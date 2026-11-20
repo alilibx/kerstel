@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "../src/index";
@@ -68,7 +68,9 @@ describe("the server process", () => {
       }
     }
     expect(res?.status).toBe(200);
-    expect(((await res!.json()) as { version: string }).version).toMatch(/^0\.3\.0-dev$/);
+    expect(((await res!.json()) as { version: string }).version).toBe(
+      `${(JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version}-dev`,
+    );
     if (process.platform !== "win32") expect(statSync(db).mode & 0o777).toBe(0o600);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(0);
