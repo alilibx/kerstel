@@ -201,7 +201,7 @@
 </div><p>First get the server. With Docker, the examples below use this image:</p>
 <pre><code>ghcr.io/alilibx/kerstel-server:latest
 </code></pre>
-<p>The image has no shell, runs as a non-root user, and keeps its database in the <code>/data</code> volume. Pin a version (<code>:0.3.0</code>) rather than <code>latest</code> if you upgrade on your own schedule. The options below work as environment variables with <code>docker run -e</code>.</p>
+<p>The image has no shell, runs as a non-root user, and keeps its database in the <code>/data</code> volume. Pin a version (<code>:0.4.0</code>) rather than <code>latest</code> if you upgrade on your own schedule. The options below work as environment variables with <code>docker run -e</code>.</p>
 <p>Or download the binary for your platform (<code>linux-x64</code>, <code>linux-arm64</code>, <code>darwin-arm64</code> or <code>darwin-x64</code>) from the <a href="https://github.com/alilibx/kerstel/releases/latest">latest release</a>, and check it against the release&#39;s <code>SHA256SUMS</code>:</p>
 <pre><code class="language-bash">curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/kerstel-server-linux-x64
 curl -fLO https://github.com/alilibx/kerstel/releases/latest/download/SHA256SUMS

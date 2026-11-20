@@ -135,7 +135,7 @@ First get the server. With Docker, the examples below use this image:
 ghcr.io/alilibx/kerstel-server:latest
 ```
 
-The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. Pin a version (`:0.3.0`) rather than `latest` if you upgrade on your own schedule. The options below work as environment variables with `docker run -e`.
+The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. Pin a version (`:0.4.0`) rather than `latest` if you upgrade on your own schedule. The options below work as environment variables with `docker run -e`.
 
 Or download the binary for your platform (`linux-x64`, `linux-arm64`, `darwin-arm64` or `darwin-x64`) from the [latest release](https://github.com/alilibx/kerstel/releases/latest), and check it against the release's `SHA256SUMS`:
 
