@@ -14,7 +14,7 @@ To install it by hand: every [release](https://github.com/alilibx/kerstel/releas
 docker run -d --name kerstel-server --restart unless-stopped -p 127.0.0.1:8787:8787 -v kerstel-server:/data ghcr.io/alilibx/kerstel-server:latest
 ```
 
-The image is tagged with each version (`0.3.0`), each minor version (`0.3`) and `latest`.
+The image is tagged with each version (`0.4.0`), each minor version (`0.4`) and `latest`.
 
 The image has no shell, runs as a non-root user, and keeps its database in the `/data` volume. The settings below work as environment variables with `docker run -e`.
 
