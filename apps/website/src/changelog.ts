@@ -18,6 +18,12 @@ export interface ReleaseMedia {
 
 export const RELEASE_MEDIA: ReleaseMedia[] = [
   {
+    version: "0.4.0",
+    video: "/release-0.4.0.mp4",
+    poster: "/release-0.4.0.jpg",
+    caption: "Easy sync and an audit log, in 24 seconds.",
+  },
+  {
     version: "0.3.0",
     video: "/release-0.3.0.mp4",
     poster: "/release-0.3.0.jpg",
