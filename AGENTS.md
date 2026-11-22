@@ -46,11 +46,24 @@ The macOS builds are signed and notarized when these repository secrets are set 
 | `APPLE_CERTIFICATE` | The **Developer ID Application** certificate and its private key, exported from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
 | `APPLE_CERTIFICATE_PASSWORD` | The password you gave that `.p12` export |
 | `APPLE_SIGNING_IDENTITY` | The certificate's name, such as `Developer ID Application: Your Name (TEAMID)` (`security find-identity -v -p codesigning`) |
+
+Then, to notarize, either an App Store Connect API key (preferred):
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_API_ISSUER` | The issuer ID, from App Store Connect → Users and Access → Integrations → Team Keys |
+| `APPLE_API_KEY` | The key's ID (not its contents) |
+| `APPLE_API_KEY_BASE64` | The downloaded `AuthKey_<id>.p8`, as `base64 -i AuthKey_<id>.p8 \| pbcopy`. The workflow writes it to a file for `notarytool`. |
+
+or an Apple ID:
+
+| Secret | What it is |
+| --- | --- |
 | `APPLE_ID` | The Apple ID email of the developer account |
 | `APPLE_PASSWORD` | An app-specific password for that Apple ID, from account.apple.com |
 | `APPLE_TEAM_ID` | The 10-character team ID from developer.apple.com → Membership |
 
-Without the first three, the `.dmg` is unsigned. Without the last three, it is signed but not notarized. Either way the release still publishes, with a warning in the job summary, and macOS asks people to confirm the first time they open the app. Rehearse with a pre-release tag (`v0.5.0-rc.1`): the `app` job's smoke test checks the signature, and with notarization `spctl` and the stapled ticket, on the runner.
+Without the certificate secrets, the `.dmg` is unsigned. Without either way to notarize, it is signed but not notarized. Either way the release still publishes, with a warning in the job summary, and macOS asks people to confirm the first time they open the app. Rehearse with a pre-release tag (`v0.5.0-rc.1`): the `app` job's smoke test checks the signature, and with notarization `spctl` and the stapled ticket, on the runner.
 
 The bundled `kerstel` is a Bun executable, so `apps/terminal/src-tauri/Entitlements.plist` gives the hardened runtime the JIT exceptions Bun needs. Without them, a notarized app's `kerstel` crashes at launch.
 

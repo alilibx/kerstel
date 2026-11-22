@@ -204,6 +204,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
         run: |
           set -euo pipefail
           # Pass the variables to the build only when they're set: Tauri treats
@@ -214,14 +217,23 @@ jobs:
             put APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
             put APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
             echo "signed=true" >> "$GITHUB_OUTPUT"
-            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            # Notarize with an App Store Connect API key (preferred) or an Apple ID.
+            if [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_BASE64" ]; then
+              key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+              printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$key"
+              chmod 600 "$key"
+              put APPLE_API_ISSUER "$APPLE_API_ISSUER"
+              put APPLE_API_KEY "$APPLE_API_KEY"
+              put APPLE_API_KEY_PATH "$key"
+              echo "notarized=true" >> "$GITHUB_OUTPUT"
+            elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
               put APPLE_ID "$APPLE_ID"
               put APPLE_PASSWORD "$APPLE_PASSWORD"
               put APPLE_TEAM_ID "$APPLE_TEAM_ID"
               echo "notarized=true" >> "$GITHUB_OUTPUT"
             else
-              echo "::warning::APPLE_ID, APPLE_PASSWORD or APPLE_TEAM_ID is missing: the .dmg is signed but not notarized."
-              echo "⚠️ Kerstel Terminal (${{ matrix.arch }}) is **signed but not notarized**: set APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::No notarization credentials: the .dmg is signed but not notarized."
+              echo "⚠️ Kerstel Terminal (${{ matrix.arch }}) is **signed but not notarized**: set the APPLE_API_* or APPLE_ID secrets (AGENTS.md, Releasing)." >> "$GITHUB_STEP_SUMMARY"
             fi
           else
             echo "::warning::No Apple signing secrets: the Kerstel Terminal .dmg is unsigned. macOS will warn when it's opened."
