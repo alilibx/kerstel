@@ -1,0 +1,6 @@
+# `bun test` reads bunfig.toml from the current folder only, so running tests from
+# here would skip the root preload, which keeps them off the real launchd/systemd
+# and clipboard. Load the same preload.
+[test]
+coverage = false
+preload = ["../../scripts/test-tmpdir.ts"]
