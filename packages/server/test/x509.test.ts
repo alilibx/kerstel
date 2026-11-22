@@ -172,7 +172,8 @@ describe("certificate request", () => {
     expect(`${verify.stdout}${verify.stderr}`).toContain("verify OK");
     const text = Bun.spawnSync([openssl, "req", "-noout", "-text", "-inform", "DER"], { stdin: der });
     expect(text.exitCode).toBe(0);
-    expect(`${text.stdout}`).toContain("CN=box.example.com");
+    // OpenSSL 3 prints "CN = box.example.com", LibreSSL and older OpenSSL "CN=box.example.com".
+    expect(`${text.stdout}`).toMatch(/\bCN ?= ?box\.example\.com\b/);
     expect(`${text.stdout}`).toContain("DNS:box.example.com");
   });
 
@@ -190,7 +191,7 @@ describe("certificate request", () => {
     if (!openssl) return;
     expect(Bun.spawnSync([openssl, "req", "-verify", "-noout", "-inform", "DER"], { stdin: der }).exitCode).toBe(0);
     const text = `${Bun.spawnSync([openssl, "req", "-noout", "-text", "-inform", "DER"], { stdin: der }).stdout}`;
-    expect(text).not.toContain("CN=");
+    expect(text).not.toMatch(/\bCN ?=/);
     expect(text).toContain(`DNS:${over64}`);
   });
 });
