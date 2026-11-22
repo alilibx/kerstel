@@ -17,7 +17,7 @@
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--text); font-family: var(--sans);
-  display: grid; grid-template-rows: 38px 1fr auto; overflow: hidden;
+  display: grid; grid-template-rows: 38px 1fr auto; grid-template-columns: minmax(0, 1fr); overflow: hidden;
   -webkit-user-select: none; user-select: none;
 }
 

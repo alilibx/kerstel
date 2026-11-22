@@ -12,7 +12,7 @@ _ks_precmd() {
   local code=$?
   [ "$_ks_ran" = 1 ] && printf '\e]133;D;%s\a' "$code"
   _ks_ran=0
-  printf '\e]7;file://%s%s\a' "${HOSTNAME:-localhost}" "$PWD"
+  printf '\e]7;file://%s%s\a' "${HOSTNAME:-localhost}" "${PWD//\%/%25}"
   printf '\e]133;A\a'
 }
 _ks_preexec() {

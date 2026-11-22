@@ -61,7 +61,12 @@
   let lastDivider = -1; // buffer line of the last divider, to avoid doubles
 
   term.parser.registerOscHandler(7, (data) => {
-    try { setCwd(decodeURIComponent(new URL(data).pathname)); } catch {}
+    // file://host/path. Not parsed with URL(): a "#" or "?" in a folder name would cut the path.
+    const m = /^file:\/\/[^/]*(\/.*)$/.exec(data);
+    if (!m) return true;
+    let path = m[1];
+    try { path = decodeURIComponent(path); } catch {}
+    setCwd(path);
     return true;
   });
 
