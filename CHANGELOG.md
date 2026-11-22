@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.4.1 (unreleased)
 
+### Added
+
+- Kerstel Terminal, a calm terminal app for macOS and Linux. It runs your own shell, shows the current folder and git branch, separates each command with a quiet line that shows its duration and whether it worked, and has a command palette and key hints. It builds from source for now; see [its README](https://github.com/alilibx/kerstel/tree/main/apps/terminal).
+
 ## 0.4.0 (2026-11-20)
 
 ### Added

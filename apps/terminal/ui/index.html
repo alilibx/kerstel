@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kerstel Terminal</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top" data-tauri-drag-region>
+    <div class="where" data-tauri-drag-region>
+      <span id="cwd" data-tauri-drag-region>~</span>
+      <span id="branch" class="branch" hidden></span>
+    </div>
+  </header>
+
+  <main class="screen"><div id="term"></div></main>
+
+  <footer class="hints" id="hints">
+    <span class="hint" data-hint="palette"><kbd data-mod>K</kbd>Commands</span>
+    <span class="hint" data-hint="clear"><kbd data-mod>L</kbd>Clear</span>
+    <span class="hint" data-hint="up"><kbd>↑</kbd>History</span>
+    <span class="hint" data-hint="tab"><kbd>Tab</kbd>Complete</span>
+    <span class="hint" data-hint="zoom"><kbd data-mod>=</kbd>Zoom</span>
+    <span class="hint hide" data-hint="toggle"><kbd data-mod>/</kbd>Hide</span>
+  </footer>
+
+  <div class="pal" id="pal" hidden>
+    <div class="palbox" role="dialog" aria-label="Commands">
+      <input id="palIn" autocomplete="off" spellcheck="false" placeholder="Search commands…">
+      <div id="palList" class="pallist"></div>
+      <div class="palfoot"><span><kbd>↵</kbd> insert</span><span><kbd>↑↓</kbd> move</span><span><kbd>Esc</kbd> close</span></div>
+    </div>
+  </div>
+
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/addon-fit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

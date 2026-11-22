@@ -1,0 +1,11 @@
+# Kerstel Terminal points ZDOTDIR here so it can load its integration.
+# Restore the user's ZDOTDIR first, then load their own startup files as usual.
+if [[ -n "$KERSTEL_USER_ZDOTDIR" ]]; then
+  ZDOTDIR="$KERSTEL_USER_ZDOTDIR"
+else
+  unset ZDOTDIR
+fi
+unset KERSTEL_USER_ZDOTDIR
+[[ -f "${ZDOTDIR:-$HOME}/.zshenv" ]] && source "${ZDOTDIR:-$HOME}/.zshenv"
+# Hooks added now survive the user's .zshrc, which runs after this file.
+[[ -o interactive ]] && source "$KERSTEL_SHELL_DIR/kerstel.zsh"

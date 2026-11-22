@@ -1,0 +1,22 @@
+[package]
+name = "kerstel-terminal"
+version = "0.4.0"
+edition = "2021"
+description = "Kerstel Terminal: a calm, minimal terminal for macOS and Linux"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+arboard = "3"
+dirs = "6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
