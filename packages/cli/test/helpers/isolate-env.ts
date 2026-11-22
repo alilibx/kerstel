@@ -49,6 +49,11 @@ export function isolateEnv(options: IsolateOptions = {}): string {
   // every `doctor` and `--version` in the suite reports "could not check"
   // instead of calling github.com.
   process.env.KERSTEL_RELEASES_URL = "http://127.0.0.1:9";
+  // The preload sets these too, but only when `bun test` finds bunfig.toml.
+  // Set them here as well, so a test never installs a real launch agent or
+  // systemd timer, or writes the real clipboard, however it was started.
+  process.env.KERSTEL_TEST_NO_SYNC_TIMER = "1";
+  process.env.KERSTEL_TEST_NO_CLIPBOARD = "1";
   return dir;
 }
 
