@@ -68,6 +68,7 @@ export const PACKAGE_FILES = [
   "packages/hook/package.json",
   "packages/server/package.json",
   "apps/website/package.json",
+  "apps/terminal/package.json",
 ];
 
 if (import.meta.main) {

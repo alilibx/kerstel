@@ -35,6 +35,38 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it verifies the tag, cr
 
 Each release also carries `kerstel-server`: four `kerstel-server-<platform>` binaries in the same GitHub Release and `SHA256SUMS`, and an image pushed to `ghcr.io/alilibx/kerstel-server` as `X.Y.Z`, `X.Y` and `latest` (a pre-release tag pushes only its own tag). `packages/server/package.json` carries the same version as every other package.
 
+### Kerstel Terminal
+
+Each release also carries Kerstel Terminal (`apps/terminal`), built by the `app` job with that release's `kerstel` inside: `kerstel-terminal-macos-arm64.dmg`, `kerstel-terminal-macos-x64.dmg`, `kerstel-terminal-linux-x64.deb` and `kerstel-terminal-linux-x64.AppImage`, all in `SHA256SUMS`. The website's `/terminal` page links to them through `releases/latest/download/`, so those names must not change. `apps/terminal/package.json` carries the same version as every other package; the build passes it to Tauri from the tag.
+
+The macOS builds are signed and notarized when these repository secrets are set (Settings → Secrets and variables → Actions):
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_CERTIFICATE` | The **Developer ID Application** certificate and its private key, exported from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `APPLE_CERTIFICATE_PASSWORD` | The password you gave that `.p12` export |
+| `APPLE_SIGNING_IDENTITY` | The certificate's name, such as `Developer ID Application: Your Name (TEAMID)` (`security find-identity -v -p codesigning`) |
+
+Then, to notarize, either an App Store Connect API key (preferred):
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_API_ISSUER` | The issuer ID, from App Store Connect → Users and Access → Integrations → Team Keys |
+| `APPLE_API_KEY` | The key's ID (not its contents) |
+| `APPLE_API_KEY_BASE64` | The downloaded `AuthKey_<id>.p8`, as `base64 -i AuthKey_<id>.p8 \| pbcopy`. The workflow writes it to a file for `notarytool`. |
+
+or an Apple ID:
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_ID` | The Apple ID email of the developer account |
+| `APPLE_PASSWORD` | An app-specific password for that Apple ID, from account.apple.com |
+| `APPLE_TEAM_ID` | The 10-character team ID from developer.apple.com → Membership |
+
+Without the certificate secrets, the `.dmg` is unsigned. Without either way to notarize, it is signed but not notarized. Either way the release still publishes, with a warning in the job summary, and macOS asks people to confirm the first time they open the app. Rehearse with a pre-release tag (`v0.5.0-rc.1`): the `app` job's smoke test checks the signature, and with notarization `spctl` and the stapled ticket, on the runner.
+
+The bundled `kerstel` is a Bun executable, so `apps/terminal/src-tauri/Entitlements.plist` gives the hardened runtime the JIT exceptions Bun needs. Without them, a notarized app's `kerstel` crashes at launch.
+
 ### Nightly builds
 
 There is no nightly channel today. `kerstel-server` was published from `main` as a rolling `nightly` pre-release until 0.3.0 shipped it; `.github/workflows/nightly.yml` is in git history (removed in the 0.3.0 release prep) if a later piece of work needs one again. A nightly is never a release: no `v*` tag, no `CHANGELOG.md` section, and the website, README and `install.sh` never link to it.
