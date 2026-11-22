@@ -5,8 +5,8 @@
   "identifier": "dev.kerstel.terminal",
   "build": {
     "frontendDist": "../ui",
-    "beforeDevCommand": "bun run vendor",
-    "beforeBuildCommand": "bun run vendor"
+    "beforeDevCommand": "bun run prepare-app",
+    "beforeBuildCommand": "bun run prepare-app"
   },
   "app": {
     "withGlobalTauri": true,
@@ -23,12 +23,19 @@
         "backgroundColor": "#202124"
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
-    "icon": ["icons/icon.png"]
+    "icon": [
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/kerstel"
+    ]
   }
 }
