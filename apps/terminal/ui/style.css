@@ -70,9 +70,9 @@ kbd {
 .palbox input { all: unset; box-sizing: border-box; width: 100%; padding: 12px 14px; font: 13px var(--mono); color: var(--text); border-bottom: 1px solid var(--line); }
 .pallist { max-height: 320px; overflow: auto; padding: 4px 0; }
 .palgroup { padding: 8px 14px 4px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-.palitem { display: flex; justify-content: space-between; gap: 12px; padding: 7px 14px; font-size: 13px; color: var(--mute); cursor: pointer; }
+.palitem { display: flex; justify-content: space-between; gap: 12px; padding: 7px 20px 7px 14px; font-size: 13px; color: var(--mute); cursor: pointer; }
 .palitem span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.palitem code { font: 12px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palitem code { flex-shrink: 0; max-width: 60%; font: 12px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palitem.on { background: rgb(255 255 255 / .05); color: var(--text); }
 .palitem.on code { color: var(--accent); }
 .palempty { padding: 14px; color: var(--faint); font-size: 13px; }
