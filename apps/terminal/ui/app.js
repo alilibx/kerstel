@@ -121,10 +121,7 @@
     deco?.onRender((el) => {
       if (el.dataset.done) return;
       el.dataset.done = "1";
-      el.className += " ks-status";
-      // Pin to the right edge of the row ourselves; xterm's anchor can land on the left.
-      el.style.left = "auto";
-      el.style.right = "0";
+      el.className += " ks-status"; // pinned to the right edge in style.css
       const ok = code === 0;
       const mark = `<span class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✕ " + code}</span>`;
       el.innerHTML = width === full ? `<span>${fmtDuration(ms)}</span>${mark}` : mark;

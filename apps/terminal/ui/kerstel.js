@@ -6,6 +6,7 @@
   "use strict";
   const KT = window.KT;
   const panel = document.getElementById("kpanel");
+  const TOO_OLD = "too-old";
   const state = { info: null, secrets: null, sync: null, devices: null, error: null, filter: "", adding: false, confirm: null, shown: new Map() };
 
   // ---------- tiny DOM helper: text is always set as text, never as HTML ----------
@@ -36,7 +37,8 @@
   async function json(args) {
     const out = await kerstel(args);
     if (out.code !== 0) throw new Error((out.stderr || out.stdout).trim() || `kerstel ${args.join(" ")} failed`);
-    return JSON.parse(out.stdout);
+    // A Kerstel from before --json ignores the flag and prints text.
+    try { return JSON.parse(out.stdout); } catch { throw new Error(TOO_OLD); }
   }
 
   // ---------- data ----------
@@ -76,6 +78,7 @@
       KT.toast(String(e), "bad");
     }
     refresh();
+    KT.focusTerminal();
   }
   async function reveal(ref) {
     const out = await kerstel(["get", ref, "--reveal"]);
@@ -242,8 +245,13 @@
         h("button", { title: "Close", onclick: () => togglePanel(false) }, "✕")));
     const body = [];
     if (!i) body.push(h("p", { class: "kmute kpad" }, "Loading…"));
+    else if (state.error === TOO_OLD) body.push(section("Update Kerstel",
+      h("p", {}, `The Kerstel installed at ${i.path} (${i.version}) is older than this panel needs.`),
+      h("div", { class: "kstack" },
+        i.bundledVersion && h("button", { class: "kprimary", onclick: install }, `Use the included Kerstel ${i.bundledVersion}`),
+        h("button", { onclick: () => term("kerstel update") }, "Run kerstel update"))));
     else if (state.error) body.push(section("Something went wrong", h("p", { class: "kwarn" }, state.error),
-      i.canInstall ? h("button", { class: "kprimary", onclick: install }, `Use the included Kerstel ${i.bundledVersion}`) : null));
+      i.bundledVersion ? h("button", { class: "kprimary", onclick: install }, `Use the included Kerstel ${i.bundledVersion}`) : null));
     else if (!i.path || i.canInstall) body.push(installView());
     if (i?.path && !state.error && state.secrets) body.push(secretsView(), syncView());
     panel.replaceChildren(head, h("div", { class: "kbody" }, body));

@@ -36,7 +36,10 @@ body {
 
 /* Command blocks: a hairline above each new prompt, and status at the right of each command. */
 .ks-divider { border-top: 1px solid var(--line); pointer-events: none; }
+/* xterm positions decorations from the left on every redraw (zoom, resize,
+   leaving vim), so pin the status to the row's right edge here. */
 .ks-status {
+  left: auto !important; right: 0 !important;
   font: 11px var(--mono); color: var(--faint); text-align: right; pointer-events: none;
   display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 4px;
   background: linear-gradient(to right, transparent, var(--bg) 24%);
@@ -68,6 +71,7 @@ kbd {
 .pallist { max-height: 320px; overflow: auto; padding: 4px 0; }
 .palgroup { padding: 8px 14px 4px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 .palitem { display: flex; justify-content: space-between; gap: 12px; padding: 7px 14px; font-size: 13px; color: var(--mute); cursor: pointer; }
+.palitem span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palitem code { font: 12px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palitem.on { background: rgb(255 255 255 / .05); color: var(--text); }
 .palitem.on code { color: var(--accent); }
@@ -144,3 +148,5 @@ kbd {
 .toast[hidden] { display: none; }
 .toast.ok { border-color: rgb(74 222 128 / .4); }
 .toast.bad { border-color: rgb(248 113 113 / .5); color: #fca5a5; }
+
+.kpanel .kmute { overflow-wrap: anywhere; }
