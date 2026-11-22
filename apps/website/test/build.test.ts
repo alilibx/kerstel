@@ -104,6 +104,29 @@ describe("build output", () => {
     expect(html).not.toContain("api.github.com");
   });
 
+  test("the landing page and /terminal both offer every Kerstel Terminal download, with its platform logo", () => {
+    const assets = [
+      "kerstel-terminal-macos-arm64.dmg",
+      "kerstel-terminal-macos-x64.dmg",
+      "kerstel-terminal-linux-x64.deb",
+      "kerstel-terminal-linux-x64.AppImage",
+    ];
+    const sprite = readFileSync(join(out, "icons.svg"), "utf8");
+    for (const file of ["index.html", "terminal.html"]) {
+      const html = readFileSync(join(out, file), "utf8");
+      for (const asset of assets) {
+        expect(html, `${file} links ${asset}`).toContain(`href="https://github.com/alilibx/kerstel/releases/latest/download/${asset}"`);
+      }
+      expect(html).toContain('data-os="mac"');
+      expect(html).toContain('data-os="linux"');
+      // Every icon a page uses is a symbol in the sprite.
+      for (const m of html.matchAll(/href="\/icons\.svg#([^"]+)"/g)) {
+        expect(sprite, `${file} uses #${m[1]}`).toContain(`<symbol id="${m[1]}"`);
+      }
+    }
+    expect(readFileSync(join(out, "index.html"), "utf8")).toContain('id="terminal"');
+  });
+
   test("landing page carries the agent setup prompt as one block, with flags the CLI accepts", () => {
     const html = readFileSync(join(out, "index.html"), "utf8");
     expect(html).toContain('id="agent-setup"');

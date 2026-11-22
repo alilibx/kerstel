@@ -537,13 +537,126 @@ main .change-type {
 .release-body li + li { margin-top: 8px; }
 .release-body li::marker { color: var(--text-tertiary); }
 
-/* Kerstel Terminal downloads */
-.downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; max-width: 640px; margin: 0 auto; }
-.download-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 14px;
-  border: 1px solid var(--accent-border); border-radius: 10px; background: var(--accent-dim);
-  color: var(--text); font-weight: 600; text-decoration: none;
+/* Hero announcement pill */
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto 20px;
+  padding: 4px 14px 4px 4px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  transition: border-color 0.2s ease, color 0.2s ease;
 }
-.download-btn span { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
-.download-btn:hover { background: var(--accent-border); }
-.screenshot { display: block; width: 100%; height: auto; border: 1px solid var(--surface-border); border-radius: 12px; }
+.hero-pill span {
+  background: var(--accent);
+  color: #0b1f12;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.hero-pill:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+
+/* Kerstel Terminal: screenshot, security grid, downloads */
+
+.promo { position: relative; }
+.app-shot { position: relative; margin: 8px 0 28px; }
+.app-shot::before {
+  content: "";
+  position: absolute;
+  inset: 12% 6% -4%;
+  background: radial-gradient(ellipse at center, rgba(74, 222, 128, 0.22), transparent 70%);
+  filter: blur(40px);
+  z-index: -1;
+  pointer-events: none;
+}
+.app-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+}
+
+.secure-grid { display: grid; gap: 12px; margin: 0 0 28px; }
+.secure-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 18px;
+  transition: border-color 0.2s ease;
+}
+.secure-card:hover { border-color: var(--accent-border); }
+.secure-card svg {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-border);
+  display: block;
+  margin-bottom: 12px;
+}
+main .secure-card h3 { margin: 0 0 6px; font-size: 15.5px; }
+.secure-card p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+.secure-card code { font-size: 12.5px; }
+
+.downloads { display: grid; gap: 12px; text-align: left; max-width: 640px; margin: 0 auto; }
+.dl-os {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.dl-os.is-yours { border-color: var(--accent-border); box-shadow: 0 0 0 1px var(--accent-border), 0 16px 40px rgba(0, 0, 0, 0.3); }
+.dl-os.is-yours::after {
+  content: "Your system";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.dl-os-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.dl-os-head div { display: flex; flex-direction: column; line-height: 1.3; }
+.dl-os-head strong { color: #fff; font-size: 16px; }
+.dl-os-head small { color: var(--text-tertiary); font-size: 12.5px; }
+.os-logo { width: 32px; height: 32px; color: #fff; flex: none; }
+.dl-links { display: grid; gap: 8px; }
+.download-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.download-btn svg { width: 16px; height: 16px; color: var(--accent); flex: none; }
+.download-btn span { margin-left: auto; font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--text-secondary); }
+.download-btn:hover { background: var(--accent-border); border-color: var(--accent); text-decoration: none; }
+.promo .downloads { max-width: none; }
+.promo .install-note { margin-top: 14px; }
+
+@media (min-width: 640px) {
+  .secure-grid { grid-template-columns: repeat(2, 1fr); }
+  .downloads { grid-template-columns: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-pill, .secure-card, .download-btn { transition: none; }
+}
