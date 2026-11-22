@@ -1,5 +1,22 @@
-// Landing-page behaviour: the .env hero animation and the copy buttons.
+// Landing-page behaviour: the .env hero animation, the copy buttons, and the
+// Kerstel Terminal download card for the visitor's system.
 // Dependency-free. Every other page loads this file too and exits at the first check.
+// Marks the download card that matches the visitor's system. Purely a hint:
+// every download stays a plain link, and nothing is marked when unsure.
+(function () {
+  var cards = document.querySelectorAll(".dl-os[data-os]");
+  if (!cards.length) return;
+  var ua = navigator.userAgent || "";
+  var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+  var os = null;
+  if (/mac/i.test(platform) && !/iPhone|iPad|iPod/.test(ua) && !(navigator.maxTouchPoints > 1)) os = "mac";
+  else if (/linux/i.test(platform) && !/android/i.test(ua)) os = "linux";
+  if (!os) return;
+  for (var i = 0; i < cards.length; i++) {
+    if (cards[i].getAttribute("data-os") === os) cards[i].classList.add("is-yours");
+  }
+})();
+
 (function () {
   var val = document.getElementById("hero-val");
   if (!val) return;
