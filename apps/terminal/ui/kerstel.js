@@ -78,6 +78,7 @@
       KT.toast(String(e), "bad");
     }
     refresh();
+    KT.focusTerminal();
   }
   async function reveal(ref) {
     const out = await kerstel(["get", ref, "--reveal"]);
