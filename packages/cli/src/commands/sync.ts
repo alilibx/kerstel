@@ -102,8 +102,8 @@ const usage = () => `Usage:
   ${cliName()} sync setup --server-value -    Read a server value from stdin
   ${cliName()} sync [--keep local|remote] [--reveal]
                                        Pull, push, and settle conflicts
-  ${cliName()} sync status                  Server, pending changes, conflicts, last sync
-  ${cliName()} sync devices                 List the devices in this vault
+  ${cliName()} sync status [--json]         Server, pending changes, conflicts, last sync
+  ${cliName()} sync devices [--json]        List the devices in this vault
   ${cliName()} sync add-device              Show a one-time line to pair another device
   ${cliName()} sync join [<value>]          Join a synced vault from this device
   ${cliName()} sync remove-device <name>    Remove a device and replace the sync key
@@ -819,15 +819,17 @@ function pullsLine(vault: Vault, deps: SyncDeps): string {
 }
 
 async function status(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
-  if (args.length > 0) {
-    fail(`Usage: ${cliName()} sync status`);
+  const json = args.length === 1 && args[0] === "--json";
+  if (args.length > 0 && !json) {
+    fail(`Usage: ${cliName()} sync status [--json]`);
     return 2;
   }
   const ctx = await open();
   try {
     const config = loadSync(ctx.vault, ctx.dataKey);
     if (!config) {
-      notOn();
+      if (json) console.log(JSON.stringify({ on: false }));
+      else notOn();
       return 0;
     }
     const rows = ctx.vault.sync.rows();
@@ -836,6 +838,21 @@ async function status(args: string[], deps: SyncDeps, open: () => Promise<CliCon
     const { lastOk, lastError } = lastResult(ctx.vault);
     const shown = shownAddress(config.servers, ctx.vault.getMeta(SYNC_META.lastAddress));
     const others = config.servers.filter((url) => url !== shown);
+    if (json) {
+      console.log(
+        JSON.stringify({
+          on: true,
+          server: shown,
+          servers: config.servers,
+          pinned: config.pin !== null,
+          lastSync: lastOk,
+          pending,
+          conflicts,
+          lastError: lastError ?? null,
+        }),
+      );
+      return 0;
+    }
     console.log(`Server        ${shown}${others.length > 0 ? ` (also ${others.join(", ")})` : ""}`);
     if (config.pin) console.log(`Certificate   pinned (${formatPin(config.pin)})`);
     console.log(`Last sync     ${when(lastOk)}`);
@@ -850,8 +867,9 @@ async function status(args: string[], deps: SyncDeps, open: () => Promise<CliCon
 }
 
 async function devices(args: string[], deps: SyncDeps, open: () => Promise<CliContext>): Promise<number> {
-  if (args.length > 0) {
-    fail(`Usage: ${cliName()} sync devices`);
+  const json = args.length === 1 && args[0] === "--json";
+  if (args.length > 0 && !json) {
+    fail(`Usage: ${cliName()} sync devices [--json]`);
     return 2;
   }
   const ctx = await open();
@@ -867,6 +885,25 @@ async function devices(args: string[], deps: SyncDeps, open: () => Promise<CliCo
     } catch (error) {
       fail(`Could not list devices: ${explain(error)}`);
       return 1;
+    }
+    if (json) {
+      console.log(
+        JSON.stringify(
+          list.map((d) => {
+            const name = verifiedName(sync.config.syncKey, sync.config.vaultId, d);
+            return {
+              name: name?.name ?? null,
+              platform: name?.platform ?? null,
+              verified: Boolean(name),
+              fingerprint: fingerprint(d.signPub),
+              addedAt: d.addedAt,
+              lastSeen: d.lastSeen,
+              thisDevice: d.id === sync.config.deviceId,
+            };
+          }),
+        ),
+      );
+      return 0;
     }
     for (const d of list) {
       const name = verifiedName(sync.config.syncKey, sync.config.vaultId, d);

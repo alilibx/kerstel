@@ -54,10 +54,12 @@
 <span class="release-date release-unreleased">In development</span>
 </div>
 <details class="release-details">
-<summary><span class="release-count">1 change</span></summary>
+<summary><span class="release-count">3 changes</span></summary>
 <div class="release-body">
 <section class="change-group change-added"><h3 class="change-type">Added</h3><ul>
 <li>Kerstel Terminal, a calm terminal app for macOS and Linux. It runs your own shell, shows the current folder and git branch, separates each command with a quiet line that shows its duration and whether it worked, and has a command palette and key hints. It builds from source for now; see <a href="https://github.com/alilibx/kerstel/tree/main/apps/terminal">its README</a>.</li>
+<li>Kerstel Terminal includes Kerstel. On first launch it offers to install <code>kerstel</code> and <code>ks</code> to <code>~/.local/bin</code>, where <code>install.sh</code> puts them, or to update an older copy. Its Kerstel panel (⌘J, or Ctrl+Shift+J on Linux) lists your secrets, adds and deletes them, and shows or copies a value, which is recorded in <code>kerstel audit</code>. It also shows sync status and devices, and runs <code>sync setup</code>, <code>sync join</code>, <code>sync add-device</code> and <code>sync remove-device</code> in the terminal, where Kerstel asks its usual questions.</li>
+<li><code>kerstel ls --json</code>, <code>kerstel sync status --json</code> and <code>kerstel sync devices --json</code> print JSON for other programs. None of them prints a value.</li>
 </ul></section>
 </div>
 </details>

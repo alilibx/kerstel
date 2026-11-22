@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "vendor": "bun run scripts/vendor.ts",
+    "sidecar": "bun run scripts/sidecar.ts",
+    "prepare-app": "bun run vendor && bun run sidecar",
     "dev": "cd src-tauri && cargo tauri dev",
     "build": "cd src-tauri && cargo tauri build"
   },

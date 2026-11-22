@@ -1,6 +1,7 @@
 // Kerstel Terminal: a real terminal (PTY + xterm.js) with a calm, minimal UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod kerstel;
 mod pty;
 
 use std::path::{Path, PathBuf};
@@ -61,6 +62,9 @@ fn main() {
             home_dir,
             clipboard_read,
             clipboard_write,
+            kerstel::kerstel_info,
+            kerstel::kerstel_install,
+            kerstel::kerstel_run,
         ])
         .run(tauri::generate_context!())
         .expect("Kerstel Terminal failed to start");

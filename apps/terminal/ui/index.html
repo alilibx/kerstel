@@ -13,13 +13,18 @@
       <span id="cwd" data-tauri-drag-region>~</span>
       <span id="branch" class="branch" hidden></span>
     </div>
+    <button class="kbtn" id="kbtn" type="button" title="Kerstel">◆ Kerstel</button>
   </header>
 
-  <main class="screen"><div id="term"></div></main>
+  <div class="workspace">
+    <main class="screen"><div id="term"></div></main>
+    <aside class="kpanel" id="kpanel" hidden aria-label="Kerstel"></aside>
+  </div>
 
   <footer class="hints" id="hints">
     <span class="hint" data-hint="palette"><kbd data-mod>K</kbd>Commands</span>
     <span class="hint" data-hint="clear"><kbd data-mod>L</kbd>Clear</span>
+    <span class="hint" data-hint="kerstel"><kbd data-mod>J</kbd>Kerstel</span>
     <span class="hint" data-hint="up"><kbd>↑</kbd>History</span>
     <span class="hint" data-hint="tab"><kbd>Tab</kbd>Complete</span>
     <span class="hint" data-hint="zoom"><kbd data-mod>=</kbd>Zoom</span>
@@ -36,6 +41,9 @@
 
   <script src="vendor/xterm.js"></script>
   <script src="vendor/addon-fit.js"></script>
+  <div class="toast" id="toast" hidden></div>
+
   <script src="app.js"></script>
+  <script src="kerstel.js"></script>
 </body>
 </html>

@@ -1,6 +1,12 @@
 # Kerstel Terminal shell integration for bash (bash 3.2 on macOS and newer).
 # Started as `bash --rcfile <this> -i`, so load the user's files like a login shell.
-[ -r /etc/profile ] && . /etc/profile
+# Debian and Ubuntu bash already read /etc/bash.bashrc for this shell, and their
+# /etc/profile reads it again when PS1 is set: hide PS1 so it runs once.
+if [ -r /etc/profile ]; then
+  _ks_ps1=$PS1; unset PS1
+  . /etc/profile
+  PS1=$_ks_ps1; unset _ks_ps1
+fi
 if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile"
 elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login"
 elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"

@@ -45,7 +45,7 @@ ks move [KEY...] [--to global|project|plaintext] [--yes] [--replace] [--allow-tr
                                                   # Move keys between the vault and plain text
 ks set <scope>/<KEY> [--value <value>]            # Store a secret (or pipe it on stdin)
 ks get <scope>/<KEY> [--reveal]                   # Read a secret
-ks ls [--scope <scope>]                           # List stored references
+ks ls [--scope <scope>] [--json]                  # List stored references
 ks refs [--by-key]                                # Show which project files reference which secrets
 ks ui                                             # Browse, reveal, add, edit and delete secrets, and read the audit log, full screen
 ks audit [--scope <s>] [--key <KEY>] [--action <a>] [--since <7d|24h|date>] [--limit <n>]

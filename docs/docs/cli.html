@@ -148,8 +148,8 @@
 <td>Read a secret. Prints a masked value unless <code>--reveal</code> is given.</td>
 </tr>
 <tr>
-<td><code>kerstel ls [--scope &lt;scope&gt;]</code></td>
-<td>List stored references, optionally for one scope. Values are never listed.</td>
+<td><code>kerstel ls [--scope &lt;scope&gt;] [--json]</code></td>
+<td>List stored references, optionally for one scope. Values are never listed. <code>--json</code> prints an array of <code>{ scope, key, reference, updatedAt }</code> for other programs, such as Kerstel Terminal.</td>
 </tr>
 <tr>
 <td><code>kerstel ui</code></td>
@@ -217,11 +217,11 @@
 </tr>
 <tr>
 <td><code>kerstel sync status</code></td>
-<td>The server, a <code>Certificate</code> line when the server is pinned, the last successful sync, how many changes wait to be pushed, open conflicts, the last error, including a background sync&#39;s, and a <code>Pulls</code> line: <code>every 5 minutes (launchd)</code> or <code>(systemd)</code> with when it last ran, <code>not scheduled yet: added on the next sync</code>, or <code>not scheduled (&lt;reason&gt;)</code>. Works offline.</td>
+<td>The server, a <code>Certificate</code> line when the server is pinned, the last successful sync, how many changes wait to be pushed, open conflicts, the last error, including a background sync&#39;s, and a <code>Pulls</code> line: <code>every 5 minutes (launchd)</code> or <code>(systemd)</code> with when it last ran, <code>not scheduled yet: added on the next sync</code>, or <code>not scheduled (&lt;reason&gt;)</code>. Works offline. <code>--json</code> prints <code>{ &quot;on&quot;: false }</code>, or <code>on</code>, <code>server</code>, <code>servers</code>, <code>pinned</code>, <code>lastSync</code>, <code>pending</code>, <code>conflicts</code> and <code>lastError</code>.</td>
 </tr>
 <tr>
 <td><code>kerstel sync devices</code></td>
-<td>Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced. A device whose listed keys don&#39;t match the ones sealed with its name is marked unverified: no device in the vault added it with those keys. After another device replaces the sync key, names show as sealed with a newer key until this device runs <code>kerstel sync</code>.</td>
+<td>Every device in the vault: its name and platform (opened here), its key fingerprint, when it was added, and when it last synced. A device whose listed keys don&#39;t match the ones sealed with its name is marked unverified: no device in the vault added it with those keys. After another device replaces the sync key, names show as sealed with a newer key until this device runs <code>kerstel sync</code>. <code>--json</code> prints an array of <code>{ name, platform, verified, fingerprint, addedAt, lastSeen, thisDevice }</code>; <code>name</code> is <code>null</code> when this device can&#39;t open it.</td>
 </tr>
 <tr>
 <td><code>kerstel sync add-device</code></td>

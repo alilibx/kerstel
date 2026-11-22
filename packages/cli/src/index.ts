@@ -32,7 +32,7 @@ const COMMANDS = `Usage:
   ${cliName()} set <scope>/<KEY> --value <value>     Same, but the value lands in your
                                                 shell history and in \`ps\` output
   ${cliName()} get <scope>/<KEY> [--reveal]          Read a secret
-  ${cliName()} ls [--scope <scope>]                  List stored references
+  ${cliName()} ls [--scope <scope>] [--json]         List stored references
   ${cliName()} refs [--by-key]                       Show which project files reference which secrets
   ${cliName()} ui                                    Browse and manage the vault full screen
   ${cliName()} rm <scope>/<KEY> --yes                Remove a secret

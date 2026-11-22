@@ -64,6 +64,25 @@ test("ls prints references and never values", async () => {
   expect(out).not.toContain("value-a");
 });
 
+test("ls --json lists references as JSON and never values", async () => {
+  isolate();
+  await runCli(["set", "global/A", "--value", "value-a"]);
+  await runCli(["set", "my-app/B", "--value", "value-b"]);
+
+  capture();
+  expect(await runCli(["ls", "--json"])).toBe(0);
+  const out = captured.join("\n");
+  expect(out).not.toContain("value-a");
+  expect(out).not.toContain("value-b");
+  const listed = JSON.parse(out);
+  expect(listed.map((s: { reference: string }) => s.reference).sort()).toEqual(["ks:global/A", "ks:my-app/B"]);
+  expect(listed[0]).toEqual({ scope: expect.any(String), key: expect.any(String), reference: expect.any(String), updatedAt: expect.any(Number) });
+
+  capture();
+  expect(await runCli(["ls", "--json"].concat(["--scope", "nothing-here"]))).toBe(0);
+  expect(JSON.parse(captured.join("\n"))).toEqual([]);
+});
+
 test("ls --scope filters", async () => {
   isolate();
   await runCli(["set", "global/A", "--value", "1"]);
