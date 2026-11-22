@@ -16,7 +16,7 @@ description: Your .env files hold only references. The real values live in an en
 <code>curl -fsSL https://kerstel.dev/install.sh | bash</code>
 <button class="copy-btn" type="button" onclick="copyInstall(this)">Copy</button>
 </div>
-<p class="install-note">macOS and Linux. Installs <code>kerstel</code> and its shorthand, <code>ks</code>. No account, no cloud, no telemetry.</p>
+<p class="install-note">macOS and Linux. Installs <code>kerstel</code> and its shorthand, <code>ks</code>. No account, no cloud, no telemetry. Prefer an app? <a href="/terminal">Kerstel Terminal</a> includes it.</p>
 </div>
 </section>
 

@@ -30,6 +30,10 @@ adds a few quiet helpers:
 Dividers and exit status need shell integration, which Kerstel Terminal loads automatically for
 **zsh** and **bash** without changing your dotfiles. Other shells work as a plain terminal.
 
+## Install
+
+Download it from [kerstel.dev/terminal](https://kerstel.dev/terminal): a `.dmg` for macOS (Apple Silicon or Intel), or a `.deb` or `.AppImage` for Linux x64. Every release lists their checksums in `SHA256SUMS`. The `.deb` also puts `kerstel` in `/usr/bin`.
+
 ## How it works
 
 - `src-tauri/` is the Rust app ([Tauri 2](https://tauri.app)). `src/pty.rs` runs your login shell
