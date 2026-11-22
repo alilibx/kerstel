@@ -10,7 +10,8 @@
   var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
   var os = null;
   if (/mac/i.test(platform) && !/iPhone|iPad|iPod/.test(ua) && !(navigator.maxTouchPoints > 1)) os = "mac";
-  else if (/linux/i.test(platform) && !/android/i.test(ua)) os = "linux";
+  // The Linux builds are x64 only, so an ARM or unknown CPU gets no mark.
+  else if (/linux/i.test(platform) && !/android/i.test(ua) && /x86_64|amd64/i.test(navigator.platform + " " + ua)) os = "linux";
   if (!os) return;
   for (var i = 0; i < cards.length; i++) {
     if (cards[i].getAttribute("data-os") === os) cards[i].classList.add("is-yours");

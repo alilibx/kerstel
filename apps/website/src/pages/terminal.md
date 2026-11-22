@@ -32,7 +32,7 @@ description: A calm terminal for macOS and Linux with Kerstel built in. Your sec
 <section class="section">
 <div class="section-label">Built for secrets</div>
 <h2>Your keys, handled with care</h2>
-<p class="lede">Most terminals treat a secret like any other text. Kerstel Terminal knows which values are secrets and keeps them out of the places they usually leak.</p>
+<p class="lede">Most terminals treat a secret like any other text. Kerstel Terminal's Kerstel panel knows which values are secrets, and keeps them out of the places they usually leak. What your own commands print still shows on screen, as in any terminal.</p>
 <div class="secure-grid">
 <div class="secure-card"><svg aria-hidden="true"><use href="/icons.svg#lock-key"></use></svg><h3>An encrypted vault, on your machine</h3><p>Values are encrypted with AES-256-GCM, and the key that unlocks them is held by the macOS Keychain or Linux's Secret Service. No account, no cloud, no telemetry.</p></div>
 <div class="secure-card"><svg aria-hidden="true"><use href="/icons.svg#eye-slash"></use></svg><h3>Masked until you ask</h3><p>Every value shows as <code>••••••••</code>. Showing or copying one takes a deliberate click, and each one is recorded in <code>kerstel audit</code>.</p></div>
