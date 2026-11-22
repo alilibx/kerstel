@@ -146,6 +146,15 @@ export async function lsCommand(args: string[]): Promise<number> {
   const ctx = await openContext();
   try {
     const secrets = ctx.vault.listSecrets(scope);
+    if (args.includes("--json")) {
+      // For programs such as Kerstel Terminal. References and times only, never a value.
+      console.log(
+        JSON.stringify(
+          secrets.map((s) => ({ scope: s.scope, key: s.key, reference: formatReference(s.scope, s.key), updatedAt: s.updatedAt })),
+        ),
+      );
+      return 0;
+    }
     if (secrets.length === 0) {
       info(scope ? `No secrets in scope "${scope}".` : `No secrets stored yet. Add one with \`${cliName()} set\`.`);
       return 0;

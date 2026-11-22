@@ -300,7 +300,15 @@ describe("one device and the server", () => {
     expect(status.out).not.toContain("Certificate");
     const list = await sync(a, s, ["devices"]);
     expect(list.out).toContain("this device");
-    for (const out of [status.out, list.out]) {
+    const statusJson = await sync(a, s, ["status", "--json"]);
+    expect(statusJson.code).toBe(0);
+    expect(JSON.parse(statusJson.out)).toMatchObject({ on: true, server: SERVER, servers: [SERVER], pinned: false, pending: 0, conflicts: 0, lastError: null });
+    const listJson = await sync(a, s, ["devices", "--json"]);
+    const listed = JSON.parse(listJson.out);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ verified: true, thisDevice: true });
+    expect(typeof listed[0].name).toBe("string");
+    for (const out of [status.out, list.out, statusJson.out, listJson.out]) {
       expect(out).not.toContain("sk-sync-value-1");
       expect(out).not.toContain("db-sync-value-2");
     }
@@ -736,6 +744,10 @@ test("without sync on, every sync command says how to turn it on", async () => {
     `Sync is off for this vault. Turn it on with ${cliName()} sync setup, or ${cliName()} sync setup <url> for a server you already run.`,
   );
   expect((await sync(a, s, ["status"])).code).toBe(0);
+  const off = await sync(a, s, ["status", "--json"]);
+  expect(off.code).toBe(0);
+  expect(JSON.parse(off.out)).toEqual({ on: false });
+  expect((await sync(a, s, ["status", "--yaml"])).code).toBe(2);
   expect((await sync(a, s, ["nope"])).code).toBe(2);
   expect(existsSync(join(a.home, "backups"))).toBe(false);
 });
