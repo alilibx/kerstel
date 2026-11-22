@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kerstel Terminal",
+  "version": "0.4.0",
+  "identifier": "dev.kerstel.terminal",
+  "build": {
+    "frontendDist": "../ui",
+    "beforeDevCommand": "bun run vendor",
+    "beforeBuildCommand": "bun run vendor"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kerstel Terminal",
+        "width": 900,
+        "height": 580,
+        "minWidth": 420,
+        "minHeight": 260,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#202124"
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "icon": ["icons/icon.png"]
+  }
+}

@@ -1,0 +1,79 @@
+/* Kerstel Terminal. One calm window: where you are on top, the terminal, and a
+   quiet row of key hints at the bottom. Colors follow the kerstel.dev palette. */
+:root {
+  --bg: #202124;
+  --surface: #292a2d;
+  --line: #35363a;
+  --text: #ececef;
+  --mute: #8b8b8e;
+  --faint: #55555a;
+  --accent: #4ade80;
+  --danger: #f87171;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--sans);
+  display: grid; grid-template-rows: 38px 1fr auto; overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+}
+
+/* Top bar: current folder and git branch. On macOS it sits beside the traffic lights. */
+.top { display: flex; align-items: center; justify-content: center; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.where { display: flex; align-items: center; gap: 10px; min-width: 0; font: 12px var(--mono); color: var(--mute); }
+#cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch { color: var(--accent); white-space: nowrap; }
+.branch::before { content: "⎇ "; }
+
+.screen { min-height: 0; padding: 12px 6px 6px 18px; }
+#term { height: 100%; }
+.xterm .xterm-viewport { background: transparent !important; }
+.xterm-viewport::-webkit-scrollbar { width: 10px; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; border: 3px solid var(--bg); }
+
+/* Command blocks: a hairline above each new prompt, and status at the right of each command. */
+.ks-divider { border-top: 1px solid var(--line); pointer-events: none; }
+.ks-status {
+  font: 11px var(--mono); color: var(--faint); text-align: right; pointer-events: none;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 4px;
+  background: linear-gradient(to right, transparent, var(--bg) 24%);
+}
+.ks-status .ok { color: var(--accent); }
+.ks-status .bad { color: var(--danger); }
+
+/* Key hints */
+.hints {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  padding: 8px 18px 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--mute);
+}
+.hints.off { display: none; }
+.hint { display: inline-flex; align-items: center; gap: 6px; }
+.hint.hide { margin-left: auto; }
+kbd {
+  font: 11px var(--mono); min-width: 22px; height: 22px; padding: 0 6px; display: inline-grid; place-items: center;
+  border-radius: 6px; background: var(--surface); border: 1px solid var(--line); border-bottom-width: 2px; color: var(--mute);
+  transition: background .12s, color .12s, transform .12s, border-color .12s;
+}
+.hint.down kbd { background: var(--accent); border-color: var(--accent); color: var(--bg); transform: translateY(1px); }
+
+/* Command palette */
+.pal { position: fixed; inset: 0; background: rgb(0 0 0 / .35); display: flex; justify-content: center; align-items: flex-start; padding-top: 72px; z-index: 10; }
+.pal[hidden] { display: none; }
+.palbox { width: min(460px, 90vw); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgb(0 0 0 / .5); animation: rise .14s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.palbox input { all: unset; box-sizing: border-box; width: 100%; padding: 12px 14px; font: 13px var(--mono); color: var(--text); border-bottom: 1px solid var(--line); }
+.pallist { max-height: 320px; overflow: auto; padding: 4px 0; }
+.palgroup { padding: 8px 14px 4px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.palitem { display: flex; justify-content: space-between; gap: 12px; padding: 7px 14px; font-size: 13px; color: var(--mute); cursor: pointer; }
+.palitem code { font: 12px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palitem.on { background: rgb(255 255 255 / .05); color: var(--text); }
+.palitem.on code { color: var(--accent); }
+.palempty { padding: 14px; color: var(--faint); font-size: 13px; }
+.palfoot { display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--faint); }
+.palfoot kbd { height: 18px; min-width: 18px; font-size: 10px; margin-right: 4px; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.mac .top { padding: 0 84px; }
