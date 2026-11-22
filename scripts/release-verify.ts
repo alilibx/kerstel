@@ -71,6 +71,13 @@ export const PACKAGE_FILES = [
   "apps/terminal/package.json",
 ];
 
+/** Kerstel Terminal's Rust crate. Its version is also the app's: tauri.conf.json leaves it out. */
+export const CARGO_FILE = "apps/terminal/src-tauri/Cargo.toml";
+
+export function cargoVersion(toml: string): string {
+  return /^\[package\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(toml)?.[1] ?? "(none)";
+}
+
 if (import.meta.main) {
   const [tag, notesFile] = process.argv.slice(2);
   if (!tag) {
@@ -83,6 +90,7 @@ if (import.meta.main) {
   for (const file of PACKAGE_FILES) {
     versions[file] = (JSON.parse(readFileSync(join(root, file), "utf8")) as { version: string }).version;
   }
+  versions[CARGO_FILE] = cargoVersion(readFileSync(join(root, CARGO_FILE), "utf8"));
   const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
 
   const errors = verifyRelease({ tag, versions, changelog });

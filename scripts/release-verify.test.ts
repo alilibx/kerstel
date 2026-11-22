@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changelogSection, parseTag, verifyRelease } from "./release-verify";
+import { cargoVersion, changelogSection, parseTag, verifyRelease } from "./release-verify";
 
 const VERSIONS = { "package.json": "0.1.0", "packages/cli/package.json": "0.1.0" };
 const DATED = "# Changelog\n\n## 0.1.0 (2026-10-01)\n\n### Added\n\n- A thing.\n\n## 0.0.9 (2026-09-01)\n\n- Old.\n";
@@ -48,4 +48,10 @@ test("a missing section and a malformed tag are errors", () => {
     'CHANGELOG.md has no "## 0.2.0 (...)" section.',
   ]);
   expect(verifyRelease({ tag: "release-1", versions: VERSIONS, changelog: DATED })[0]).toContain("release-1");
+});
+
+test("reads the package version from Cargo.toml", () => {
+  const toml = '[package]\nname = "kerstel-terminal"\nversion = "0.5.0"\n\n[dependencies]\nfoo = { version = "1.2.3" }\n';
+  expect(cargoVersion(toml)).toBe("0.5.0");
+  expect(cargoVersion("[dependencies]\nversion = \"9\"\n")).toBe("(none)");
 });
