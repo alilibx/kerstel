@@ -1828,7 +1828,9 @@ describe("pairing, joining and removing devices", () => {
     test("setup refuses a bad pin before any request", async () => {
       const p = pinnedServer();
       const a = device();
-      for (const bad of ["nope", p.pin.slice("sha256/".length)]) {
+      // A pin's body is base64url, so it can start with "-": that is still a pin
+      // missing its sha256/ prefix, not a missing pin.
+      for (const bad of ["nope", p.pin.slice("sha256/".length), `-${"A".repeat(42)}`]) {
         const { result, out } = await setUpPinned(a, p, [p.listener.url, "--pin", bad]);
         expect(result).toBe(2);
         expect(out).toContain(

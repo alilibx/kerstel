@@ -292,8 +292,9 @@ async function setup(args: string[], deps: SyncDeps, open: () => Promise<CliCont
       valueFromStdin = true;
       i += 1;
     }
-    // `--pin --yes` is a missing pin, not a pin spelled "--yes".
-    else if (arg === "--pin" && pinText === null && args[i + 1] !== undefined && !args[i + 1]!.startsWith("-")) pinText = args[++i]!;
+    // `--pin --yes` is a missing pin, not a pin spelled "--yes". A single dash
+    // can start a pin's base64url body, so only `--` marks the next flag.
+    else if (arg === "--pin" && pinText === null && args[i + 1] !== undefined && !args[i + 1]!.startsWith("--")) pinText = args[++i]!;
     else if (arg.startsWith("-")) usageError = true;
     else urls.push(arg);
   }
