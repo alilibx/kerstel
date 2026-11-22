@@ -37,7 +37,7 @@ Each release also carries `kerstel-server`: four `kerstel-server-<platform>` bin
 
 ### Kerstel Terminal
 
-Each release also carries Kerstel Terminal (`apps/terminal`), built by the `app` job with that release's `kerstel` inside: `kerstel-terminal-macos-arm64.dmg`, `kerstel-terminal-macos-x64.dmg`, `kerstel-terminal-linux-x64.deb` and `kerstel-terminal-linux-x64.AppImage`, all in `SHA256SUMS`. The website's `/terminal` page links to them through `releases/latest/download/`, so those names must not change. `apps/terminal/package.json` carries the same version as every other package; the build passes it to Tauri from the tag.
+Each release also carries Kerstel Terminal (`apps/terminal`), built by the `app` job with that release's `kerstel` inside: `kerstel-terminal-macos-arm64.dmg`, `kerstel-terminal-macos-x64.dmg`, `kerstel-terminal-linux-x64.deb` and `kerstel-terminal-linux-x64.AppImage`, all in `SHA256SUMS`. The website's `/terminal` page links to them through `releases/latest/download/`, so those names must not change. `apps/terminal/package.json` and `apps/terminal/src-tauri/Cargo.toml` carry the same version as every other package (`release-verify` checks both). `tauri.conf.json` has no version, so a local build takes the `Cargo.toml` one; the release build passes the tag's.
 
 The macOS builds are signed and notarized when these repository secrets are set (Settings → Secrets and variables → Actions):
 
