@@ -4,6 +4,10 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 
 ## 0.5.1 (unreleased)
 
+### Fixed
+
+- `kerstel sync setup <url> --pin <pin>` with a pin that starts with `-` and is missing its `sha256/` prefix now says it is not a certificate pin, instead of printing the usage line.
+
 ## 0.5.0 (2026-11-22)
 
 ### Added
