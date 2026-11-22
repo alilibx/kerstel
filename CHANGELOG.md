@@ -7,6 +7,8 @@ All notable changes to Kerstel are listed here. Versions follow [Semantic Versio
 ### Added
 
 - Kerstel Terminal, a calm terminal app for macOS and Linux. It runs your own shell, shows the current folder and git branch, separates each command with a quiet line that shows its duration and whether it worked, and has a command palette and key hints. It builds from source for now; see [its README](https://github.com/alilibx/kerstel/tree/main/apps/terminal).
+- Kerstel Terminal includes Kerstel. On first launch it offers to install `kerstel` and `ks` to `~/.local/bin`, where `install.sh` puts them, or to update an older copy. Its Kerstel panel (⌘J, or Ctrl+Shift+J on Linux) lists your secrets, adds and deletes them, and shows or copies a value, which is recorded in `kerstel audit`. It also shows sync status and devices, and runs `sync setup`, `sync join`, `sync add-device` and `sync remove-device` in the terminal, where Kerstel asks its usual questions.
+- `kerstel ls --json`, `kerstel sync status --json` and `kerstel sync devices --json` print JSON for other programs. None of them prints a value.
 
 ## 0.4.0 (2026-11-20)
 

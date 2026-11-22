@@ -57,6 +57,7 @@
 
   // ---------- command blocks (shell integration) ----------
   const history = [];
+  const commandDoneListeners = [];
   let running = null;   // { marker, cmd, start }
   let lastDivider = -1; // buffer line of the last divider, to avoid doubles
 
@@ -95,7 +96,9 @@
       }
     } else if (kind === "D" && running) {
       showStatus(running, Number(arg ?? 0), performance.now() - running.start);
+      const done = running.cmd;
       running = null;
+      for (const fn of commandDoneListeners) fn(done);
     }
     return true;
   });
@@ -108,7 +111,12 @@
   }
   function showStatus({ marker }, code, ms) {
     if (!marker || marker.isDisposed) return;
-    const width = 16;
+    // Never cover the command itself: drop the duration, then the mark, when the line is long.
+    const used = term.buffer.active.getLine(marker.line)?.translateToString(true).length ?? 0;
+    const room = term.cols - used - 1;
+    const full = 16, short = code === 0 ? 2 : 5;
+    if (room < short) return;
+    const width = room >= full ? full : short;
     const deco = term.registerDecoration({ marker, anchor: "right", x: 0, width, layer: "top" });
     deco?.onRender((el) => {
       if (el.dataset.done) return;
@@ -118,7 +126,8 @@
       el.style.left = "auto";
       el.style.right = "0";
       const ok = code === 0;
-      el.innerHTML = `<span>${fmtDuration(ms)}</span><span class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✕ " + code}</span>`;
+      const mark = `<span class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✕ " + code}</span>`;
+      el.innerHTML = width === full ? `<span>${fmtDuration(ms)}</span>${mark}` : mark;
     });
   }
 
@@ -155,7 +164,7 @@
   new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe($("term"));
 
   // ---------- keyboard shortcuts ----------
-  const modLabel = isMac ? "⌘" : "Ctrl+Shift+";
+  const modLabel = isMac ? "⌘" : "Ctrl⇧";
   document.querySelectorAll("kbd[data-mod]").forEach((k) => (k.textContent = modLabel + k.textContent));
   const hints = $("hints");
   if (prefs.hideHints) hints.classList.add("off");
@@ -197,9 +206,10 @@
   function appShortcut(e) {
     if (!isMod(e)) return false;
     const k = e.key.toLowerCase();
-    if (e.type !== "keydown") return ["k", "l", "c", "v", "=", "+", "-", "_", "0", ")", "/", "?"].includes(k);
+    if (e.type !== "keydown") return ["k", "l", "j", "c", "v", "=", "+", "-", "_", "0", ")", "/", "?"].includes(k);
     switch (k) {
       case "k": openPalette(); break;
+      case "j": flash("kerstel"); window.KT.togglePanel?.(); break;
       case "l": clearScreen(); break;
       case "c": if (isMac) return false; copy(); break;   // macOS uses the native copy event
       case "v": if (isMac) return false; paste(); break;  // macOS uses the native paste event
@@ -224,6 +234,8 @@
   // ---------- command palette ----------
   const pal = $("pal"), palIn = $("palIn"), palList = $("palList");
   const ACTIONS = [
+    { label: "Kerstel panel", key: "J", run: () => window.KT.togglePanel?.() },
+    { label: "Kerstel: add a secret", key: "", run: () => window.KT.addSecret?.() },
     { label: "Clear screen", key: "L", run: clearScreen },
     { label: "Bigger text", key: "+", run: () => zoom(1) },
     { label: "Smaller text", key: "−", run: () => zoom(-1) },
@@ -244,7 +256,7 @@
     if (recent.length) groups.push(["Recent", recent]);
     const common = COMMON.filter(([l, c]) => match(l + " " + c)).map(([l, c]) => ({ label: l, code: c, insert: c }));
     if (common.length) groups.push(["Commands", common]);
-    const acts = ACTIONS.filter((a) => match(a.label)).map((a) => ({ label: a.label, code: modLabel + a.key, run: a.run }));
+    const acts = ACTIONS.filter((a) => match(a.label)).map((a) => ({ label: a.label, code: a.key ? modLabel + a.key : "", run: a.run }));
     if (acts.length) groups.push(["Window", acts]);
     return groups;
   }
@@ -304,6 +316,31 @@
     else if (e.key === "Escape" || (isMod(e) && e.key.toLowerCase() === "k")) { e.preventDefault(); closePalette(); }
   });
   pal.addEventListener("mousedown", (e) => { if (e.target === pal) closePalette(); });
+
+  // ---------- shared with kerstel.js ----------
+  let toastTimer = 0;
+  function toast(text, kind = "") {
+    const el = $("toast");
+    el.textContent = text;
+    el.className = "toast " + kind;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.hidden = true), 3200);
+  }
+  /** Types a command at the prompt and runs it, so the person sees its output and answers its prompts. */
+  function runInTerminal(command) {
+    if (exited || session == null) { toast("Start a shell first: press Enter in the terminal."); return false; }
+    if (running) { toast("Finish the running command first."); return false; }
+    send("\x15" + command + "\r"); // Ctrl+U clears anything half-typed
+    term.focus();
+    return true;
+  }
+  window.KT = {
+    invoke, toast, runInTerminal, prefs, savePrefs, isMod, modLabel,
+    onCommandDone: (fn) => commandDoneListeners.push(fn),
+    refit: () => { try { fit.fit(); } catch {} },
+    focusTerminal: () => term.focus(),
+  };
 
   // ---------- start ----------
   (async () => {

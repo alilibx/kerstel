@@ -22,13 +22,13 @@ body {
 }
 
 /* Top bar: current folder and git branch. On macOS it sits beside the traffic lights. */
-.top { display: flex; align-items: center; justify-content: center; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.top { display: flex; align-items: center; justify-content: center; padding: 0 110px; border-bottom: 1px solid var(--line); }
 .where { display: flex; align-items: center; gap: 10px; min-width: 0; font: 12px var(--mono); color: var(--mute); }
 #cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .branch { color: var(--accent); white-space: nowrap; }
 .branch::before { content: "⎇ "; }
 
-.screen { min-height: 0; padding: 12px 6px 6px 18px; }
+.screen { min-height: 0; min-width: 0; padding: 12px 6px 6px 18px; }
 #term { height: 100%; }
 .xterm .xterm-viewport { background: transparent !important; }
 .xterm-viewport::-webkit-scrollbar { width: 10px; }
@@ -76,4 +76,71 @@ kbd {
 .palfoot kbd { height: 18px; min-width: 18px; font-size: 10px; margin-right: 4px; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-.mac .top { padding: 0 84px; }
+.mac .top { padding: 0 110px 0 84px; }
+
+/* Top-bar Kerstel button */
+.top { position: relative; }
+.kbtn {
+  position: absolute; right: 12px; top: 7px; height: 24px; padding: 0 10px; border-radius: 7px;
+  font: 12px var(--sans); color: var(--mute); background: transparent; border: 1px solid var(--line); cursor: pointer;
+}
+.kbtn:hover, .kbtn.on { color: var(--accent); border-color: rgb(74 222 128 / .35); }
+
+/* Terminal and panel side by side */
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; }
+.kpanel {
+  width: 340px; border-left: 1px solid var(--line); background: var(--bg); overflow: auto;
+  -webkit-user-select: text; user-select: text; font-size: 13px; animation: slide .16s ease-out;
+}
+.kpanel[hidden] { display: none; }
+@keyframes slide { from { opacity: 0; transform: translateX(8px); } }
+.khead { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+.kbody { display: flex; flex-direction: column; }
+.kpad { padding: 14px; }
+.ksec { padding: 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.ksec h3 { margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.ksec p { margin: 0; line-height: 1.5; }
+.kmute { color: var(--mute); font-size: 12px; }
+.kwarn { color: #fbbf24; }
+.kpanel button {
+  font: 12px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 10px; cursor: pointer;
+}
+.kpanel button:hover { border-color: var(--mute); }
+.kpanel button:focus-visible, .kpanel input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kpanel .kprimary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.kpanel .kdanger { background: var(--danger); border-color: var(--danger); color: var(--bg); font-weight: 600; }
+.kpanel .kdel:hover { color: var(--danger); border-color: var(--danger); }
+.kactions { display: flex; gap: 6px; flex-wrap: wrap; }
+.kstack { display: flex; flex-direction: column; gap: 6px; }
+.kpanel input {
+  font: 12.5px var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 7px; padding: 7px 9px; min-width: 0; width: 100%;
+}
+.ksearch { display: flex; gap: 6px; }
+.kadd { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; }
+.krow2 { display: grid; grid-template-columns: 1fr 1.3fr; gap: 6px; }
+.kscope { font: 11px var(--mono); color: var(--faint); margin-top: 4px; }
+.ksecret { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; }
+.kname { display: flex; flex-direction: column; min-width: 0; }
+.kname code { font: 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kmask { color: var(--faint); font-size: 11px; letter-spacing: .1em; }
+.kvalue { font: 11.5px var(--mono); color: var(--accent); word-break: break-all; }
+.kicons { display: flex; gap: 4px; opacity: .35; transition: opacity .12s; }
+.ksecret:hover .kicons, .kicons:focus-within { opacity: 1; }
+.kicons button { padding: 3px 7px; font-size: 11px; }
+.kconfirm { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid rgb(248 113 113 / .4); border-radius: 9px; }
+.kfacts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+.kfacts dt { color: var(--mute); }
+.kfacts dd { margin: 0; overflow-wrap: anywhere; }
+.kdevice { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+
+/* Toast */
+.toast {
+  position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); max-width: min(520px, 90vw);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px;
+  font-size: 12.5px; box-shadow: 0 12px 30px rgb(0 0 0 / .4); z-index: 20; animation: rise .14s ease-out;
+}
+.toast[hidden] { display: none; }
+.toast.ok { border-color: rgb(74 222 128 / .4); }
+.toast.bad { border-color: rgb(248 113 113 / .5); color: #fca5a5; }

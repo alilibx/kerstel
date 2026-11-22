@@ -76,6 +76,11 @@ fn build_command(app: &AppHandle, cwd: &Path) -> CommandBuilder {
     }
 
     cmd.cwd(cwd);
+    // Put the folder Kerstel installs into first on PATH, so `kerstel` and `ks`
+    // work here right after the panel installs them, even before the user's
+    // shell profile lists that folder.
+    let path = std::env::var("PATH").unwrap_or_default();
+    cmd.env("PATH", format!("{}:{}", crate::kerstel::install_dir().display(), path));
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "kerstel-terminal");
